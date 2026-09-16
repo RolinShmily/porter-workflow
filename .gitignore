@@ -94,3 +94,6 @@ pi-session*
 *~
 .DS_Store
 Thumbs.db
+
+# Pi-Agent
+.pi/**
