@@ -157,6 +157,20 @@ def _fixture(tmp_path: Path, *, subs: bool = True) -> tuple[RawMaterials, Subtit
     return raw, subtitles
 
 
+def _relative_fixture(tmp_path: Path) -> None:
+    """A master and an ASS track laid out as the pipeline lays them out.
+
+    For the tests that ``chdir`` and then pass output-relative paths, which is
+    what the real CLI does and what ``tmp_path``-based tests cannot express.
+    """
+    raw = tmp_path / "raw"
+    cooked = tmp_path / "cooked"
+    raw.mkdir(parents=True, exist_ok=True)
+    cooked.mkdir(parents=True, exist_ok=True)
+    (raw / "video.mp4").write_bytes(b"\x00" * 128)
+    (cooked / "subtitle_zh.ass").write_text("[Events]\n", encoding="utf-8")
+
+
 def _ctx(tmp_path: Path, *, force: bool = False) -> RunContext:
     return RunContext(
         job_id="burn",
@@ -223,6 +237,80 @@ class TestPathsThatBreakEscaping:
         arg = _filter_arg(Path("subtitle_zh.ass"))
 
         assert Path.cwd().as_posix() not in arg
+
+    def test_relative_argv_paths_are_made_absolute(self, tmp_path: Path, monkeypatch) -> None:
+        """The other half of the same design, and it was missing entirely.
+
+        ``cwd=subtitle.parent`` makes *every* relative path in argv ambiguous,
+        not just the filtergraph's. The pipeline passes output-relative paths
+        (the ones it prints to the user), so ffmpeg looked for
+        ``cooked/porter_output/<task>/raw/video.mp4`` and reported "could not
+        read the master video" while the file sat in the right place.
+
+        No earlier test could see it: they all pass ``tmp_path``, which is
+        absolute by construction.
+        """
+        _relative_fixture(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        fake = _FakeRunner()
+
+        burn_hardsub(
+            fake,  # type: ignore[arg-type]
+            Path("raw/video.mp4"),
+            Path("cooked/subtitle_zh.ass"),
+            Path("cooked/out.mp4"),
+            profile=software_profile_for(4),
+        )
+
+        args = fake.calls[0].args
+        source = args[args.index("-i") + 1]
+        # The last argument is the *temporary* output: ffmpeg writes beside the
+        # destination and the rename happens only after the file probes clean.
+        dest = Path(args[-1])
+
+        assert Path(source).is_absolute(), "-i must not depend on the child's cwd"
+        assert dest.is_absolute(), "the output must not either"
+        assert source == str((tmp_path / "raw" / "video.mp4").resolve())
+        assert dest.parent == (tmp_path / "cooked").resolve()
+        assert dest.name == ".tmp_out.mp4"
+
+    def test_relative_paths_do_not_undo_the_apostrophe_design(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Making argv absolute must not put a path back in the filtergraph."""
+        _relative_fixture(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        fake = _FakeRunner()
+
+        burn_hardsub(
+            fake,  # type: ignore[arg-type]
+            Path("raw/video.mp4"),
+            Path("cooked/subtitle_zh.ass"),
+            Path("cooked/out.mp4"),
+            profile=software_profile_for(4),
+        )
+
+        args = fake.calls[0].args
+        assert args[args.index("-vf") + 1] == "ass='subtitle_zh.ass'"
+        assert str(tmp_path) not in args[args.index("-vf") + 1]
+
+    def test_the_temp_file_stays_beside_the_destination(self, tmp_path: Path, monkeypatch) -> None:
+        """Atomicity depends on the temp file sharing a directory with the target."""
+        _relative_fixture(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        fake = _FakeRunner()
+
+        burn_hardsub(
+            fake,  # type: ignore[arg-type]
+            Path("raw/video.mp4"),
+            Path("cooked/subtitle_zh.ass"),
+            Path("cooked/out.mp4"),
+            profile=software_profile_for(4),
+        )
+
+        temp = Path(fake.calls[0].args[-1])
+        assert temp.name.startswith(".tmp_")
+        assert temp.parent == (tmp_path / "cooked").resolve()
 
     def test_srt_uses_the_subtitles_filter_and_ass_uses_ass(self) -> None:
         assert _filter_arg(Path("subtitle_zh.ass")).startswith("ass=")

@@ -253,6 +253,7 @@ whisper_api_base = WHISPER_API_BASE or asr.whisper_api_base or llm.api_base
 |---|---|---|
 | `output_dir` | `./porter_output` | CLI 的 `-o` 覆盖 config（`_output_dir()` 显式实现） |
 | `cookies_file` / `cookies_browser` | `None` | **不**回落到 config，见 §4.6 |
+| `subtitle_file` | `None` | 显式指定源字幕（`.srt` / `.vtt`），优先于平台字幕轨与语音识别；config 里没有对应键，见下 |
 | `audio_denoise` | `True` | **只有它生效**，config 里同名键不生效，见 §4.6 |
 | `asr_engine` | `None` | 见下 |
 | `translator` | `None` | 见下 |
@@ -261,7 +262,25 @@ whisper_api_base = WHISPER_API_BASE or asr.whisper_api_base or llm.api_base
 | `burn` | `BurnMode.DUAL` | config 里没有对应键 |
 | `only_phase` / `force` | `None` / `False` | 纯运行控制，config 里没有对应键 |
 
-> **`asr_engine` / `translator` / `llm_model` 目前是死字段。** 三个字段被两个前端的入口接受（`porter run --asr-engine/--translator/--llm-model`，MCP `porter_job_start(translator=..., asr_engine=..., llm_model=...)`），但从没有任何引擎代码读取它们：`_default_transcriber()` 读的是 `ctx.config.asr.engine`，`_default_translator()` 无条件装配整条链，LLM 模型取自 `ctx.config.llm.model`。因此"强制某个 ASR 引擎"今天只能通过 `PORTER_ASR_ENGINE` 或配置文件做到，命令行 flag 是无声的空操作。这是已确认的缺陷，不要在文档里把它描述成可用功能。
+> **`asr_engine` / `translator` / `llm_model` 三者的语义与来源不同，别混。**
+>
+> | 字段 | 来源 | 语义 |
+> |---|---|---|
+> | `asr_engine` | 命令行 / MCP **覆盖** `config.asr.engine` | 把该后端**提到链首**，其余保留为回退（见 §4.6 下方） |
+> | `translator` | **只能**来自命令行 / MCP | 同上，把该翻译后端提到链首 |
+> | `llm_model` | 命令行 / MCP **覆盖** `config.llm.model` | 只影响**本次作业**的 LLM 模型 |
+>
+> 三者在 §13.48 之前**都是死字段**：两个前端的入口都接受它们，却没有任何引擎代码读取——`_default_transcriber()` 只读 `ctx.config.asr.engine`，`_default_translator()` 无条件装配整条链，LLM 模型只取自 `ctx.config.llm.model`。现已全部接通。
+>
+> `translator` 没有对应的配置键（`PorterConfig` 根本没有 `translate` 段，且 `extra="ignore"` 会默默丢弃它），所以它**只能**由 `porter run --translator` / MCP `porter_job_start(translator=...)` 给出。`asr_engine` 和 `llm_model` 则是"命令行覆盖配置"。
+>
+> **"提到链首"不等于"只用它"**：点名一个后端是要求**先试它**，其余后端仍作为回退。这是刻意的——若 `--translator bing` 变成"只准用 bing"，在 bing 被限流时（§13.48 实测过）作业会直接失败，而链的意义正是这个时候救场。
+>
+> **`subtitle_file`（`--subtitle-file FILE`）是另一个类别**：它不是选后端，而是**直接给出源字幕**。设了它，TRANSCRIBE 阶段既不读平台字幕轨也不跑语音识别。支持 `.srt` 与 `.vtt`。
+>
+> 为什么需要它：本地视频旁边同名的 `.srt` **不会**被自动接管（§13.29）——它可能是源字幕也可能是译文字幕，猜错会静默跳过 ASR 或覆盖用户文件。**点名文件是移除歧义，而不是靠猜解决歧义。** 它同时也是"视频没有字幕轨、又没有可用 ASR"时的出口（失败信息会指向它）。
+>
+> 与平台字幕轨不同，这个文件**不可用就报错**，不会静默退回语音识别：文件不存在、后缀不是 `.srt`/`.vtt`、内容没有 cue，三种情况各自给出明确错误。用户点名了一个文件，静默忽略它比报错更糟。
 
 作业注册表的存放位置由 `platformdirs` 决定（`~/.cache/porter/jobs.json`，受 `XDG_CACHE_HOME` 影响），**不是**配置项，也不应通过配置去改。跨进程可见性依赖"两个进程解析到同一个路径"，所以它必须来自环境而不是文件。
 
@@ -313,6 +332,17 @@ porter config set llm.model=deepseek-chat
 ```
 
 注意这里 `asr.engine` 是必要的：不写它，链会从第一个后端开始逐个尝试。写 `whisper-api` 只是让它排在最前——**链不会因为点名了某个引擎就跳过其他后端**，除了 `bijian` / `jianying` / `whisper-cpp` 这三个走 VideoCaptioner 的名字。
+
+`porter run --asr-engine` 与 `--translator` 是同一条规则（提到链首、其余回退）。可用的名字是后端自身的 `name`，不是 `asr.engine` 那种额外别名：
+
+| 旗标 | 可用的名字 |
+|---|---|
+| `--asr-engine` | `whisper-local`、`whisper-api`、`bcut`、`google-web`、`videocaptioner`，或 VideoCaptioner 引擎名 `bijian` / `jianying` / `whisper-cpp`（映射到 `videocaptioner`） |
+| `--translator` | `llm`、`bing`、`google`、`mymemory`、`videocaptioner-llm`、`videocaptioner` |
+
+名字写错**不会**让作业失败，也不会静默：链序不变，并在日志里记一条 warning。`videocaptioner` 与 `videocaptioner-llm` 是两个独立后端（后者额外需要 API key），点名哪个就只提哪个——不做别名猜测。
+
+`--llm-model` 只覆盖**本次**的 LLM 模型，配置里的 `llm.model` 不受影响；它同时作用于 LLM 翻译后端与 `videocaptioner-llm` 适配器（后者把它作为 `--model` 转发给外部 CLI）。
 
 ```json
 // 3. 竖屏视频：把中文字幕抬高，并固定用软件编码

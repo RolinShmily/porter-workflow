@@ -7,12 +7,15 @@ success.
 
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
 
 import pytest
 
 from porter.asr.base import AsrBackendError, AsrOutcome, coerce_items
 from porter.asr.chain import (
+    PROVENANCE_NAME,
     SOURCE_SRT_NAME,
     AsrChain,
     _best_audio,
@@ -20,6 +23,7 @@ from porter.asr.chain import (
 from porter.config import PorterConfig
 from porter.context import RunContext
 from porter.errors import JobCancelled, PorterError
+from porter.events import Phase
 from porter.models.materials import RawMaterials, TaskLayout
 from porter.models.metadata import VideoMetadata
 from porter.models.request import JobOptions
@@ -418,3 +422,370 @@ class TestEnhancedAudioPreference:
         raw = _raw(tmp_path)
         AsrChain([backend]).transcribe(raw, ctx)
         assert backend.calls == [raw.audio_enhanced]
+
+
+# ----------------------------------------------------------------------
+# Reuse of the source cues a previous run left on disk
+# ----------------------------------------------------------------------
+
+
+class TestTranscribeReuse:
+    """§13.50: re-running a job used to redo recognition every time.
+
+    Measured on a 74-second clip: 16 s of local Whisper on the second run, with
+    nothing about the audio or the ASR configuration changed. On a long video it
+    is minutes. The fix follows BURN's existing rule -- reuse when the artifact is
+    at least as new as its inputs -- plus one thing the SRT cannot carry.
+    """
+
+    def _previous_run(self, ctx, tmp_path, *, text: str = "cached cue") -> RawMaterials:
+        """Run the chain once, leaving a cached SRT and its sidecar behind."""
+        raw = _raw(tmp_path)
+        chain = AsrChain([FakeBackend("whisper", _cues(text))])
+        chain.transcribe(raw, ctx)
+        return raw
+
+    def test_a_fresh_cache_is_reused_without_calling_a_backend(self, ctx, tmp_path) -> None:
+        raw = self._previous_run(ctx, tmp_path)
+        backend = FakeBackend("whisper")
+
+        result = AsrChain([backend]).transcribe(raw, ctx)
+
+        assert backend.calls == [], "a backend ran despite a usable cache"
+        assert result.items
+
+    def test_the_reused_cues_are_the_ones_on_disk(self, ctx, tmp_path) -> None:
+        raw = self._previous_run(ctx, tmp_path, text="from the cache")
+
+        result = AsrChain([FakeBackend("whisper")]).transcribe(raw, ctx)
+
+        assert any("from the cache" in item.source_text for item in result.items)
+
+    def test_the_geometry_still_comes_from_the_prepare_metadata(self, ctx, tmp_path) -> None:
+        """Restoring must not lose the measured dimensions TRANSLATE needs."""
+        raw = self._previous_run(ctx, tmp_path)
+
+        result = AsrChain([FakeBackend("whisper")]).transcribe(raw, ctx)
+
+        assert (result.video_width, result.video_height) == (1080, 1920)
+
+    def test_force_re_runs_recognition(self, ctx, tmp_path) -> None:
+        """``--force`` is the documented escape hatch and must always win."""
+        raw = self._previous_run(ctx, tmp_path)
+        backend = FakeBackend("whisper")
+        ctx.options = JobOptions(output_dir=ctx.output_root, force=True)
+
+        AsrChain([backend]).transcribe(raw, ctx)
+
+        assert backend.calls, "--force returned the cache"
+
+    def test_only_phase_transcribe_re_runs_recognition(self, ctx, tmp_path) -> None:
+        """Asking for a phase is asking to *run* it, not to be handed a cache.
+
+        Restoring the prerequisites is the point of single-phase recovery; making
+        the requested phase itself a cache hit would turn ``--only-phase
+        transcribe`` into a silent no-op, which is worse than not having the flag.
+        """
+        raw = self._previous_run(ctx, tmp_path)
+        backend = FakeBackend("whisper")
+        ctx.options = JobOptions(output_dir=ctx.output_root, only_phase=Phase.TRANSCRIBE)
+
+        AsrChain([backend]).transcribe(raw, ctx)
+
+        assert backend.calls, "--only-phase transcribe returned the cache"
+
+    def test_another_phase_being_requested_still_reuses(self, ctx, tmp_path) -> None:
+        """The counterpart: ``--only-phase burn`` must skip recognition."""
+        raw = self._previous_run(ctx, tmp_path)
+        backend = FakeBackend("whisper")
+        ctx.options = JobOptions(output_dir=ctx.output_root, only_phase=Phase.BURN)
+
+        AsrChain([backend]).transcribe(raw, ctx)
+
+        assert backend.calls == []
+
+    def test_a_missing_sidecar_means_no_reuse(self, ctx, tmp_path, monkeypatch) -> None:
+        """Reuse only what can be described honestly.
+
+        ``used_asr`` is reported to the operator ("did this job pay for
+        Whisper?"). A task directory from an older build has the SRT but no record
+        of where it came from, so it re-transcribes once rather than inventing an
+        answer.
+
+        The assertion on the log is what makes this test *about the gate*. Without
+        it the test passed even with the gate removed, because the sidecar read
+        failed instead -- green for a reason that had nothing to do with the
+        check. An old cache is a normal cache miss and must not be reported as a
+        problem.
+        """
+        import porter.asr.chain as chain_module
+
+        warnings: list[str] = []
+
+        class _Recorder:
+            def warning(self, message: str, *args: object) -> None:
+                warnings.append(message % args if args else message)
+
+            def __getattr__(self, _name: str):
+                return lambda *args, **kwargs: None
+
+        monkeypatch.setattr(chain_module, "_logger", _Recorder())
+        raw = self._previous_run(ctx, tmp_path)
+        (raw.layout.cooked_dir / PROVENANCE_NAME).unlink()
+        backend = FakeBackend("whisper")
+
+        AsrChain([backend]).transcribe(raw, ctx)
+
+        assert backend.calls, "reused a cache whose provenance was unknown"
+        assert warnings == [], f"an absent sidecar was reported as a problem: {warnings}"
+
+    def test_a_missing_srt_means_no_reuse(self, ctx, tmp_path) -> None:
+        raw = self._previous_run(ctx, tmp_path)
+        (raw.layout.cooked_dir / SOURCE_SRT_NAME).unlink()
+        backend = FakeBackend("whisper")
+
+        AsrChain([backend]).transcribe(raw, ctx)
+
+        assert backend.calls
+
+    def test_cues_older_than_the_audio_are_not_reused(self, ctx, tmp_path) -> None:
+        """Same freshness rule BURN applies to a release video.
+
+        A re-extracted master audio means the cues describe audio that no longer
+        exists. The comparison is against ``raw.audio`` -- the standardised master
+        -- and not against the enhanced copy, because PREPARE re-runs the
+        enhancement every invocation and that file therefore gets a fresh mtime
+        each time. Comparing against it made the rule unsatisfiable; a real run
+        caught that, not this test.
+        """
+        raw = self._previous_run(ctx, tmp_path)
+        backend = FakeBackend("whisper")
+        future = (raw.layout.cooked_dir / SOURCE_SRT_NAME).stat().st_mtime + 60
+        os.utime(raw.audio, (future, future))
+
+        AsrChain([backend]).transcribe(raw, ctx)
+
+        assert backend.calls, "reused cues older than the audio they describe"
+
+    def test_the_enhanced_copy_does_not_invalidate_the_cache(self, ctx, tmp_path) -> None:
+        """PREPARE rewrites ``audio_enhanced.wav`` on every run.
+
+        Treating that as a change would re-transcribe every single time, which is
+        exactly the behaviour this feature exists to remove.
+        """
+        raw = self._previous_run(ctx, tmp_path)
+        backend = FakeBackend("whisper")
+        enhanced = raw.audio_enhanced
+        assert enhanced is not None
+        future = (raw.layout.cooked_dir / SOURCE_SRT_NAME).stat().st_mtime + 60
+        os.utime(enhanced, (future, future))
+
+        AsrChain([backend]).transcribe(raw, ctx)
+
+        assert backend.calls == [], "a regenerated enhancement invalidated the cache"
+
+    def test_the_provenance_is_restored_not_guessed(self, ctx, tmp_path) -> None:
+        raw = self._previous_run(ctx, tmp_path)
+        sidecar = raw.layout.cooked_dir / PROVENANCE_NAME
+
+        recorded = json.loads(sidecar.read_text(encoding="utf-8"))
+        result = AsrChain([FakeBackend("whisper")]).transcribe(raw, ctx)
+
+        assert recorded["used_asr"] is True
+        assert result.used_asr is True
+
+    def test_a_platform_track_is_recorded_as_not_asr(self, ctx, tmp_path) -> None:
+        """The distinction the sidecar exists for."""
+        raw = _raw(tmp_path, platform_srt=PLATFORM_SRT)
+        AsrChain([FakeBackend("whisper")]).transcribe(raw, ctx)
+        sidecar = raw.layout.cooked_dir / PROVENANCE_NAME
+
+        assert json.loads(sidecar.read_text(encoding="utf-8"))["used_asr"] is False
+
+        result = AsrChain([FakeBackend("whisper")]).transcribe(raw, ctx)
+        assert result.used_asr is False
+
+    def test_a_corrupt_sidecar_means_no_reuse(self, ctx, tmp_path) -> None:
+        raw = self._previous_run(ctx, tmp_path)
+        (raw.layout.cooked_dir / PROVENANCE_NAME).write_text("{not json", encoding="utf-8")
+        backend = FakeBackend("whisper")
+
+        AsrChain([backend]).transcribe(raw, ctx)
+
+        assert backend.calls
+
+    def test_an_empty_cached_srt_means_no_reuse(self, ctx, tmp_path) -> None:
+        """A truncated file must not become a job with zero cues."""
+        raw = self._previous_run(ctx, tmp_path)
+        (raw.layout.cooked_dir / SOURCE_SRT_NAME).write_text("", encoding="utf-8")
+        backend = FakeBackend("whisper")
+
+        AsrChain([backend]).transcribe(raw, ctx)
+
+        assert backend.calls
+
+
+# ----------------------------------------------------------------------
+# An explicitly supplied source track (§13.51)
+# ----------------------------------------------------------------------
+
+
+class TestSuppliedSubtitleFile:
+    """``--subtitle-file``: the escape hatch §13.29 left open.
+
+    A ``.srt`` beside a local video is still not picked up automatically -- it
+    could be the source or the translation, and guessing wrong either skips ASR
+    for no reason or overwrites the user's file. Naming the file removes the
+    ambiguity rather than resolving it by guesswork.
+    """
+
+    def _supplied(self, tmp_path: Path, text: str, name: str = "source.srt") -> Path:
+        path = tmp_path / name
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_it_is_used_instead_of_the_platform_track(self, ctx, tmp_path) -> None:
+        """A direct instruction beats what we would otherwise have to guess at."""
+        raw = _raw(tmp_path, platform_srt=PLATFORM_SRT)
+        supplied = self._supplied(tmp_path, "1\n00:00:03,000 --> 00:00:04,000\nFrom my own file\n")
+        ctx.options = JobOptions(output_dir=ctx.output_root, subtitle_file=supplied)
+        backend = FakeBackend("whisper")
+
+        result = AsrChain([backend]).transcribe(raw, ctx)
+
+        assert backend.calls == [], "ASR ran despite an explicit subtitle file"
+        assert [item.source_text for item in result.items] == ["From my own file"]
+
+    def test_it_is_not_marked_as_asr(self, ctx, tmp_path) -> None:
+        """Provenance is reported; "did this job pay for Whisper?" must be answerable."""
+        raw = _raw(tmp_path)
+        supplied = self._supplied(tmp_path, "1\n00:00:03,000 --> 00:00:04,000\nMine\n")
+        ctx.options = JobOptions(output_dir=ctx.output_root, subtitle_file=supplied)
+
+        result = AsrChain([FakeBackend("whisper")]).transcribe(raw, ctx)
+
+        assert result.used_asr is False
+
+    def test_webvtt_is_converted(self, ctx, tmp_path) -> None:
+        raw = _raw(tmp_path)
+        vtt = "WEBVTT\n\n00:00:03.000 --> 00:00:04.000\nFrom webvtt\n"
+        supplied = self._supplied(tmp_path, vtt, name="source.vtt")
+        ctx.options = JobOptions(output_dir=ctx.output_root, subtitle_file=supplied)
+
+        result = AsrChain([FakeBackend("whisper")]).transcribe(raw, ctx)
+
+        assert [item.source_text for item in result.items] == ["From webvtt"]
+
+    def test_a_missing_file_fails_instead_of_falling_back_to_asr(self, ctx, tmp_path) -> None:
+        """A typo must not be hidden behind minutes of recognition.
+
+        ``load_platform_subtitles`` returns ``[]`` on anything unreadable because
+        "no platform track" is normal. This one raises, because the user asked for
+        this exact file.
+        """
+        raw = _raw(tmp_path)
+        backend = FakeBackend("whisper")
+        ctx.options = JobOptions(
+            output_dir=ctx.output_root, subtitle_file=tmp_path / "nope.srt"
+        )
+
+        with pytest.raises(PorterError) as caught:
+            AsrChain([backend]).transcribe(raw, ctx)
+
+        assert "not found" in str(caught.value)
+        assert backend.calls == []
+
+    def test_an_unsupported_format_is_refused_with_the_supported_list(
+        self, ctx, tmp_path
+    ) -> None:
+        raw = _raw(tmp_path)
+        supplied = self._supplied(tmp_path, "whatever", name="source.ass")
+        ctx.options = JobOptions(output_dir=ctx.output_root, subtitle_file=supplied)
+
+        with pytest.raises(PorterError) as caught:
+            AsrChain([FakeBackend("whisper")]).transcribe(raw, ctx)
+
+        assert caught.value.details["supported"] == [".srt", ".vtt"]
+
+    def test_an_empty_file_is_refused(self, ctx, tmp_path) -> None:
+        """An empty track would produce a job with no text at all."""
+        raw = _raw(tmp_path)
+        supplied = self._supplied(tmp_path, "")
+        ctx.options = JobOptions(output_dir=ctx.output_root, subtitle_file=supplied)
+
+        with pytest.raises(PorterError) as caught:
+            AsrChain([FakeBackend("whisper")]).transcribe(raw, ctx)
+
+        assert "no cues" in str(caught.value)
+
+    def test_editing_the_supplied_file_invalidates_the_cache(self, ctx, tmp_path) -> None:
+        """The user's correction must not be ignored in favour of the old cues."""
+        raw = _raw(tmp_path)
+        supplied = self._supplied(tmp_path, "1\n00:00:03,000 --> 00:00:04,000\nFirst\n")
+        ctx.options = JobOptions(output_dir=ctx.output_root, subtitle_file=supplied)
+        chain = AsrChain([FakeBackend("whisper")])
+        chain.transcribe(raw, ctx)
+
+        supplied.write_text("1\n00:00:03,000 --> 00:00:04,000\nCorrected\n", encoding="utf-8")
+        future = (raw.layout.cooked_dir / SOURCE_SRT_NAME).stat().st_mtime + 60
+        os.utime(supplied, (future, future))
+
+        result = chain.transcribe(raw, ctx)
+
+        assert [item.source_text for item in result.items] == ["Corrected"]
+
+    def test_an_unedited_supplied_file_is_still_reused(self, ctx, tmp_path) -> None:
+        """The counterpart: the freshness check must not defeat the cache."""
+        raw = _raw(tmp_path)
+        supplied = self._supplied(tmp_path, "1\n00:00:03,000 --> 00:00:04,000\nMine\n")
+        ctx.options = JobOptions(output_dir=ctx.output_root, subtitle_file=supplied)
+        chain = AsrChain([FakeBackend("whisper")])
+        chain.transcribe(raw, ctx)
+        backend = FakeBackend("whisper")
+
+        result = AsrChain([backend]).transcribe(raw, ctx)
+
+        assert backend.calls == []
+        assert [item.source_text for item in result.items] == ["Mine"]
+
+    def test_the_provenance_sidecar_records_that_it_was_supplied(self, ctx, tmp_path) -> None:
+        raw = _raw(tmp_path)
+        supplied = self._supplied(tmp_path, "1\n00:00:03,000 --> 00:00:04,000\nMine\n")
+        ctx.options = JobOptions(output_dir=ctx.output_root, subtitle_file=supplied)
+
+        AsrChain([FakeBackend("whisper")]).transcribe(raw, ctx)
+
+        sidecar = json.loads(
+            (raw.layout.cooked_dir / PROVENANCE_NAME).read_text(encoding="utf-8")
+        )
+        assert sidecar == {"used_asr": False, "origin": "supplied"}
+
+
+class TestNoCuesIsActionable:
+    """The failure has to name a way out, not just report the symptom.
+
+    With no key-free ASR engine installed and a video carrying no subtitle track
+    there is nothing left to try. §13.51 added ``--subtitle-file`` as that way out,
+    so the message points at it (and at the ``[asr-local]`` extra).
+    """
+
+    def test_the_hint_names_both_ways_out(self, ctx, tmp_path) -> None:
+        with pytest.raises(PorterError) as caught:
+            AsrChain([FakeBackend("empty", [])]).transcribe(_raw(tmp_path), ctx)
+
+        hint = str(caught.value.details["hint"])
+        assert "--subtitle-file" in hint
+        assert "asr-local" in hint
+
+    def test_the_failed_backends_are_still_reported(self, ctx, tmp_path) -> None:
+        """The hint is additive: the diagnosis must survive.
+
+        ``_run`` reports ``attempted``/``failures`` while ``_write`` reports
+        ``backends`` -- they are different paths, and asserting on the wrong one is
+        how the hint first ended up on the path a real job never reaches.
+        """
+        with pytest.raises(PorterError) as caught:
+            AsrChain([FakeBackend("empty", [])]).transcribe(_raw(tmp_path), ctx)
+
+        assert caught.value.details["attempted"] == 1
+        assert caught.value.details["failures"] == ["empty: returned no cues"]

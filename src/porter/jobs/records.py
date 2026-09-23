@@ -301,11 +301,29 @@ class JobRegistry:
 
     Constructed with an explicit path in tests; defaults to
     :func:`registry_file` otherwise.
+
+    The default is resolved **per access, not in ``__init__``**. ``registry_file``
+    is the seam the test suite redirects, and freezing it at construction time
+    means freezing whatever it pointed at *then* -- which, for a module-level
+    store such as ``porter_mcp.tools.jobs._STORE``, is import time, before any
+    fixture can run. That is how the suite came to write real job records into
+    the developer's ``~/.cache/porter/jobs.json`` (four per full run: the
+    cancellation and failure tests of ``porter_job_*``), which the §13.33
+    isolation fixture did not catch because it patched the seam too late.
     """
 
     def __init__(self, path: Path | None = None) -> None:
-        self.path = Path(path) if path is not None else registry_file()
-        self.lock_path = self.path.with_name(LOCK_FILENAME)
+        self._explicit = Path(path) if path is not None else None
+
+    @property
+    def path(self) -> Path:
+        """The registry file. Follows :func:`registry_file` unless pinned."""
+        return self._explicit if self._explicit is not None else registry_file()
+
+    @property
+    def lock_path(self) -> Path:
+        """The sidecar lock file, always beside :attr:`path`."""
+        return self.path.with_name(LOCK_FILENAME)
 
     # -- reading ------------------------------------------------------------
 

@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from porter.asr import whisper_local
 from porter.config import PorterConfig
 from porter.doctor import GUIDES, guide_for
 from porter.doctor.probes import (
@@ -631,33 +632,89 @@ class TestRouteProbes:
     pass would be the kind of silent downgrade this project keeps finding.
     """
 
-    def test_no_keys_reports_that_the_free_path_is_broken(self) -> None:
+    def test_local_whisper_is_reported_when_the_extra_is_installed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Local inference leads the chain, so it is the route to report.
+
+        Added in §13.48. Before it, this probe told every operator that the only
+        key-free path was two reverse-engineered endpoints that do not work.
+        """
+        monkeypatch.setattr(whisper_local, "is_installed", lambda: True)
+        monkeypatch.setattr(whisper_local, "model_is_cached", lambda _model: True)
+
+        finding = probe_asr_route(PorterConfig(), which=_which_for())
+
+        assert finding.ok is True
+        assert "local Whisper" in finding.detail
+        assert "already downloaded" in finding.detail
+        assert "no key, no network" in finding.detail
+
+    def test_local_whisper_announces_a_pending_download(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A first run pays for the model; the operator should know beforehand."""
+        monkeypatch.setattr(whisper_local, "is_installed", lambda: True)
+        monkeypatch.setattr(whisper_local, "model_is_cached", lambda _model: False)
+
+        finding = probe_asr_route(PorterConfig(), which=_which_for())
+
+        assert "downloads on first use" in finding.detail
+
+    def test_local_whisper_leads_even_when_a_key_is_set(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """It is first in the chain, so naming the API instead would be a lie."""
+        monkeypatch.setattr(whisper_local, "is_installed", lambda: True)
+        monkeypatch.setattr(whisper_local, "model_is_cached", lambda _model: True)
+        config = PorterConfig(asr={"whisper_api_key": "sk-test"})
+
+        finding = probe_asr_route(config, which=_which_for())
+
+        assert "local Whisper" in finding.detail
+        assert "falling back to the Whisper API" in finding.detail
+
+    def test_no_keys_and_no_local_extra_reports_that_the_free_path_is_broken(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Not just "unverified" any more: measured non-functional on 2026-09-22.
 
         Google Web returned ``{"result":[]}`` for every request across three
         speech segments and two language variants, so the message has to say the
         job will fail rather than implying it might work.
         """
+        monkeypatch.setattr(whisper_local, "is_installed", lambda: False)
+
         finding = probe_asr_route(PorterConfig(), which=_which_for())
 
         assert finding.ok is True, "it is not a failure, it is a fact"
         assert "do not transcribe" in finding.detail
         assert "key" in finding.detail
         assert "will fail" in finding.detail
+        assert "asr-local" in finding.detail, "it must name the free way out"
 
-    def test_a_whisper_key_selects_the_documented_path(self) -> None:
+    def test_a_whisper_key_selects_the_documented_path_without_local_whisper(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(whisper_local, "is_installed", lambda: False)
         config = PorterConfig(asr={"whisper_api_key": "sk-test"})
         finding = probe_asr_route(config, which=_which_for())
 
         assert "Whisper API" in finding.detail
         assert "unverified" not in finding.detail
 
-    def test_an_llm_key_also_enables_whisper(self) -> None:
+    def test_an_llm_key_also_enables_whisper(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """v0.1 fell back from the Whisper key to the LLM key; keep that order."""
+        monkeypatch.setattr(whisper_local, "is_installed", lambda: False)
         config = PorterConfig(llm={"api_key": "sk-test"})
         assert "Whisper API" in probe_asr_route(config, which=_which_for()).detail
 
-    def test_the_videocaptioner_binary_is_noticed(self) -> None:
+    def test_the_videocaptioner_binary_is_noticed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(whisper_local, "is_installed", lambda: False)
         finding = probe_asr_route(PorterConfig(), which=_which_for("videocaptioner"))
         assert "VideoCaptioner" in finding.detail
 

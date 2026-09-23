@@ -541,10 +541,10 @@ URL 解析按插入顺序遍历 `handler.can_handle(url)`。每个平台不再�
 
 ## 10. 已知缺口
 
-- **单阶段从磁盘恢复未实现**：`force` 对 PREPARE 与 BURN 的复用判定生效，但"只跑 TRANSCRIBE"仍需重跑前置阶段。
-- **免 Key 的 ASR 端点已实测失效**（`bcut` / `google-web`）：没有 Key 或 VideoCaptioner CLI 时，默认链的转录必然失败。
-- **无字幕轨的视频未处理**：既无平台轨又无 ASR 结果时作业在 TRANSCRIBE 失败。
+- **单阶段从磁盘恢复已实现**（§13.51）：`--only-phase X` 的前置阶段照跑，但 PREPARE（母版）、TRANSCRIBE（源 cue）、BURN（成片）各有复用判定，所以昂贵的工作会被跳过（实测：第二次运行 `reusing 19 cached source cues`，ASR 归零）。**TRANSLATE 没有缓存**：它的 `.ass` 产物与字幕样式耦合，需要一套指纹方案才能安全复用，因此重复运行会重新翻译。`--force` 关闭全部复用。
+- **免 Key 的 ASR 端点已实测失效**（`bcut` / `google-web`）；但 **`[asr-local]` 提供了免 Key 的本地识别**（§13.48），所以"没有 Key 就必然失败"已不成立——除非本地后端也没装。
+- **无字幕轨的视频有明确出口**：既无平台轨又无可用 ASR 时作业在 TRANSCRIBE 失败，失败信息会指向 `--subtitle-file` 或 `[asr-local]`（§13.51）。
 - **MCP sampling 翻译未实现**：用宿主模型做零 Key 的 LLM 级翻译。
-- **本地视频的 sidecar `.srt` 不被接管**。
-- `--asr-engine` / `--translator` / `--llm-model` 与 MCP 对应参数是死字段；`asr.audio_denoise`、`ffmpeg.auto_tune` 两个配置键没有任何消费者；`cookies_file` / `cookies_browser` 的配置值只对 inspect 路径生效。细节见 `docs/CONFIG.md` §4.6 与 §6。
+- **本地视频的 sidecar `.srt` 不被接管**（刻意，§13.29）：一份 `.srt` 可能是源字幕也可能是译文字幕，猜错会静默跳过 ASR 或覆盖用户文件。**要接管就显式点名：`--subtitle-file`。**
+- `asr.audio_denoise`、`ffmpeg.auto_tune` 两个配置键没有任何消费者（只有 `JobOptions.audio_denoise` 生效）；`cookies_file` / `cookies_browser` 的**配置值只对 MCP 的 `porter_inspect` 路径生效**（`porter_mcp/tools/inspect.py`），`porter run` 只认命令行旗标。细节见 `docs/CONFIG.md` §4.6 与 §6。
 - 若加了 cookie 之后 yt-dlp 是否真能拿到 bilibili 的 CC 轨，**未经验证**。当前修复的作用是"把路打开"。

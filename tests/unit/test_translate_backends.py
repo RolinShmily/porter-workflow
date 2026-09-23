@@ -39,8 +39,8 @@ from porter.context import RunContext
 from porter.errors import JobCancelled
 from porter.models.request import JobOptions
 from porter.subtitles.srt import parse_srt
-from porter.translate import bing, google, llm, mymemory, videocaptioner
-from porter.translate.base import TranslationBackendError
+from porter.translate import base, bing, google, llm, mymemory, videocaptioner
+from porter.translate.base import MAX_ATTEMPTS, TranslationBackendError
 
 #: A translator page carrying the three scraped values Bing needs. Copied from
 #: v0.1's ``test_translate_sentences_with_bing_http_mock``.
@@ -117,6 +117,17 @@ def _install(monkeypatch: pytest.MonkeyPatch, module: Any, fake: FakeHTTP) -> No
     in one test cannot leak into another module's import.
     """
     monkeypatch.setattr(module, "_load_requests", lambda: fake)
+
+
+@pytest.fixture(autouse=True)
+def _no_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Zero the retry backoff: the policy is under test, the sleeping is not.
+
+    ``BACKOFF_BASE_SECONDS`` is module-level precisely so this is possible. A
+    retry test that really waits 1.5 s + 3 s is a test nobody runs, and the
+    timing is not what any of these assertions are about.
+    """
+    monkeypatch.setattr("porter.translate.base.BACKOFF_BASE_SECONDS", 0.0)
 
 
 def _block_import(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
@@ -388,10 +399,11 @@ class TestAlignment:
         self, ctx: RunContext, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """v0.1 returned a short list here, misaligning every later cue."""
-        # Batch 1 (15 cues) succeeds; batch 2 (the 16th) fails.
+        # Batch 1 (15 cues) succeeds; batch 2 (the 16th) fails on every attempt.
         good = FakeResponse(200, _google_payload([f"译文{index}" for index in range(15)]))
         fake = FakeHTTP(
-            get_responses=[good, FakeResponse(500), FakeResponse(500)],
+            get_responses=[good]
+            + [FakeResponse(500)] * (MAX_ATTEMPTS * len(google._CLIENT_IDS)),
         )
         _install(monkeypatch, google, fake)
 
@@ -420,11 +432,21 @@ class TestExpectedFailures:
     def test_google_raises_on_http_error(
         self, ctx: RunContext, monkeypatch: pytest.MonkeyPatch, status: int
     ) -> None:
-        fake = FakeHTTP(get_responses=[FakeResponse(status), FakeResponse(status)])
+        """Still raises -- but only after the retry budget is spent.
+
+        Before §13.49 this test supplied one response per client and the backend
+        gave up on the first refusal. The assertion is unchanged; the attempt
+        count is the point of the change.
+        """
+        fake = FakeHTTP(
+            get_responses=[FakeResponse(status)] * (MAX_ATTEMPTS * len(google._CLIENT_IDS))
+        )
         _install(monkeypatch, google, fake)
 
         with pytest.raises(TranslationBackendError):
             google.GoogleTranslateBackend().translate_texts(["Hello"], "zh-CN", ctx)
+
+        assert len(fake.get_calls) == MAX_ATTEMPTS * len(google._CLIENT_IDS)
 
     def test_google_raises_on_malformed_json(
         self, ctx: RunContext, monkeypatch: pytest.MonkeyPatch
@@ -455,14 +477,17 @@ class TestExpectedFailures:
     def test_bing_raises_on_http_error(
         self, ctx: RunContext, monkeypatch: pytest.MonkeyPatch, status: int
     ) -> None:
+        """A throttle is retried, then reported. It does not pass silently."""
         fake = FakeHTTP(
             get_responses=[FakeResponse(200, text=BING_PAGE)],
-            post_responses=[FakeResponse(status)],
+            post_responses=[FakeResponse(status)] * MAX_ATTEMPTS,
         )
         _install(monkeypatch, bing, fake)
 
         with pytest.raises(TranslationBackendError):
             bing.BingTranslateBackend().translate_texts(["Hello"], "zh-Hans", ctx)
+
+        assert len(fake.post_calls) == MAX_ATTEMPTS
 
     def test_bing_raises_when_the_page_no_longer_parses(
         self, ctx: RunContext, monkeypatch: pytest.MonkeyPatch
@@ -581,6 +606,41 @@ class TestExpectedFailures:
 
 
 class TestLLMAlignment:
+    def test_the_job_option_overrides_the_configured_model(self, llm_ctx: RunContext) -> None:
+        """``--llm-model`` / ``porter_job_start(llm_model=...)`` used to do nothing.
+
+        ``JobOptions.llm_model`` was accepted by both frontends and read by no
+        engine, so the only way to change the model was editing the config file.
+        """
+        client = _llm_client(json.dumps([{"id": 0, "zh": "你好"}]))
+        llm_ctx.config = PorterConfig(
+            llm=LLMConfig(api_key="sk-test-mock", model="deepseek-chat")
+        )
+        llm_ctx.options.llm_model = "deepseek-reasoner"
+
+        llm.LLMTranslationBackend(client=client).translate_texts(
+            ["Hello"], "zh-Hans", llm_ctx
+        )
+
+        sent = client.chat.completions.create.call_args.kwargs
+        assert sent["model"] == "deepseek-reasoner"
+
+    def test_the_configured_model_still_wins_when_nothing_is_overridden(
+        self, llm_ctx: RunContext
+    ) -> None:
+        """The override is additive: the config path must not regress."""
+        client = _llm_client(json.dumps([{"id": 0, "zh": "你好"}]))
+        llm_ctx.config = PorterConfig(
+            llm=LLMConfig(api_key="sk-test-mock", model="deepseek-chat")
+        )
+
+        llm.LLMTranslationBackend(client=client).translate_texts(
+            ["Hello"], "zh-Hans", llm_ctx
+        )
+
+        sent = client.chat.completions.create.call_args.kwargs
+        assert sent["model"] == "deepseek-chat"
+
     def test_reordered_json_is_mapped_by_id(self, llm_ctx: RunContext) -> None:
         client = _llm_client(
             json.dumps([{"id": 1, "zh": "世界"}, {"id": 0, "zh": "你好"}])
@@ -887,6 +947,42 @@ class TestVideocaptionerAdapter:
         assert "--model" in command
         assert "deepseek-chat" in command
 
+    def test_the_job_option_overrides_the_configured_model(
+        self, llm_ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``--llm-model`` must reach the CLI adapter, not just the LLM backend.
+
+        Two backends read the model, so the resolution lives in one helper. Had
+        it been applied only to ``translate/llm.py``, this path would still have
+        passed the configured default -- a split that no single test would show.
+        """
+        fake = _install_fake_cli(monkeypatch, ["你好"])
+        llm_ctx.config = PorterConfig(
+            llm=LLMConfig(api_key="sk-test-mock", model="deepseek-chat")
+        )
+        llm_ctx.options.llm_model = "deepseek-reasoner"
+
+        videocaptioner.VideocaptionerLLMBackend(
+            binary="/usr/bin/videocaptioner"
+        ).translate_texts(["Hello"], "zh-Hans", llm_ctx)
+
+        command = fake.calls[0]
+        assert command[command.index("--model") + 1] == "deepseek-reasoner"
+        assert "deepseek-chat" not in command
+
+    def test_no_model_flag_when_neither_source_names_one(
+        self, llm_ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An empty model stays absent instead of becoming ``--model ""``."""
+        fake = _install_fake_cli(monkeypatch, ["你好"])
+        llm_ctx.config = PorterConfig(llm=LLMConfig(api_key="sk-test-mock", model=""))
+
+        videocaptioner.VideocaptionerLLMBackend(
+            binary="/usr/bin/videocaptioner"
+        ).translate_texts(["Hello"], "zh-Hans", llm_ctx)
+
+        assert "--model" not in fake.calls[0]
+
 
 class TestBingBatching:
     """Bing's batch path, which was silently unusable.
@@ -982,3 +1078,236 @@ class TestBingBatching:
         outcome = bing.BingTranslateBackend().translate_texts(["Hello", "   "], "zh-Hans", ctx)
 
         assert outcome.texts == ["你好", "   "]
+
+
+# ----------------------------------------------------------------------
+# Throttling is retried, not treated as a broken backend
+# ----------------------------------------------------------------------
+
+
+class TestRetryOnThrottle:
+    """§13.49: a 429 used to end the backend, and the report blamed the endpoint.
+
+    On the §13.48 run both key-free backends refused at once -- Google with HTTP
+    429 on both clients, Bing with a body it would not translate -- and the chain
+    moved on to MyMemory. That was the right *outcome* and the wrong *diagnosis*:
+    a temporary throttle had been converted into "bing is broken", and the message
+    ("response was not recognised") discarded the body that would have shown it.
+    """
+
+    def test_bing_recovers_from_a_throttle(self, ctx: RunContext, monkeypatch) -> None:
+        """The regression: one 429 must not hand the whole batch to another engine."""
+        fake = FakeHTTP(
+            get_responses=[FakeResponse(200, text=BING_PAGE)],
+            post_responses=[
+                FakeResponse(429),
+                FakeResponse(200, [{"translations": [{"text": "你好"}]}]),
+            ],
+        )
+        _install(monkeypatch, bing, fake)
+
+        outcome = bing.BingTranslateBackend().translate_texts(["Hello"], "zh-Hans", ctx)
+
+        assert outcome.texts == ["你好"]
+        assert len(fake.post_calls) == 2
+
+    def test_google_recovers_from_a_throttle(self, ctx: RunContext, monkeypatch) -> None:
+        """The same *client* must be retried, not merely a different one tried.
+
+        The first version of this test supplied one 429 and passed even with the
+        retry budget collapsed to a single attempt -- because Google's two clients
+        are throttled separately, so the *second client* answered instead. That is
+        client fallback, which already existed, and it made the test green for a
+        reason that had nothing to do with the fix. Two 429s in a row can only be
+        survived by retrying the client that got them.
+        """
+        fake = FakeHTTP(
+            get_responses=[
+                FakeResponse(429),
+                FakeResponse(429),
+                FakeResponse(200, _google_payload(["你好"])),
+            ]
+        )
+        _install(monkeypatch, google, fake)
+
+        outcome = google.GoogleTranslateBackend().translate_texts(["Hello"], "zh-CN", ctx)
+
+        assert outcome.texts == ["你好"]
+        assert len(fake.get_calls) == 3
+        clients = [call[1]["params"]["client"] for call in fake.get_calls]
+        assert clients[0] == clients[1] == clients[2], f"clients switched: {clients}"
+
+    def test_a_403_is_not_retried(self, ctx: RunContext, monkeypatch) -> None:
+        """A refusal about the *request* will not improve; do not spend the budget.
+
+        Only 429/5xx are transient. Retrying a 403 would triple the latency of a
+        failure that is certain, on a chain where the next backend can finish now.
+        """
+        fake = FakeHTTP(
+            get_responses=[FakeResponse(200, text=BING_PAGE)],
+            post_responses=[FakeResponse(403)],
+        )
+        _install(monkeypatch, bing, fake)
+
+        with pytest.raises(TranslationBackendError):
+            bing.BingTranslateBackend().translate_texts(["Hello"], "zh-Hans", ctx)
+
+        assert len(fake.post_calls) == 1
+
+    def test_a_refusal_degrades_to_one_request_per_cue(
+        self, ctx: RunContext, monkeypatch
+    ) -> None:
+        """The real §13.48 cause, and it was not a throttle.
+
+        Bing answers HTTP 200 with ``{"statusCode": 400}`` for a batch it will not
+        take. Measured 2026-09-23: 1/2/4/8-cue batches (up to 665 chars) translate
+        and 15 cues (1259 chars) are refused, so every 15-cue batch failed. Failing
+        the backend there hands the job to a worse engine when one request per cue
+        works -- the same "the batch is an optimisation, not a contract" lesson
+        §13.40 learned about segment counts.
+        """
+        fake = FakeHTTP(
+            get_responses=[FakeResponse(200, text=BING_PAGE)],
+            post_responses=[
+                FakeResponse(200, {"statusCode": 400}),
+                FakeResponse(200, [{"translations": [{"text": "你好"}]}]),
+                FakeResponse(200, [{"translations": [{"text": "世界"}]}]),
+            ],
+        )
+        _install(monkeypatch, bing, fake)
+
+        outcome = bing.BingTranslateBackend().translate_texts(
+            ["Hello", "World"], "zh-Hans", ctx
+        )
+
+        assert outcome.texts == ["你好", "世界"]
+        assert len(fake.post_calls) == 3
+
+    def test_a_refusal_that_persists_still_raises_with_the_reason(
+        self, ctx: RunContext, monkeypatch
+    ) -> None:
+        """Degrading must not become swallowing: if per-cue fails too, it is an error.
+
+        And the error has to name the refusal, because the body is the only
+        evidence -- the old message discarded it and cost a whole investigation.
+        """
+        refusal = FakeResponse(200, {"statusCode": 400, "message": "Bad request"})
+        fake = FakeHTTP(
+            get_responses=[FakeResponse(200, text=BING_PAGE)],
+            post_responses=[refusal]
+            + [FakeResponse(200, {"statusCode": 400, "message": "Bad request"})] * 4,
+        )
+        _install(monkeypatch, bing, fake)
+
+        with pytest.raises(TranslationBackendError) as caught:
+            bing.BingTranslateBackend().translate_texts(["Hello", "World"], "zh-Hans", ctx)
+
+        reason = str(caught.value.details.get("reason", ""))
+        assert "statusCode=400" in reason
+        assert "Bad request" in reason
+
+    def test_an_unrecognised_shape_still_raises_and_is_described(
+        self, ctx: RunContext, monkeypatch
+    ) -> None:
+        """A shape we do not understand will not improve by asking per cue.
+
+        Only a *refusal* (a body that names a status) degrades. Distinguishing the
+        two keeps a changed response format from costing one request per cue on
+        every batch before failing anyway.
+        """
+        fake = FakeHTTP(
+            get_responses=[FakeResponse(200, text=BING_PAGE)],
+            post_responses=[FakeResponse(200, {"unexpected": True})],
+        )
+        _install(monkeypatch, bing, fake)
+
+        with pytest.raises(TranslationBackendError) as caught:
+            bing.BingTranslateBackend().translate_texts(["Hello"], "zh-Hans", ctx)
+
+        assert "unexpected" in str(caught.value.details.get("reason", ""))
+        assert len(fake.post_calls) == 1
+
+    def test_a_list_of_the_wrong_shape_is_described(
+        self, ctx: RunContext, monkeypatch
+    ) -> None:
+        fake = FakeHTTP(
+            get_responses=[FakeResponse(200, text=BING_PAGE)],
+            post_responses=[FakeResponse(200, ["just a string"])],
+        )
+        _install(monkeypatch, bing, fake)
+
+        with pytest.raises(TranslationBackendError) as caught:
+            bing.BingTranslateBackend().translate_texts(["Hello"], "zh-Hans", ctx)
+
+        assert "JSON list" in str(caught.value.details.get("reason", ""))
+
+    def test_a_non_json_body_says_so(self, ctx: RunContext, monkeypatch) -> None:
+        fake = FakeHTTP(
+            get_responses=[FakeResponse(200, text=BING_PAGE)],
+            post_responses=[FakeResponse(200, ValueError("not json"))],
+        )
+        _install(monkeypatch, bing, fake)
+
+        with pytest.raises(TranslationBackendError) as caught:
+            bing.BingTranslateBackend().translate_texts(["Hello"], "zh-Hans", ctx)
+
+        assert caught.value.message == "bing batch response was not JSON"
+
+
+class TestRetryPolicy:
+    """The policy itself, away from any backend.
+
+    Overrides the module's backoff zeroing: these assertions are *about* the
+    numbers, so a zeroed base would make most of them vacuously true.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _real_backoff(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(base, "BACKOFF_BASE_SECONDS", 2.0)
+
+    def test_the_backoff_grows_with_the_attempt(self) -> None:
+        assert base.retry_delay(1) == 2.0
+        assert base.retry_delay(2) == 4.0
+
+    def test_the_retry_after_hint_replaces_the_backoff(self) -> None:
+        """The server knows when it will accept us again; our guess does not."""
+        assert base.retry_delay(1, retry_after=0.25) == 0.25
+
+    def test_a_huge_retry_after_is_capped(self) -> None:
+        """``Retry-After: 3600`` must not hang the job for an hour.
+
+        Four other backends can finish the work now; waiting out a long ban is
+        worse than degrading to the next engine.
+        """
+        assert base.retry_delay(1, retry_after=3600.0) == base.MAX_DELAY_SECONDS
+
+    def test_a_negative_hint_cannot_become_a_negative_sleep(self) -> None:
+        assert base.retry_delay(1, retry_after=-5.0) == 0.0
+
+    def test_the_backoff_itself_is_capped(self) -> None:
+        assert base.retry_delay(100) == base.MAX_DELAY_SECONDS
+
+    @pytest.mark.parametrize("status", [429, 500, 502, 503, 504])
+    def test_transient_statuses_are_retryable(self, status: int) -> None:
+        assert base.retryable_status(status) is True
+
+    @pytest.mark.parametrize("status", [200, 400, 401, 403, 404, 422])
+    def test_other_statuses_are_not(self, status: int) -> None:
+        assert base.retryable_status(status) is False
+
+    def test_the_backoff_wait_is_cancellable(self, ctx: RunContext) -> None:
+        """A cancelled job stops during the nap instead of finishing it.
+
+        ``wait_for_retry`` uses ``ctx.cancel.wait`` for exactly this reason, and
+        the delay here is deliberately long: if it were a real ``time.sleep`` the
+        test would take 30 seconds to fail.
+        """
+        ctx.request_cancel()
+
+        with pytest.raises(JobCancelled):
+            base.wait_for_retry(ctx, 30.0)
+
+    def test_a_zero_delay_returns_without_touching_the_event(self, ctx: RunContext) -> None:
+        """The autouse fixture zeroes the backoff; that must be a no-op, not a wait."""
+        base.wait_for_retry(ctx, 0.0)
+        base.wait_for_retry(ctx, -1.0)

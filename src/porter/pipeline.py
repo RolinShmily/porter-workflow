@@ -37,6 +37,7 @@ from porter.events import (
     PhaseFailed,
     PhaseStarted,
 )
+from porter.logging import get_logger
 from porter.models.materials import RawMaterials
 from porter.models.request import BurnMode, BurnResult, JobRequest, JobResult
 from porter.models.subtitle import SubtitleSet
@@ -50,12 +51,33 @@ from porter.ports import (
 
 __all__ = ["Pipeline"]
 
+_logger = get_logger(__name__)
+
 #: VideoCaptioner's engine names. Setting one as ``asr.engine`` is the only way to
 #: ask for the external CLI, and v0.1 ran it *first* in that case — the opposite of
 #: where it sits otherwise, because naming an engine is an explicit request.
 _VIDEOCAPTIONER_ENGINES = frozenset({"bijian", "jianying", "whisper-cpp"})
 
 _T = TypeVar("_T")
+
+
+def _promote_named(backends: list[_T], name: str) -> bool:
+    """Move the backend called ``name`` to the front of ``backends``.
+
+    Returns whether anything matched, so the caller can tell an explicit request
+    that was honoured from one that named nothing. ``--asr-engine`` used to be
+    collected by the CLI and read by nobody, so a user asking for a specific
+    backend silently got the default order instead; reporting the miss is what
+    keeps the flag honest.
+
+    A miss is never fatal: the remaining backends still form a working chain, and
+    refusing to run because a name was misspelled would be a worse trade.
+    """
+    for index, backend in enumerate(backends):
+        if getattr(backend, "name", None) == name:
+            backends.insert(0, backends.pop(index))
+            return True
+    return False
 
 
 @dataclass
@@ -311,45 +333,72 @@ def _default_downloader() -> Downloader:
 
 
 def _default_transcriber(ctx: RunContext) -> Transcriber:
-    """Build the ASR chain in v0.1's order.
+    """Build the ASR chain: local Whisper first, then the rest as fallbacks.
 
     ======================  ===================================================
     order                   condition
     ======================  ===================================================
-    1. VideoCaptioner CLI   only when ``asr.engine`` names one of its engines
+    1. Local Whisper        ``[asr-local]`` installed; needs no key or network
     2. Whisper API          needs an OpenAI-compatible key
     3. Bcut                 key-free, unverified
     4. Google Web           key-free, unverified
-    5. VideoCaptioner CLI   otherwise, as the last resort
+    5. VideoCaptioner CLI   external process, GPL-3.0
     ======================  ===================================================
 
-    The CLI appears at two positions rather than one because v0.1 did that
-    deliberately: an explicitly configured engine is a request to use it, while an
-    unconfigured one is a fallback of last resort. Preserved rather than tidied,
-    because the behaviour is user-visible.
+    **Local Whisper leads** (added in §13.48). The v0.1 order put the paid API
+    first for quality and speed, which was written when the key-free endpoints
+    still worked -- both were measured returning empty results on 2026-09-22
+    (§13.21), so the first slot should go to the backend most likely to finish.
+    Local inference is also the only one that is unmetered, offline-capable and
+    immune to an endpoint being withdrawn.
+
+    ``asr.engine`` then moves the named backend to the front, keeping every other
+    backend as a fallback. Two rules, in this order:
+
+    * One of VideoCaptioner's engine names (``bijian``/``jianying``/``whisper-cpp``)
+      promotes the external CLI, which is how v0.1 asked for it.
+    * Any other name that matches a backend (``whisper-local``, ``whisper-api``,
+      ``bcut``, ``google-web``, ``videocaptioner``) promotes that backend.
+
+    Before §13.48 only the first rule existed, so ``--asr-engine whisper-api``
+    was accepted by the CLI and silently ignored -- ``docs/CONFIG.md`` even
+    documented it as reordering the chain. A name matching nothing now logs a
+    warning instead of passing unremarked.
     """
-    from porter.asr.chain import AsrChain
-
-    chain = AsrChain()
-
+    from porter.asr.base import AsrBackend
     from porter.asr.bcut import BcutBackend
+    from porter.asr.chain import AsrChain
     from porter.asr.google_web import GoogleWebBackend
     from porter.asr.videocaptioner import VideoCaptionerBackend
     from porter.asr.whisper_api import WhisperApiBackend
+    from porter.asr.whisper_local import WhisperLocalBackend
 
     configured = (ctx.config.asr.engine or "").strip().lower()
-    cli = VideoCaptionerBackend()
 
-    if configured in _VIDEOCAPTIONER_ENGINES:
-        chain.add(cli)
+    # Annotated with the *backend* protocol, not ``Transcriber``: the chain's
+    # elements recognise audio and return ``AsrOutcome``, while ``Transcriber`` is
+    # the pipeline-facing port that consumes ``RawMaterials`` and returns a
+    # ``SubtitleSet``. ``AsrChain`` is what adapts one to the other.
+    ordered: list[AsrBackend] = [
+        WhisperLocalBackend(),
+        WhisperApiBackend(),
+        BcutBackend(),
+        GoogleWebBackend(),
+        VideoCaptionerBackend(),
+    ]
 
-    chain.add(WhisperApiBackend())
-    chain.add(BcutBackend())
-    chain.add(GoogleWebBackend())
+    if configured:
+        wanted = "videocaptioner" if configured in _VIDEOCAPTIONER_ENGINES else configured
+        if not _promote_named(ordered, wanted):
+            _logger.warning(
+                "asr.engine=%r names no known backend; keeping the default order (%s)",
+                configured,
+                ", ".join(getattr(backend, "name", "?") for backend in ordered),
+            )
 
-    if configured not in _VIDEOCAPTIONER_ENGINES:
-        chain.add(cli)
-
+    chain = AsrChain()
+    for backend in ordered:
+        chain.add(backend)
     return chain
 
 
@@ -368,7 +417,19 @@ def _default_translator(ctx: RunContext) -> Translator:
     what makes the ordering safe: a key-free endpoint that echoes its input is
     rejected and the next one is tried, rather than producing an English subtitle
     labelled as Chinese.
+
+    ``options.translator`` then moves the named backend to the front, keeping
+    every other backend as a fallback -- the same rule as ``asr.engine``, and the
+    reason the CLI's ``--translator`` is no longer collected-and-ignored. Names
+    are the real ones: ``llm``, ``bing``, ``google``, ``mymemory``,
+    ``videocaptioner-llm``, ``videocaptioner``. A name matching nothing logs a
+    warning instead of passing unremarked.
+
+    Promotion rather than filtering is deliberate: a user who names a backend
+    wants it *tried first*, not to have the job die when that one endpoint is
+    rate-limited. ``docs/CONFIG.md`` documents this as the flag's semantics.
     """
+    from porter.translate.base import TranslationBackend
     from porter.translate.bing import BingTranslateBackend
     from porter.translate.chain import TranslationChain
     from porter.translate.google import GoogleTranslateBackend
@@ -379,15 +440,28 @@ def _default_translator(ctx: RunContext) -> Translator:
         VideocaptionerLLMBackend,
     )
 
-    return (
-        TranslationChain()
-        .add(LLMTranslationBackend())
-        .add(BingTranslateBackend())
-        .add(GoogleTranslateBackend())
-        .add(MyMemoryBackend())
-        .add(VideocaptionerLLMBackend())
-        .add(VideocaptionerBackend())
-    )
+    configured = (ctx.options.translator or "").strip().lower()
+
+    ordered: list[TranslationBackend] = [
+        LLMTranslationBackend(),
+        BingTranslateBackend(),
+        GoogleTranslateBackend(),
+        MyMemoryBackend(),
+        VideocaptionerLLMBackend(),
+        VideocaptionerBackend(),
+    ]
+
+    if configured and not _promote_named(ordered, configured):
+        _logger.warning(
+            "translator=%r names no known backend; keeping the default order (%s)",
+            configured,
+            ", ".join(backend.name for backend in ordered),
+        )
+
+    chain = TranslationChain()
+    for backend in ordered:
+        chain.add(backend)
+    return chain
 
 
 def _default_renderer(ctx: RunContext) -> Renderer:

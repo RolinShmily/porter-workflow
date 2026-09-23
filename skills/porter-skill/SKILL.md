@@ -155,9 +155,15 @@ run "<URL>" --burn zh_only
 # 指定输出目录 / 目标语言
 run "<URL>" -o /path/to/out --target-lang zh-Hans
 
-# 强制某个后端（跳过回退链）
+# 让某个后端先跑（其余仍作回退，不是"只用它"）
 run "<URL>" --translator google
 run "<URL>" --asr-engine whisper-api
+
+# 本次作业换一个 LLM 模型（不改配置）
+run "<URL>" --llm-model deepseek-reasoner
+
+# 已有现成的源字幕：直接用，不跑识别（.srt / .vtt）
+run "<URL>" --subtitle-file ./my_subtitles.srt
 
 # 需要登录才能看的视频
 run "<URL>" --cookies-from-browser chrome

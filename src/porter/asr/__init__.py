@@ -9,6 +9,11 @@
     no engine to probe and no ordering question.
 ``whisper_api.py``
     OpenAI-compatible Whisper endpoint. Requires the ``[llm]`` extra.
+``whisper_local.py``
+    ★ Local Whisper through ``faster-whisper`` (MIT, no PyTorch). Requires the
+    ``[asr-local]`` extra. The only backend that needs no key, no network and no
+    third-party service, and the only one whose ``endpoint_verified`` is true by
+    construction rather than by measurement.
 ``bcut.py``
     Bilibili Bcut. Key-free, chunked upload, its own session so a configured proxy
     cannot stall the upload. **Unverified endpoint.**
@@ -38,6 +43,7 @@ from porter.asr.google_web import GoogleWebBackend
 from porter.asr.platform_subs import load_platform_subtitles
 from porter.asr.videocaptioner import VideoCaptionerBackend
 from porter.asr.whisper_api import WhisperApiBackend
+from porter.asr.whisper_local import WhisperLocalBackend
 
 __all__ = [
     "AsrBackend",
@@ -48,5 +54,6 @@ __all__ = [
     "GoogleWebBackend",
     "VideoCaptionerBackend",
     "WhisperApiBackend",
+    "WhisperLocalBackend",
     "load_platform_subtitles",
 ]

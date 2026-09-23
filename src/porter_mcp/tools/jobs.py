@@ -74,6 +74,7 @@ def register(server: FastMCP) -> None:
         only_phase: str | None = None,
         force: bool = False,
         audio_denoise: bool = True,
+        subtitle_file: str | None = None,
     ) -> dict[str, Any]:
         """Accept a job, start it in the background, return its id.
 
@@ -81,6 +82,8 @@ def register(server: FastMCP) -> None:
         applies (``JobRequest.from_source``), so ``file://`` and bare paths both
         work and a local file needs no separate tool.
         """
+        from pathlib import Path
+
         from porter.config import resolve
         from porter.context import RunContext
         from porter.models.request import BurnMode, JobOptions, JobRequest
@@ -96,6 +99,7 @@ def register(server: FastMCP) -> None:
                 only_phase=_phase(only_phase),
                 force=force,
                 audio_denoise=audio_denoise,
+                subtitle_file=Path(subtitle_file) if subtitle_file else None,
             )
             request = JobRequest.from_source(source, options)
         except (PorterError, ValueError) as exc:

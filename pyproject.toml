@@ -48,9 +48,12 @@ dependencies = [
 [project.optional-dependencies]
 llm = ["openai>=1.0", "json-repair>=0.30"]
 stt = ["SpeechRecognition>=3.10"]
+#: Local speech recognition: no key, no network, no third-party service. MIT and
+#: CTranslate2-backed, so unlike openai-whisper it does not drag in PyTorch.
+asr-local = ["faster-whisper>=1.0"]
 images = ["pillow>=10.0"]
 mcp = ["fastmcp>=2.11"]
-all = ["porter-workflow[llm,stt,images,mcp]"]
+all = ["porter-workflow[llm,stt,asr-local,images,mcp]"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
@@ -106,6 +109,36 @@ files = ["src"]
 mypy_path = "src"
 explicit_package_bases = true
 namespace_packages = true
+
+# ---------------------------------------------------------------------------
+# Dependencies whose *stubs* require a newer Python than we support.
+#
+# ``python_version = "3.10"`` is the floor we promise, so mypy parses with 3.10
+# syntax rules. ``numpy``'s ``__init__.pyi`` uses PEP 695 ``type`` statements
+# (3.12+), and mypy aborts the entire run on it rather than reporting one module:
+#
+#     numpy/__init__.pyi:737: error: Type statement is only supported in
+#     Python 3.12 and greater  [syntax]
+#     Found 1 error in 1 file (errors prevented further checking)
+#
+# numpy is not ours and is not imported by any of our code -- it arrives
+# transitively (faster-whisper -> ctranslate2), and the OpenAI SDK then reaches
+# it through ``openai/_extras/numpy_proxy.py``, its optional-dependency proxy for
+# a numpy feature we do not use.
+#
+# Only ``follow_imports = "skip"`` on the *importer* actually prevents this: mypy
+# still parses a module marked ``skip`` when it is reached directly, and neither
+# ``ignore_errors`` nor ``follow_imports`` on ``numpy`` itself suppresses a syntax
+# error. Skipping ``openai._extras.*`` — the package whose whole job is to import
+# optional third-party libraries — keeps numpy out of the graph without
+# touching openai's own types or raising the floor.
+#
+# Verified 2026-09-23 against mypy 2.3.1: without this block the gate is red, with
+# it ``Success: no issues found in 96 source files``.
+# ---------------------------------------------------------------------------
+[[tool.mypy.overrides]]
+module = ["openai._extras.*"]
+follow_imports = "skip"
 
 # ---------------------------------------------------------------------------
 # Layering guard — the engine must never depend on a frontend.

@@ -201,6 +201,21 @@ def burn_hardsub(
         RenderError: ffmpeg failed, or produced an unreadable file.
         MediaError: ffmpeg is missing.
     """
+    # Absolute from here on. The child runs with ``cwd=subtitle.parent`` (see the
+    # filtergraph note below), so a relative path anywhere in the argument list
+    # would be resolved against the subtitle's directory instead of ours --
+    # ffmpeg would look for ``cooked/porter_output/<task>/raw/video.mp4`` and
+    # report "could not read the master video" while the file sits right there.
+    #
+    # This survived the pixel-level verification because every test passes a
+    # ``tmp_path``, which is absolute by construction: the relative case had no
+    # test, so the cwd fix for apostrophe paths shipped with a hole in it. Found
+    # on the first real CLI run, where the pipeline passes the output-relative
+    # paths it reports to the user.
+    video_input = video_input.resolve()
+    subtitle = subtitle.resolve()
+    video_output = video_output.resolve()
+
     video_output.parent.mkdir(parents=True, exist_ok=True)
     temp_output = video_output.with_name(f".tmp_{video_output.name}")
     temp_output.unlink(missing_ok=True)

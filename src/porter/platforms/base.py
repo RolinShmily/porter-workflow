@@ -398,9 +398,16 @@ class YtDlpExtractor:
 
         subtitles = info.get("subtitles") or {}
         auto_captions = info.get("automatic_captions") or {}
-        official_lang = self.spec.select_source_lang(subtitles, is_auto=False)
+        # Same declared-language tiebreak as ``plan_subtitles``: the two must not
+        # disagree about which ``*-orig`` track is the original audio.
+        declared_lang = info.get("language")
+        official_lang = self.spec.select_source_lang(
+            subtitles, is_auto=False, declared_lang=declared_lang
+        )
         if official_lang is None:
-            official_lang = self.spec.select_source_lang(auto_captions, is_auto=True)
+            official_lang = self.spec.select_source_lang(
+                auto_captions, is_auto=True, declared_lang=declared_lang
+            )
 
         return VideoMetadata(
             id=video_id,
@@ -437,11 +444,17 @@ class YtDlpExtractor:
 
         human = info.get("subtitles") or {}
         auto = info.get("automatic_captions") or {}
+        # The video's own declared language, used to disambiguate the ``*-orig``
+        # tracks a YouTube auto-dub produces one of per language. Without it the
+        # winner is whichever track YouTube happened to list first.
+        declared_lang = info.get("language")
 
-        source_lang = self.spec.select_source_lang(human, is_auto=False)
+        source_lang = self.spec.select_source_lang(human, is_auto=False, declared_lang=declared_lang)
         source_is_auto = False
         if source_lang is None:
-            source_lang = self.spec.select_source_lang(auto, is_auto=True)
+            source_lang = self.spec.select_source_lang(
+                auto, is_auto=True, declared_lang=declared_lang
+            )
             source_is_auto = source_lang is not None
 
         plan: dict[str, tuple[str, bool]] = {}

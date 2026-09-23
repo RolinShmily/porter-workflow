@@ -42,6 +42,7 @@ from porter.context import RunContext
 from porter.logging import get_logger
 from porter.subtitles.srt import parse_srt
 from porter.translate.base import TranslationBackendError, TranslationOutcome
+from porter.translate.llm import effective_llm_model
 from porter.utils.time import ms_to_srt_time
 
 __all__ = ["VideocaptionerBackend", "VideocaptionerLLMBackend"]
@@ -267,6 +268,6 @@ class VideocaptionerLLMBackend(_VideocaptionerBase):
         args = ["--translator", "llm", "--api-key", ctx.config.llm.api_key or ""]
         if ctx.config.llm.api_base:
             args.extend(["--api-base", ctx.config.llm.api_base])
-        if ctx.config.llm.model:
-            args.extend(["--model", ctx.config.llm.model])
+        if model := effective_llm_model(ctx):
+            args.extend(["--model", model])
         return args

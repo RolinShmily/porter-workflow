@@ -82,7 +82,12 @@ CHINESE_LANG_PRIORITY: tuple[str, ...] = (
     "zh-HK",
 )
 
-#: Suffixes yt-dlp uses to mark a track as matching the original audio.
+#: Suffixes yt-dlp uses on ``*-orig`` / ``*-original`` tracks.
+#:
+#: On a plain video this marks the original audio language, which is why it
+#: outranks :data:`SOURCE_LANG_PRIORITY`. On a video YouTube has auto-dubbed it
+#: is *not* unique -- there is one per language -- so it is a hint to be
+#: disambiguated, not an answer. See :func:`select_source_lang`.
 _ORIGINAL_SUFFIXES = ("-orig", "-original")
 
 #: Live-caption pseudo-tracks; never usable as a subtitle source.
@@ -196,20 +201,67 @@ def _first_present(subtitles: Mapping[str, Any], candidates: Sequence[str]) -> s
     return None
 
 
+def _base_lang(tag: str) -> str:
+    """Reduce a language tag to its primary subtag, lowercased.
+
+    ``en-US`` -> ``en``, ``en-orig`` -> ``en``, ``pt-BR-orig`` -> ``pt``.
+    """
+    return re.split(r"[-_]", tag, maxsplit=1)[0].lower()
+
+
+def _matching_lang(candidates: Sequence[str], declared_lang: str | None) -> str | None:
+    """Return the candidate whose primary subtag matches ``declared_lang``."""
+    if not declared_lang:
+        return None
+    wanted = _base_lang(declared_lang)
+    for tag in candidates:
+        if _base_lang(tag) == wanted:
+            return tag
+    return None
+
+
+def _preferred_original(candidates: Sequence[str]) -> str | None:
+    """The candidate matching the earliest entry of :data:`SOURCE_LANG_PRIORITY`.
+
+    The last resort when the video declares no language: with one ``*-orig``
+    track per dubbed language there is no other signal available, and document
+    order is effectively random. English leads that list because the pipeline's
+    normal direction is en -> zh.
+    """
+    for want in SOURCE_LANG_PRIORITY:
+        wanted = _base_lang(want)
+        for tag in candidates:
+            if _base_lang(tag) == wanted:
+                return tag
+    return None
+
+
 def select_source_lang(
     subtitles: Mapping[str, Any],
     *,
     is_auto: bool = False,
+    declared_lang: str | None = None,
 ) -> str | None:
     """Choose the best track for the original spoken language.
 
     Selection order:
 
-    1. A track yt-dlp marked as the original audio (``*-orig`` / ``*-original``).
+    1. A track yt-dlp marked as matching the original audio (``*-orig`` /
+       ``*-original``). This is disambiguated by the video's declared language
+       first, then :data:`SOURCE_LANG_PRIORITY`, then document order.
     2. The first language in :data:`SOURCE_LANG_PRIORITY` that is present.
     3. For human-authored tracks only (``is_auto=False``), the first usable track
        in document order. Auto-generated tracks are excluded from this fallback
        because an arbitrary machine transcription is a poor source.
+
+    ``declared_lang`` exists because the ``*-orig`` suffix stopped meaning "the
+    original audio" once YouTube began auto-dubbing: a dubbed video carries one
+    ``*-orig`` track *per language*, so taking the first in document order
+    decides nothing. On a real five-minute English video that picked
+    ``ar-orig`` (document order) over ``en-orig``, and because a Chinese track
+    existed the plan then also reported "translation not needed" -- producing
+    Arabic and Chinese subtitles over an English video, with no English
+    anywhere. The video's own ``language`` field (``en-US``) is the tiebreak.
 
     Returns:
         A language code, or None when nothing suitable exists.
@@ -217,9 +269,13 @@ def select_source_lang(
     if not subtitles:
         return None
 
-    for key in subtitles:
-        if key.endswith(_ORIGINAL_SUFFIXES):
-            return key
+    originals = [key for key in subtitles if key.endswith(_ORIGINAL_SUFFIXES)]
+    if originals:
+        return (
+            _matching_lang(originals, declared_lang)
+            or _preferred_original(originals)
+            or originals[0]
+        )
 
     preferred = _first_present(subtitles, SOURCE_LANG_PRIORITY)
     if preferred is not None:

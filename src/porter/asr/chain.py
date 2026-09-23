@@ -29,11 +29,12 @@ the config lookup and the file writing.
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 
 from porter.asr.base import AsrBackend, AsrBackendError, AsrOutcome, coerce_items
-from porter.asr.platform_subs import load_platform_subtitles
+from porter.asr.platform_subs import load_platform_subtitles, load_supplied_subtitles
 from porter.context import RunContext
 from porter.errors import JobCancelled, PorterError
 from porter.events import Phase
@@ -45,7 +46,7 @@ from porter.subtitles.phrasing import (
     has_chinese_translation,
     normalize_subtitle_items,
 )
-from porter.subtitles.srt import generate_zh_srt
+from porter.subtitles.srt import generate_zh_srt, parse_srt
 
 __all__ = ["AsrChain"]
 
@@ -61,6 +62,19 @@ BILINGUAL_ASS_NAME = "subtitle_bilingual.ass"
 ZH_ASS_NAME = "subtitle_zh.ass"
 TRANSCRIPT_JSON_NAME = "transcript.json"
 TRANSCRIPT_TXT_NAME = "transcript.txt"
+
+#: Provenance sidecar for the cached source cues.
+#:
+#: TRANSCRIBE writes ``cooked/subtitle.srt``, and re-running a job used to redo the
+#: recognition every time -- 16 s on a 74-second clip, minutes on a long video --
+#: even when nothing that affects recognition had changed. Reuse needs one fact the
+#: SRT cannot carry: whether those cues came from the platform's track or from ASR,
+#: which is a question the operator asks ("did this job pay for Whisper?").
+#:
+#: **No sidecar means no reuse.** Guessing the provenance would put a wrong answer
+#: in the job report, and a task directory from an older build simply re-transcribes
+#: once. Reusing only what we can describe honestly is the whole rule.
+PROVENANCE_NAME = ".transcribe.json"
 
 
 class AsrChain:
@@ -110,7 +124,29 @@ class AsrChain:
         ctx.check_cancelled()
         ctx.progress(Phase.TRANSCRIBE, 0.0, "preparing source subtitles")
 
-        items = load_platform_subtitles(raw.subtitle_src)
+        restored = self._restore(raw, ctx)
+        if restored is not None:
+            return restored
+
+        # An explicitly supplied file wins over the platform's track: it is a
+        # direct instruction, and the platform track is what we would otherwise
+        # have to guess about. It also raises rather than returning [] -- see
+        # `load_supplied_subtitles`.
+        supplied = ctx.options.subtitle_file
+        items = (
+            load_supplied_subtitles(Path(supplied))
+            if supplied is not None
+            else load_platform_subtitles(raw.subtitle_src)
+        )
+        if supplied is not None:
+            ctx.progress(Phase.TRANSCRIBE, 1.0, "using the supplied subtitle file")
+            return self._write(
+                raw,
+                items,
+                AsrOutcome(items=items, used_asr=False, origin="supplied"),
+                ctx,
+            )
+
         if items:
             ctx.logger.info("using the platform's own subtitle track (%d cues)", len(items))
             ctx.progress(Phase.TRANSCRIBE, 1.0, "using the platform subtitle track")
@@ -134,6 +170,91 @@ class AsrChain:
         return self._write(raw, outcome.items, outcome, ctx)
 
     # -- internals ----------------------------------------------------------
+
+    def _restore(self, raw: RawMaterials, ctx: RunContext) -> SubtitleSet | None:
+        """Reuse the source cues a previous run left on disk, when that is honest.
+
+        Four things must hold, and each one is a way the cached file could be
+        wrong rather than merely old:
+
+        * ``force`` was not asked for -- the documented escape hatch;
+        * TRANSCRIBE is not the phase that was explicitly requested, because
+          ``--only-phase transcribe`` is a request to run it, and silently
+          returning a cache would make that flag a no-op;
+        * the SRT exists and is at least as new as the audio it was made from,
+          the same freshness rule BURN applies to a release video;
+        * the provenance sidecar is there, so ``used_asr`` is a recorded fact
+          rather than a guess.
+        """
+        if ctx.options.force or ctx.options.only_phase is Phase.TRANSCRIBE:
+            return None
+
+        cooked = raw.layout.cooked_dir
+        source_srt = cooked / SOURCE_SRT_NAME
+        sidecar = cooked / PROVENANCE_NAME
+        if not source_srt.is_file() or not sidecar.is_file():
+            return None
+
+        # Compared against the *standardised master audio*, not ``_best_audio``
+        # (which prefers the enhanced copy). PREPARE re-runs the enhancement on
+        # every invocation, so ``audio_enhanced.wav`` gets a fresh mtime each run
+        # and the check could never be satisfied -- measured on a real job: run B
+        # re-transcribed because PREPARE had just rewritten the file it was being
+        # compared to. ``raw/audio.wav`` is written by master standardisation,
+        # which IS reused, so it is stable across runs and changes only when the
+        # audio really changes.
+        #
+        # The residual limit, shared with BURN's reuse rule: changing the
+        # *enhancement settings* does not invalidate the cues. ``--force`` is the
+        # documented escape hatch for that, exactly as it is for a re-encode.
+        audio = raw.audio
+        audio_mtime = audio.stat().st_mtime if audio.is_file() else 0.0
+        # A supplied file is an input too: editing it must invalidate the cache,
+        # or the user's correction would be silently ignored in favour of cues
+        # derived from the version they just fixed.
+        supplied = ctx.options.subtitle_file
+        supplied_mtime = (
+            Path(supplied).stat().st_mtime
+            if supplied is not None and Path(supplied).is_file()
+            else 0.0
+        )
+        if source_srt.stat().st_mtime < max(audio_mtime, supplied_mtime):
+            _logger.info(
+                "cached source cues are older than their input; re-running recognition"
+            )
+            return None
+
+        try:
+            provenance = json.loads(sidecar.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            _logger.warning("could not read %s (%s); re-running recognition", sidecar, exc)
+            return None
+        if not isinstance(provenance, dict) or "used_asr" not in provenance:
+            return None
+
+        items = normalize_subtitle_items(parse_srt(source_srt.read_text(encoding="utf-8")))
+        if not items:
+            return None
+
+        ctx.logger.info(
+            "reusing %d cached source cues from %s", len(items), source_srt.name
+        )
+        ctx.progress(Phase.TRANSCRIBE, 1.0, "reusing cached source cues")
+
+        info = raw.info
+        return SubtitleSet(
+            subtitle_bilingual_srt=cooked / BILINGUAL_SRT_NAME,
+            subtitle_bilingual_ass=cooked / BILINGUAL_ASS_NAME,
+            subtitle_zh_srt=cooked / ZH_SRT_NAME,
+            subtitle_zh_ass=cooked / ZH_ASS_NAME,
+            items=items,
+            transcript_json_path=cooked / TRANSCRIPT_JSON_NAME,
+            transcript_txt_path=cooked / TRANSCRIPT_TXT_NAME,
+            sentences=[],
+            used_asr=bool(provenance["used_asr"]),
+            video_width=info.width if info is not None else None,
+            video_height=info.height if info is not None else None,
+        )
 
     def _run(self, audio: Path, ctx: RunContext) -> AsrOutcome:
         """Try each backend until one returns cues. Raises if none does."""
@@ -189,6 +310,7 @@ class AsrChain:
             phase=Phase.TRANSCRIBE.value,
             attempted=attempted,
             failures=failures,
+            hint=NO_CUES_HINT,
         )
 
     def _write(
@@ -205,6 +327,11 @@ class AsrChain:
                 "no speech-to-text backend produced any cues",
                 phase=Phase.TRANSCRIBE.value,
                 backends=[backend.name for backend in self.backends],
+                # The actionable half. Without a key-free ASR engine installed and
+                # a video that carries no subtitle track, there is nothing else to
+                # try -- and a failure that names the way out is worth more than
+                # one that only reports the symptom.
+                hint=NO_CUES_HINT,
             )
 
         # Measured where possible. `raw.info` comes from PREPARE, which probes the
@@ -222,6 +349,14 @@ class AsrChain:
         # source_text otherwise, so it writes the source track correctly while
         # target text is still empty.
         (cooked / SOURCE_SRT_NAME).write_text(generate_zh_srt(clean), encoding="utf-8")
+
+        # Written immediately after the SRT so the two cannot disagree for long:
+        # a crash between them costs one re-transcription, whereas a sidecar
+        # without its SRT would claim cues that are not there.
+        (cooked / PROVENANCE_NAME).write_text(
+            json.dumps({"used_asr": outcome.used_asr, "origin": outcome.origin}),
+            encoding="utf-8",
+        )
 
         return SubtitleSet(
             subtitle_bilingual_srt=cooked / BILINGUAL_SRT_NAME,
@@ -241,6 +376,19 @@ class AsrChain:
 # ----------------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------------
+
+
+#: What to tell someone whose video has no subtitle track and no usable ASR engine.
+#:
+#: Both failure paths below share it, because both are the same user-facing
+#: situation. The hint was first written only into ``_write``'s raise -- which is
+#: reachable only when cues survive recognition but are all dropped by
+#: normalisation -- while the message a real job shows comes from ``_run``. A test
+#: that asserted on the wrong one would have passed while the hint stayed invisible.
+NO_CUES_HINT = (
+    "install porter-workflow[asr-local] for offline recognition, "
+    "configure an ASR key, or pass --subtitle-file with an existing .srt/.vtt"
+)
 
 
 def _probe(backend: AsrBackend, ctx: RunContext) -> bool:

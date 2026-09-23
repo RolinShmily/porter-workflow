@@ -96,6 +96,12 @@ class ASRConfig(BaseModel):
     whisper_api_key: str | None = None
     whisper_api_base: str | None = None
     whisper_model: str = "whisper-1"
+    #: Local Whisper (``[asr-local]``). ``model`` is a faster-whisper size
+    #: (``base``/``small``/``medium``/``large-v3``) or a Hugging Face repo id for
+    #: a fine-tune. ``device``/``compute_type`` accept ``auto``.
+    whisper_local_model: str = "small"
+    whisper_local_device: str = "auto"
+    whisper_local_compute_type: str = "auto"
     audio_denoise: bool = True
 
 
@@ -302,6 +308,21 @@ def _from_mapping(data: dict[str, Any], *, source: str) -> PorterConfig:
             _first_env("WHISPER_API_BASE") or asr_raw.get("whisper_api_base") or llm.api_base
         ),
         whisper_model=_first_env("WHISPER_MODEL") or asr_raw.get("whisper_model") or "whisper-1",
+        whisper_local_model=(
+            _first_env("PORTER_ASR_LOCAL_MODEL")
+            or asr_raw.get("whisper_local_model")
+            or "small"
+        ),
+        whisper_local_device=(
+            _first_env("PORTER_ASR_LOCAL_DEVICE")
+            or asr_raw.get("whisper_local_device")
+            or "auto"
+        ),
+        whisper_local_compute_type=(
+            _first_env("PORTER_ASR_LOCAL_COMPUTE_TYPE")
+            or asr_raw.get("whisper_local_compute_type")
+            or "auto"
+        ),
         audio_denoise=asr_raw.get("audio_denoise", True),
     )
 

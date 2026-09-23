@@ -2558,6 +2558,9 @@ store 把状态**投影**进 registry。反过来（registry 为权威）会让�
 
 `porter_job_start` / `_status` / `_result` / `_cancel` / `_list` + `porter://jobs/{id}/log` 资源。作业用后台线程跑，`_HEAVY_JOBS` 信号量**串行化重活**（一次编码已经打满机器，并发只会让两者都变慢）。`_run_job` 绝不放过异常——线程静默死掉会让作业永远停在 `running`。
 
+| — | 1.10 | 新增 §13.51：一轮六个已知问题。**①** `--translator`/`--llm-model` 是与 `--asr-engine` 完全同类的死字段（两个前端都收下、`src/` 零消费者），修法与之一致（提到链首、其余回退），`llm_model` 抽成 `effective_llm_model()` 因为有两个后端读它；顺带修正两处与实现不符的帮助文本。**②** bing 的失败既不是 §13.40 的回归也不是限流，而是**载荷尺寸上限**——实测 1/2/4/8 条（≤665 字符）可译、**15 条（1259 字符）被 HTTP 200 内的 `statusCode: 400` 拒绝**，故批量降到 8 且被拒时降级为逐句。**③** `_describe_body` 让被丢掉证据的错误消息重新可行动，并在真实运行中立刻兑现。**④** TRANSCRIBE 断点复用（`cooked/.transcribe.json` 记 provenance，无 sidecar 则不复用），真实运行抓出新判定**永远无法满足**（与每次都被重写的 `audio_enhanced.wav` 比较）。**⑤** 429/5xx 重试退避（可取消、尊重 `Retry-After`、上限 8s），逐句路径接同一 helper；反向验证抓出一个**靠换 client 而通过的空洞测试**。**⑥** 新增 `--subtitle-file`（不猜 sidecar，让用户明说），`NO_CUES_HINT` 抽常量——第一版 hint 写在几乎到不了的路径上。**⑦** 清理开发机 jobs.json 里 40 条测试垃圾。全量 **1452 passed**，9 个 seam 反向验证全绿。 |
+| — | 1.9 | 新增 §13.48：**本地 Whisper 后端**（`[asr-local]` = MIT 的 `faster-whisper`，无需 PyTorch；链首、无 Key、无网络、`endpoint_verified` 是结构性的），修掉 `--asr-engine` 死字段（只有三个 VideoCaptioner 引擎名有效，而 CONFIG.md 声称会重排链），`porter doctor` 的 ASR 文案随之改正，并记下「装了 ctranslate2→numpy 会让 mypy 在 3.10 下整个中止」的排除过程（有效旋钮只有 `follow_imports=skip` on `openai._extras.*`）。首次真实 CLI 运行又抓到两个真缺陷：**burn 的相对路径**（`cwd=subtitle.parent` 但 argv 未变绝对；全部测试用绝对 `tmp_path` 所以看不见）与**测试污染真实 jobs.json**（模块级 `JobRegistry()` 在导入时冻结了 seam）。真实交付：Instagram 作业 68.2 s 完成，NVENC 烧出双语与纯中文两版，像素级与肉眼双重验证。全量 **1388 passed**。 |
+| — | 1.8 | 新增 §13.47：YouTube **自动配音**让 `*-orig` 不再唯一（一个视频每种配音语言各一条，实测 20+ 条），`select_source_lang` 无条件取"第一个"等于取文档顺序——真实英文视频因此取到 `ar-orig`，又因复用自动翻译的 `zh-Hans` 而宣布"不需要翻译"，输出里没有英文。修法为三级裁决（声明的 `language` → `SOURCE_LANG_PRIORITY` → 文档顺序），并修掉**第二个调用点** `_build_metadata`（元数据与计划曾对同一份 info 给出不同答案）。三种反转矩阵 + 一条由反向验证抓出的**空洞测试**（`declared_lang="en-US"` 在未修状态下也通过，改用 `ar` 才真正覆盖）。全量 **1349 passed**。 |
 | — | 1.7 | 新增 §13.46：CI 矩阵证伪了一个从 P1 起就存在的声明——`requires-python >=3.10` 是**假的**，`src/porter/config.py` 的模块级 `import tomllib`（3.11+ stdlib）使 3.10 上 `import porter` 直接失败；grep 确认 `tomllib` 是唯一障碍（代码库其余部分刻意做了 `(str, Enum)` 等 3.10 适配），修法为 `tomli as tomllib` 条件导入 + 条件依赖，并在**真的 3.10.21** 上跑完全量套件（1341 passed）。 |
 | — | 1.6 | 新增 §13.45：上线后 CI 首次运行暴露的「测试偷偷依赖开发机环境」三类缺陷（测试替身漏了真实文件系统 / 硬编码 `/usr/bin/ffmpeg` / 断言把开发机核数写死）、`uv run` shim PATH 的复现方法与它覆盖不到的 3 个、三处“只改环境取数不改断言”的修法、CI 装 ffmpeg 而非标 `slow` 的依据（`test_burn.py` 的 docstring 指定了真编码层），以及新增的 **hermetic 作业**（先装再藏 ffmpeg 并自证藏成功）。 |
 | — | 1.5 | 新增 §13.44：P5 收尾——四份 `docs/` 逐条对照代码复核（含文档比代码更诚实的几处死字段断言）、三个 GitHub Actions 工作流（test 矩阵 / PyPI Trusted Publishing / 三平台 EXE 发布）与 `packaging/launcher.py` 引导器的四个设计细节及本地验证。 |
@@ -2570,15 +2573,17 @@ store 把状态**投影**进 registry。反过来（registry 为权威）会让�
 |---|---|
 | ~~`local_video` 输入~~ | **已完成**（§13.29） |
 | ~~`porter jobs`（MCP 作业化）~~ | **已完成**（§13.33） |
-| sidecar 字幕 | 本地视频旁边的 `.srt` 不被接管（歧义太大，见 §13.29） |
-| `--force` / 单阶段从磁盘恢复 | `force` 对 PREPARE 与 BURN 的复用判定均生效，但「只跑一个阶段」仍需从磁盘恢复中间产物 |
-| 免 Key ASR 已死 | 转录必须有 key 或 VideoCaptioner CLI（§13.21） |
-| 无字幕视频 | 未处理 |
+| ~~sidecar 字幕~~ | **已完成**（§13.51）：仍不自动接管（歧义太大，见 §13.29），但新增 `--subtitle-file` 让用户显式点名，歧义被移除而不是靠猜解决 |
+| ~~`--force` / 单阶段从磁盘恢复~~ | **已完成**（§13.51）：`--only-phase X` 的前置阶段照跑，但 PREPARE（母版）/ TRANSCRIBE（源 cue，新增 `cooked/.transcribe.json` 记 provenance）/ BURN（成片）各有复用判定。实测第二次运行 `reusing 19 cached source cues`。**TRANSLATE 仍无缓存**（`.ass` 与样式耦合，需要指纹方案） |
+| ~~免 Key ASR 已死~~ | **已解决**（§13.48）：`[asr-local]`（MIT 的 `faster-whisper`，无 PyTorch）提供免 Key 免网络的本地识别；`bcut` / `google-web` 仍然实测失效（§13.21） |
+| ~~无字幕视频~~ | **已完成**（§13.51）：无平台轨又无可用 ASR 时，失败信息指向 `--subtitle-file` 或 `[asr-local]`（`NO_CUES_HINT`） |
 | ~~`porter_plan` / 阶段级 MCP 工具~~ | **已完成**（§13.38、§13.41）：`porter_plan`、`porter_inspect`、`porter_config`、`porter_transcribe` / `_translate` / `_burn`，工具面 13 个 |
 | ~~§8.2 资源与提示~~ | **已完成**（§13.42）：`porter://docs/architecture`、`porter://config` 与 `localize-video` 提示 |
 | MCP sampling 翻译 | §8.3 的零 Key LLM 级翻译（用宿主模型）未实现 |
+| TRANSLATE 无缓存 | `.ass` 与样式耦合，需指纹方案；重复运行会重新翻译（§13.51） |
+| PREPARE 元数据 / 缩略图不复用 | 实测占第二次运行的 ~55s（元数据抓取 ~40s + 缩略图超时 ~15s），已超过 ASR 成为主要开销（§13.51） |
 
-**发布前必须先处理的是 `--force` 的单阶段恢复与免 Key ASR 的现状说明**；其余是功能增量。
+**§13.34 当时列为“发布前必须先处理”的两项（`--force` 单阶段恢复与免 Key ASR 现状）已在 §13.48 / §13.51 完成。**当前剩下的都是功能增量，其中最值得做的是上表最后一行。
 
 ### 13.35 `porter_inspect`：MCP 预检工具
 
@@ -3164,3 +3169,309 @@ else:
 #### 教训
 
 **「声明支持某版本」与「在该版本上跑过」是两件事。** `requires-python`、classifier、`target-version`、`python_version` 四处的 3.10 声明全部没被执行过，而 `ignore_missing_imports = true` 恰好让 mypy 对「stdlib 版本差异」这一类错误失明。CI 的版本矩阵是这里唯一能发现它的东西——这就是为什么那个矩阵值得占四个并行作业。
+---
+
+### 13.47 YouTube 自动配音让 `*-orig` 不再唯一：字幕源轨选错，且测试恰好看不见
+
+§13.39 那次端到端验证留下的作业，重跑时产出了一份**阿语源字幕 + 中文译文字幕**，而视频是英文的——英文在任何地方都没出现。顺着查，缺陷在 `select_source_lang` 的第一条规则。
+
+#### 根因：`*-orig` 从「唯一答案」变成了「每语言一个」
+
+`src/porter/subtitles/srt.py` 的 `select_source_lang` 原文是：
+
+```python
+for key in subtitles:
+    if key.endswith(_ORIGINAL_SUFFIXES):   # -orig / -original
+        return key                          # ← 无条件信任"第一个"
+```
+
+在 YouTube 推出**自动配音（auto-dubbing）**之前这是对的：`*-orig` 标记「与原始音轨一致的那条轨」，一个视频最多一条。自动配音之后，YouTube 会为**每一种配音语言**各生成一条 `<lang>-orig` 轨。实测该视频有 **20+ 条**：`ar-orig`、`bn-orig`、`nl-NL-orig`、`en-orig`、`fr-FR-orig`、`de-DE-orig`、`iw-orig`、`hi-orig`、`uk-orig`…
+
+于是「第一个」变成「YouTube 恰好先列出哪个」——真实数据里 `ar-orig` 在索引 6，`en-orig` 在索引 157。取到 `ar-orig` 之后，又因为 `prefer_existing_chinese` 复用了自动翻译出的 `zh-Hans`，计划便宣布「不需要翻译」，最终输出里一条英文都没有。
+
+#### 证据链
+
+| 证据 | 观察 |
+|---|---|
+| `yt-dlp --list-subs` | `ar-orig` 只有 **1 组**格式；`ar` / `en` / `zh-Hans` 等各有 **21 组重复**（21 = 翻译目标数）→ `-orig` 是 ASR 原始轨，其余是自动翻译轨 |
+| 轨道内容 | `en-orig` 是英文原文（"This is my speech to text extension for pie. Alt M to open up the mic."）；`ar-orig` 是这段英文解说的阿语译文 |
+| info dict | `language: en-US`（视频自己声明的语言），human `subtitles` 为空 |
+| 计划结果 | `plan[source] = ("ar-orig", True)`、`plan[zh] = ("zh-Hans", True)` |
+
+**为什么测试全绿而行为是错的**：`tests/` 里每一处 caption map 都**只有一个** `-orig` 轨（`{"en-orig": [...]}`、`{"de-original": [...]}`）。单轨情况下「第一个」就是唯一一个，任何实现都对。这与 §13.45 是同一类病——测试夹具与被测代码**一致地错**，于是双双绿灯；也再次印证 §13.41：反向验证是唯一能发现「测试因为错误的原因通过」的手段。
+
+#### 修法：用视频自己声明的语言做裁决
+
+三级选择，而不是「第一个」：
+
+1. `_matching_lang(originals, declared_lang)` —— 主语言子标签（`en-US` → `en`）与候选匹配者。
+2. `_preferred_original(originals)` —— 按 `SOURCE_LANG_PRIORITY` 在候选中挑（英文打头，因为流水线常态是 en → zh）。
+3. `originals[0]` —— 无任何信号时的最后手段（保留原行为）。
+
+`declared_lang` 由 `info["language"]` 传入，经 `PlatformSpec.select_source_lang` 转发。
+
+**为什么第 2 级不能取代第 1 级**：优先级列表以 `en` 打头，而一个**阿语**视频同时带 `ar-orig` 与 `en-orig` 时，只看列表就会给阿语视频配英文字幕。视频自己声明的语言才是权威信号；列表只是「没有声明时」的退路。
+
+**第二个调用点**：`_build_metadata` 也调用 `select_source_lang`（决定 `VideoMetadata.official_subtitle_lang`）。第一轮只改了 `plan_subtitles`，于是同一份 info 会让元数据说 `ar-orig`、计划去取 `en-orig`。已一并传入 `declared_lang`，并加一条**「元数据与计划不得分歧」**的测试把这条不变式钉住。
+
+#### 反向验证矩阵（三种反转，各自必须失败）
+
+| 反转 | 结果 |
+|---|---|
+| 撤销整段选择逻辑（回到「第一个 `-orig`」） | **5 个**新测试失败 |
+| 只撤销 `_build_metadata` 的 `declared_lang` 传递 | **1 个**失败（元数据/计划一致性测试） |
+| 只撤销 `declared_lang` 项、保留优先级列表 | **2 个**失败（两条「两个信号冲突」的测试） |
+
+第三种反转是本轮**最有价值的一步**，因为它暴露了我自己写的一个空洞测试：为 `_build_metadata` 写的第一版用了 `declared_lang="en-US"`，而它在**未修**状态下也通过——因为新增的优先级列表兜底恰好也选 `en-orig`。是反向验证把它抓出来的。改写成 `declared_lang="ar"`（唯一让两个信号给出不同答案的取值）之后才真正覆盖到那个调用点。**测试必须落在两种信号给出不同答案的地方**，否则它测的不是裁决逻辑，而是兜底逻辑。
+
+#### 验证
+
+| 检查 | 结果 |
+|---|---|
+| 真实输入（17:06 实测的 caption map，15 条 `-orig`，document order 首个是 `ar-orig`） | `plan[source] = ("en-orig", True)`、`plan[zh] = ("zh-Hans", True)`、`metadata.official_subtitle_lang = "en-orig"`，三者一致 |
+| 全量 pytest | **1349 passed**（1341 + 8 个新测试） |
+| ruff（`src tests`）/ mypy / import-linter | `All checks passed!` / no issues in 94 files / 2 kept, 0 broken |
+
+**未能完成的一步**：真实 URL 重跑与端到端作业被 YouTube 的 `Sign in to confirm you're not a bot` 挡住——17:04 那次抓取还能匿名访问，17:07 之后本机 IP 就进了这个检查。没有改用 `--cookies-from-browser`：那是读取浏览器凭据，属于需要用户明确同意的动作，不该为了补一次验证就顺手做掉。因此本轮的「真实输入」是 17:06 捕获的真实 caption map，不是一次新的网络抓取。
+
+#### 残留风险
+
+`prefer_existing_chinese` 仍会复用自动配音视频上的 `zh-Hans` 自动翻译轨。该轨是 YouTube 用它自己的 ASR 原文翻译出来的，而那份原文正是被标成阿语的 `ar-orig`——也就是说复用来的中文轨，其翻译源不可知。本轮只保证**英文字幕会出现**（原缺陷的症状），不保证复用中文轨的质量。这是另一个缺陷，未在本轮处理。
+---
+
+### 13.48 本地 Whisper 后端（零 Key 免网络的 ASR），以及它暴露的两个真缺陷
+
+起点是一个具体的任务：处理一条 Instagram 链接。Instagram 的平台字幕轨不存在（`yt-dlp --list-subs` 直接答 `has no subtitles`），所以必须跑 ASR；而 §13.21 的结论是"今天不存在免 Key 的语音识别路径"。用户追问：**为什么不能把 VideoCaptioner 的本地免 Key ASR 借鉴过来集成进 CLI？** 这个问题的答案就是本轮的工作。
+
+#### 先回答：VideoCaptioner 的"免 Key ASR"只有一支值得拿
+
+`pipeline.py` 的 `_VIDEOCAPTIONER_ENGINES = {bijian, jianying, whisper-cpp}` 是它暴露的全部选项，而它们分属两类：
+
+| 引擎 | 本质 | 能否解决零 Key |
+|---|---|---|
+| `bijian`（必剪） | **在线**逆向接口——porter 自己的 `asr/bcut.py` 就是它 | ❌ 已实测：`resource/create` HTTP 200，真实转录零条 utterance |
+| `jianying`（剪映） | 同族的字节**在线**接口 | ❌ 同一类风险，且是随时可失效的逆向协议 |
+| `whisper-cpp` | **真·本地**：whisper.cpp + ggml 模型 | ✅ 唯一有价值的一支 |
+
+所以 §13.21 的结论需要加一个前提：**不存在免 Key 的*在线*路径**；**本地推理这条路从来没被堵上**。VideoCaptioner 的免 Key 里 2/3 是 porter 已经有、且已经死掉的在线端点。
+
+另外不能直接调用它：GPL-3.0 + pin `python<3.13`，不能进 `dependencies`、不能 import（许可证污染），只能子进程；本机也没有那个二进制。而且它的 `ENGINES` 列表**缺 `faster-whisper`**——那才是它本地转录的主力引擎。
+
+#### 实现：`src/porter/asr/whisper_local.py`
+
+自己实现本地 Whisper，用宽松许可的组件，而不是抄 GPL 代码：
+
+* **`faster-whisper`**（MIT）。相对 `openai-whisper` 的决定性优势是它跑在 CTranslate2 上，**不需要 PyTorch**——extra 约 100 MB 而不是 ~2 GB。
+* 新 extra `[asr-local] = ["faster-whisper>=1.0"]`，并入 `all`；惰性导入，`available()` 在缺包时报 `False` 而不是炸掉整个 ASR 包。
+* 后端只有协议要求的四个成员（`name` / `endpoint_verified` / `available(ctx)` / `transcribe(audio, ctx)`），所以接入 = 一个文件 + `_default_transcriber()` 里一行。
+
+四个刻意的设计决定：
+
+1. **`endpoint_verified = True`，而且是结构性的**。这个字段问的是"协议是否被实测过"；本地推理没有远端协议，实测一次就永远成立，不受对方改接口影响。这正是 §13.21 留下的"可用后端全是 unverified 逆向端点"那个坑的解药——`porter_plan` 现在可以说"可行"而不用加但书。
+2. **`available()` 不联网**。协议要求它便宜且每个作业每个后端都调一次，所以它只回答"`[asr-local]` 装了没"。**不是**"模型下好了没"：首次运行没权重也能成功（会下载），在这里报 False 会让链跳过唯一能工作的后端、掉进已实测失效的端点——最坏的答案。模型是否已在本地由 `model_is_cached()` 单独回答，`porter doctor` 用它把首次下载的成本提前说清。
+3. **音频整段交给模型，不分片**。`CHUNK_SECONDS = 480` 是云端防上传超时用的；faster-whisper 自带 VAD 与分段，先切文件只会切断句子、在时间轴上留缝。这是最容易照抄错的地方。
+4. **`auto` 设备先试 CUDA 再退 CPU，显式设备不退**。CUDA 快得多但需要 cuDNN/cuBLAS，而设备探测看不到这一点（本机就没有），只有真正构造模型才知道；显式点名设备则是请求，静默替换会掩盖错误。
+
+模型缓存检查用 `faster_whisper.utils.download_model(..., local_files_only=True)`，而不是直接摸 `huggingface_hub`：同一个库自己解析尺寸到仓库、尊重 `HF_HUB_CACHE`、把**残缺下载**当作不存在（本机的 `faster-whisper-medium` 正是 67 MB 的 config/tokenizer 而没有 `model.bin`）。自己实现等于再写一份会漂移的规则。
+
+#### 链位次与 `--asr-engine` 的修复
+
+**本地 Whisper 排在链首**。v0.1 把付费 API 排第一的理由（质量、速度）写于免费端点还能用的年代，而它们已实测失效（§13.21）——第一位应该给最可能跑完的后端。想要付费端点的用户现在可以**明确指定**，这比"如果碰巧配了 key 就偷偷重排"是更好的契约。
+
+为此 `asr.engine` 从"只有三个 VideoCaptioner 引擎名有效"改为通用规则：三个 VC 名字仍然把外部 CLI 提到最前（v0.1 行为），**其他任何能匹配后端名的值把该后端提到最前**，其余后端保留为回退；匹配不到则记一条 warning 而不是默默忽略。这修掉一个真实缺陷：
+
+* `--asr-engine whisper-api` 被 CLI 收进 `JobOptions` 后**无人读取**，链序完全不变；
+* 而 `docs/CONFIG.md` 明写"写 `whisper-api` 只是让它排在最前"——**代码里没有任何这种重排逻辑**，文档比代码更宽松；
+* SKILL.md 的「常用参数」还写着"强制某个后端（跳过回退链）"，两条都不成立。
+
+（同一轮还确认 `--translator` / `--llm-model` 是**完全死字段**：`src/` 里零消费者，翻译链顺序硬编码。**未修**，留作后续。）
+
+#### `porter doctor` 的文案必须跟着改
+
+`probe_asr_route` 原先告诉每个操作者"唯一免 Key 的路是两条不转录的逆向端点"。装了本地模型之后那句话就是**假的**，而报陈旧事实的 doctor 比不报还糟。现在它按链序回答，并说出模型是否已下载：
+
+```
+[OK  ] Speech-to-text route: local Whisper (small, already downloaded) — no key, no network
+```
+
+#### 副作用：装了 `faster-whisper` 会让 `mypy` 整个挂掉
+
+`faster-whisper` 依赖 `ctranslate2`，后者依赖 `numpy`。而 numpy 的 `__init__.pyi` 用了 PEP 695 `type` 语句（3.12+），mypy 在 `python_version = "3.10"` 下**不是报一个模块的错误，而是中止整个运行**：
+
+```
+numpy/__init__.pyi:737: error: Type statement is only supported in Python 3.12 and greater  [syntax]
+Found 1 error in 1 file (errors prevented further checking)
+```
+
+numpy 不是我们的依赖、我们的代码也不 import 它——它经 `openai/_extras/numpy_proxy.py`（OpenAI SDK 为可选依赖做的代理模块）进入图。逐个试过才确定哪个旋钮有效：
+
+| 手段 | 结果 |
+|---|---|
+| `ignore_errors = true` on numpy | ❌ 语法错误无法抑制 |
+| `follow_imports = "skip"` on `numpy` | ❌ mypy 仍会解析被直接 import 的模块 |
+| `follow_imports = "skip"` on **`openai._extras.*`** | ✅ 有效 |
+| `mypy_path` 里放一个宽松的 numpy stub 遮蔽 | ❌ site-packages 优先 |
+| `no_site_packages = true` | ✅ 但会连带放弃 pydantic 等全部第三方类型检查，损失太大 |
+
+所以修法是**只对 `openai._extras.*` 停止跟随**——那个包的全部职责就是 import 可选的第三方库（numpy/pandas 代理），我们不用它，而 openai 自身的类型、以及 `python_version = "3.10"` 的底线都保住了。注释里记了完整的排除过程，因为"为什么是这一行"比"这一行是什么"更容易丢。
+
+#### 真实验证
+
+| 检查 | 结果 |
+|---|---|
+| 30 秒真实音频直接调后端 | 5 条 cue，英文准确；`origin = faster-whisper:small:cpu` |
+| CUDA 回退 | 真实发生：`libcublas.so.12 is not found or cannot be loaded` → 退到 CPU int8（本机确实没有 cuDNN/cuBLAS） |
+| 速度 | 30 秒音频 9.0 s（CPU int8, small，约 3.3× 实时） |
+| 真实作业（Instagram） | 19 条 cue，11.1 s |
+| `porter doctor` | `local Whisper (small, already downloaded) — no key, no network` |
+
+#### 首次真实 CLI 运行暴露的缺陷一：burn 的相对路径
+
+作业在 BURN 阶段失败，报 `ffmpeg could not read subtitle_bilingual.ass or the master video`，而 `raw/video.mp4` 明明在。
+
+根因：`burn_hardsub` 为了把撇号路径赶出滤镜图，让子进程以 `cwd=subtitle.parent` 运行、滤镜图只写裸文件名——**但 argv 里其余的路径没跟着变绝对**。管线传的是输出相对路径（也正是它打印给用户看的那些），于是 ffmpeg 去找 `cooked/porter_output/<task>/raw/video.mp4`。
+
+**为什么所有测试都看不见**：它们一律用 `tmp_path`，而 `tmp_path` 天生是绝对路径。相对路径这一半完全没有覆盖——**cwd 这个修法上线时就是带洞的**。加三条测试（相对路径变绝对、滤镜图仍只有裸文件名、临时文件仍在目标同目录）并反向验证（只撤掉 `.resolve()` → 2 条失败；第三条是防过度修正的守卫，两种情况都通过，这点在记录里说清楚）。
+
+#### 首次真实 CLI 运行暴露的缺陷二：测试污染开发者真实状态
+
+查作业时发现 `porter jobs list` 里有 `/videos/a.mp4` 这种条目。查下去：**每跑一次完整测试套件就往 `~/.cache/porter/jobs.json` 写入 4 条真实记录**（`porter_job_*` 的取消与失败测试）。
+
+根因：`src/porter_mcp/tools/jobs.py:44` 是模块级 `_STORE = JobStore(registry=JobRegistry())`，而 `JobRegistry.__init__` **在构造时**就把 `registry_file()` 求值成路径。于是"导入时"就绑定了真实的 `~/.cache/porter/jobs.json`——**早于任何 fixture 能重定向那个 seam**。§13.33 加的 conftest 隔离 fixture 本身没错，只是补得太晚。
+
+修法是把默认路径改成**按访问解析**（`path`/`lock_path` 变成只读 property，显式传入的路径仍然钉住），这样对所有"导入时构造"的持有者都成立，而不只是这一个。验证：修复前 `tests/unit` 单跑 +4，修复后 +0；全量套件 +0。反向验证（把赋值放回 `__init__`）→ seam 测试失败。
+
+这条与 §13.45、§13.47 是同一类病：**测试替身/夹具与被测代码一致地错，于是双双绿灯**；而这次发现它的是"去看真实状态文件"，不是任何一条测试。
+
+#### 交付结果（真实作业，端到端）
+
+`porter --config <skill config> run <instagram url>` → **done in 68.2 s**：
+
+```
+→ Burning hardsubs
+20:39:55 INFO porter.media.encode: using NVIDIA NVENC for video encoding
+20:39:59 INFO porter.media.burn: burned subtitle_bilingual.ass -> video_bilingual.mp4 (15.3 MB)
+20:40:03 INFO porter.media.burn: burned subtitle_zh.ass -> video_zh.mp4 (14.2 MB)
+```
+
+质检（不只看退出码）：`subtitle_zh.srt` 含 CJK；两个成片均 h264/720×1280/aac、时长 73.9 s 与母版一致；**像素级证明**字幕真的烧进去了——母版字幕带 YMAX 141–166，成片 238–239（近白文字），同时抽出帧用眼睛看过，纯中文版与双语版（中文白、英文黄）排版都正确。
+
+#### 未修的实测发现：免 Key 翻译链本轮全灭
+
+同一个作业的第一轮在 TRANSLATE 阶段失败，四个后端各自的原因都不同：
+
+| 后端 | 本轮实测 |
+|---|---|
+| `llm`（用户配置的 DeepSeek key） | `402 Insufficient Balance` —— 余额不足 |
+| `bing` | `bing batch response was not recognised` —— §13.40 修过一次的症状**复现** |
+| `google` | `HTTP 429`（`gtx` 与 `dict-chrome-ex` 两个 client 都是） |
+| `mymemory` | 首次 `read timeout (8.0s)`，随后成功 |
+
+最终是 `mymemory` 完成了翻译（19 条 cue 全部译出，语义正确）。两条值得后续处理：**bing 的批量响应识别又坏了**（是 §13.40 的回归还是端点又变了，未查），以及 `--translator` 这个本该用来绕开它的开关是死的。
+
+---
+
+### 13.51 六个已知问题：三个死字段、一个实测的载荷上限、一个无法满足的新鲜度判定
+
+一轮"修已知问题"。六个都来自此前的诚实记录（§13.34 缺口表、§13.48 的未修发现），其中三个的根因只有真实运行才能确定。
+
+#### ① `--translator` / `--llm-model`：同一类死字段的第三、第四次
+
+§13.48 刚修过 `--asr-engine`，而 `JobOptions.translator` 与 `llm_model` 是**完全一样的病**：两个前端的入口都收下它们，`src/` 里零消费者。`_default_translator()` 无条件装配整条链，LLM 模型只取自 `ctx.config.llm.model`。`docs/CONFIG.md` 当时已经把三者一起标成死字段——这是项目里少见的"文档比代码诚实"。
+
+修法与 `--asr-engine` 完全对齐，因此也复用了同一个 `_promote_named`：
+
+* `translator` → 把该后端**提到链首**，其余保留为回退；名字写错记 warning，链序不变。可用名字是后端自身的 `name`：`llm`、`bing`、`google`、`mymemory`、`videocaptioner-llm`、`videocaptioner`。**不做别名猜测**——`videocaptioner` 与 `videocaptioner-llm` 是两个独立后端（后者额外需要 key），点名哪个就只提哪个。
+* `llm_model` → 新增 `effective_llm_model(ctx)`（`ctx.options.llm_model or ctx.config.llm.model`）。它必须放在一个地方：**有两个后端读这个值**——`translate/llm.py` 自己，以及 `videocaptioner-llm` 适配器（把它作为 `--model` 转发给外部 CLI）。只修前者会让后者继续用配置里的默认值，而这种分裂没有任何单条测试能发现。
+
+顺带修掉两处**帮助文本与实现不符**：`--asr-engine` 写的是"Force one ASR engine instead of walking the fallback chain"，而实现是"提到链首、保留回退"（§13.48 的取舍）。用户明确点名一个后端，要的是**先试它**，不是"只准用它"——§13.48 那轮实测 bing 被限流、google 429，若点名即独占，作业会直接失败而不是换到 mymemory。
+
+**反向验证（三重，每个 seam 单独撤）**：撤掉 `translator` 的读取 → 6 个参数化用例失败；撤掉 `llm.py` 的 `effective_llm_model` → 1 个失败；撤掉 `videocaptioner.py` 的 → 1 个失败。
+
+#### ② bing：不是回归，也不是限流，是**载荷尺寸上限**
+
+§13.48 记录 bing 报 `bing batch response was not recognised`，当时无法判断是 §13.40 的回归还是端点又变了。直接探测真服务得到结论——而且与两个猜测都不同：
+
+| cues | chars | 结果 |
+|---|---|---|
+| 1 | 77 | 翻译成功 |
+| 2 | 161 | 翻译成功 |
+| 4 | 329 | 翻译成功 |
+| 8 | 665 | 翻译成功 |
+| **15** | **1259** | **HTTP 200，body 是 `{"statusCode": 400}`** |
+
+所以：**不是限流（重试无用），也不是响应格式变了**（小批量完全正常）。共享常量 `MAX_TEXTS_PER_REQUEST = 15` 是按 Google 的截断阈值定的，它高于 bing 的真实上限，于是**每一个 15 条批量都被拒**。
+
+修法沿用 §13.40 自己的结论——"批量是优化，不是契约"：
+
+1. bing 用自己的 `_BATCH_SIZE = 8`（实测能过的最大值），注释里带上整张测量表；
+2. **被拒绝时降级为逐句请求**，而不是判整个 backend 失败。区分"拒绝"（body 里带 statusCode，是**关于这次请求**的陈述，换个更小的请求可能成功）与"无法识别的形状"（换个请求形状也不会好）——后者仍然直接报错，否则格式一变就会先浪费 N 次请求再失败。
+
+**这条修完，真实作业的翻译由 bing 完成**（§13.48 那轮是 mymemory 兜底）。
+
+#### ③ 那个把证据丢掉的消息
+
+`_describe_body` 是这轮最有价值的十行：旧消息是裸的 `"bing batch response was not recognised"`，**把唯一的证据扔掉了**，于是 §13.48 那轮只能靠手工重跑探测才能知道 bing 到底说了什么——而手工重跑当时又成功了（因为限流/尺寸的组合没复现）。
+
+现在同一个失败会给出 `reason='service refused: statusCode=400 message=None'`。它在**真实运行**里立刻兑现了：修复后的一次作业日志里直接看到 `statusCode=400`，再据此设计出上面的尺寸探测。**一个不可行动的错误消息，代价是一整次调查。**
+
+#### ④ 429/5xx 重试：可取消、尊重 `Retry-After`、有上限
+
+§13.48 那轮四个翻译后端同时失败，其中 google 两个 client 都是 HTTP 429。原来 google 有 client 级回退、bing 没有，而两者都**没有重试**：一次限流就把"慢一点"变成"这个后端坏了"，然后交给链上可能更差的引擎。
+
+新增共享策略（`translate/base.py`），并复用 `platforms/inspector.py` 的既有惯例——**退避常量放在模块级**（测试可以置零）且**用 `ctx.cancel.wait` 而非 `time.sleep`**（取消要立刻生效，不能先睡完）：
+
+| 项 | 取值 / 规则 |
+|---|---|
+| 可重试 | 429 与 5xx；403/404 不重试（重复不会改善，只浪费预算） |
+| 退避 | 线性递增（1.5s × 尝试数），上限 8s |
+| `Retry-After` | **替换**计算出的退避（服务端比我们更清楚何时会接受），但仍受 8s 上限——`Retry-After: 3600` 不能让作业挂一小时，链上还有四个后端现在就能做完 |
+| 次数 | 3 |
+
+google 的**逐句路径也接同一个 helper**。第一版只改了 `_translate_batch`，这正是 §13.47 在 `_build_metadata` 上犯过的"第二个调用点"错误，这次在写的时候就一起收了。
+
+**反向验证抓出一个空洞测试**：`test_google_recovers_from_a_throttle` 第一版只给了一个 429，撤掉重试后**依然通过**——因为 google 的两个 client 分别限流，第二个 client 顶上了。那是本来就有的 client 回退，与重试无关。改成连续两个 429（只能靠重试同一 client 才能活）并断言三次请求的 `client` 参数相同，撤掉重试才真正失败。
+
+**实测代价（诚实记录）**：google 的 429 是**按 client 的硬封禁**，不是限流——重试救不了它，只是把失败诊断得更清楚。一次真实探测：bing 11.7s 成功；google 29.1s 失败（含约 9s 退避），`reason='client=dict-chrome-ex returned HTTP 429'`。这 9 秒只在链走到 google 时才付出，且换来"瞬时限流能被吸收"。
+
+#### ⑤ 单阶段从磁盘恢复：TRANSCRIBE 复用，以及一个**无法满足**的新鲜度判定
+
+§13.34 把"`--force` 的单阶段从磁盘恢复"列为**发布前必做**。实测痛点是明确的：第二次跑同一个作业时**重跑了 TRANSCRIBE**（74 秒的视频 16–21 秒，长视频是分钟级），而音频和 ASR 配置都没变。
+
+修法照抄 BURN 已有的复用惯例（"产物至少与它的输入一样新"），加一件 SRT 装不下的事实：
+
+* 新增 `cooked/.transcribe.json` 记录 `{used_asr, origin}`。**没有 sidecar 就不复用**——`used_asr` 是要报给操作者的（"这次作业付了 Whisper 的钱吗"），猜一个值等于在报告里写假话；旧任务目录重跑一次识别即可。"只复用能被诚实描述的东西"就是全部规则。
+* 复用条件：非 `force`、`only_phase` **不是** TRANSCRIBE（点名一个阶段就是要**跑**它，静默返回缓存会让 `--only-phase transcribe` 变成空操作）、SRT 存在且不比输入旧、sidecar 可读。
+* **`--only-phase` 的语义因此变得完整**：前置阶段照跑，但每个阶段自己的复用规则让昂贵的工作被跳过。用户改样式后 `--only-phase burn`：PREPARE 复用母版、TRANSCRIBE **复用缓存**（跳过 ASR）、TRANSLATE 重跑（样式变了，必须重跑）、BURN 重烧。
+
+**真实运行抓到一个单元测试永远看不见的缺陷**：第一版的新鲜度判定拿 `_best_audio(raw)` 比较，而它优先取 `audio_enhanced.wav`——**PREPARE 每次调用都重跑音频增强**，于是那个文件每次都有新 mtime，判定**永远不可能满足**。实测证据：run A 写了 SRT（22:17:44），run B 的 PREPARE 在 22:20:34 重写了增强音频 → run B 又转录了一遍。改为与 `raw.audio`（标准化母版音频，母版复用时它是稳定的）比较，并补一条测试钉住"增强副本被重写不得使缓存失效"。
+
+残余限制与 BURN 一致：改**增强设置**不会使缓存失效，`--force` 是文档化的出口。
+
+**真实作业验证**：`reusing 19 cached source cues from subtitle.srt`，ASR 被跳过。同一作业的耗时结构随之可见：40s 在 PREPARE 的元数据抓取、15s 在缩略图超时、13s 在翻译、11s 在压制——**下一个瓶颈已经不是 ASR**，这点值得后续处理。
+
+#### ⑥ 无字幕路径：显式 `--subtitle-file`，而不是猜
+
+§13.29 刻意留空的一半：本地视频旁边的 `.srt` **不**自动接管，因为一份 `.srt` 可能是源字幕也可能是译文字幕，猜错会静默跳过 ASR 或覆盖用户文件。另一半：平台无字幕轨 + ASR 不可用时，作业报 `every speech-to-text backend failed`——准确，但没告诉用户下一步。
+
+选择**移除歧义而不是靠猜解决它**：新增 `--subtitle-file FILE`（`JobOptions.subtitle_file`，MCP `porter_job_start(subtitle_file=...)`），支持 `.srt` 与 `.vtt`（VTT 走已有的 `vtt_to_srt`）。它与 `load_platform_subtitles` 的关键区别是**故意不 total**：后者在不可读时返回 `[]`，因为"没有平台字幕轨"是正常结果（意思是用 ASR）；而用户点名了这个文件，静默退回语音识别会把一个拼写错误藏在几分钟的计算和一个更差的转录后面。所以每种失败都报错，并说明怎么办：文件不存在、格式不支持（列出支持的后缀）、内容无 cue。
+
+它同时是**无字幕视频的出口**，因此 `NO_CUES_HINT` 指向它（以及 `[asr-local]` extra）。
+
+**写的时候就犯了一次错，并被测试抓住**：hint 第一版只写在 `_write()` 的 raise 里，而那条路径**几乎到不了**（只在识别出的 cue 全被规范化丢弃时触发）——真实作业看到的消息来自 `_run()`。抽出 `NO_CUES_HINT` 常量给两处共用，并把测试的断言从 `details["backends"]`（`_write` 的键）改为 `attempted`/`failures`（`_run` 的键）。
+
+**真实作业验证**：`using the supplied subtitle file /tmp/hand_made.srt (2 cues)`，ASR 未运行，作业 exit=0，两版成片产出，sidecar 记为 `{"used_asr": false, "origin": "supplied"}`。附带确认一条既有规则不是缺陷：手工 SRT 的两条 cue 被合并成一条，因为合并规则"遇到句末标点才停，**除非**合并后仍不足三秒"——我的测试输入没有标点，合并是设计行为。
+
+#### ⑦ 顺带清理
+
+开发机真实 `~/.cache/porter/jobs.json` 里积了 **40 条测试垃圾**（`source` 为 `/videos/a.mp4`，§13.48 修复前的污染），只有 1 条是真实作业。按 source 精确清理，保留全部真实记录，先备份到同目录（`jobs.json.bak-<epoch>`）再原子替换；`porter jobs list --all` 复核为 1 条。
+
+#### 验证汇总
+
+| 项 | 结果 |
+|---|---|
+| 全量测试 | **1452 passed**（1388 → +64） |
+| 门禁 | ruff `src tests` 全绿、mypy 95 文件、import-linter 2 kept / 0 broken |
+| 反向验证 | ① 三重（3 seam）、②/③ 两重（重试预算 + 错误描述）、⑤ 两重（优先级 + hint）、④ 两重（复用调用 + sidecar 门）——**共 9 个 seam，全部"撤掉即失败"** |
+| 抓出的空洞测试 | 1 个（google 靠换 client 而通过） |
+| 真实作业 | 翻译改由 bing 完成；`reusing 19 cached source cues`；`--subtitle-file` 全链路可用；成片像素级验证（母版 YMAX 141 → 成片 238） |

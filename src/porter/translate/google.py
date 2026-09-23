@@ -39,9 +39,14 @@ from typing import Any
 from porter.context import RunContext
 from porter.logging import get_logger
 from porter.translate.base import (
+    MAX_ATTEMPTS,
     MAX_TEXTS_PER_REQUEST,
     TranslationBackendError,
     TranslationOutcome,
+    retry_after_seconds,
+    retry_delay,
+    retryable_status,
+    wait_for_retry,
 )
 
 __all__ = ["GoogleTranslateBackend"]
@@ -104,6 +109,20 @@ def _parse_payload(data: Any) -> list[str] | None:
 
     joined = "".join(parts)
     return [line.strip() for line in joined.split("=====")]
+
+
+def _reason_of(exc: TranslationBackendError, client_id: str) -> str:
+    """A client-tagged reason from a retry helper's error.
+
+    ``_get_with_retry`` does not know which client it was asked about, so the
+    client id is added here. Without it the failure report says only "a request
+    failed", and the whole point of the two-client design is that they are
+    throttled separately.
+    """
+    status = exc.details.get("status")
+    if status is not None:
+        return f"client={client_id} returned HTTP {status}"
+    return f"client={client_id} {exc.details.get('reason', exc.message)}"
 
 
 class GoogleTranslateBackend:
@@ -173,12 +192,18 @@ class GoogleTranslateBackend:
         target_lang: str,
         ctx: RunContext,
     ) -> list[str]:
-        """One request for the whole batch. Raises on any failure."""
+        """One request for the whole batch, retrying a throttle. Raises on failure.
+
+        Two independent knobs, because Google throttles in two ways: the
+        ``Retry-After``-style 429 that clears if you wait, and the client id
+        itself (``gtx`` and ``dict-chrome-ex`` are throttled separately). So each
+        client is retried with backoff, and a client that keeps refusing is
+        abandoned for the next one.
+        """
         combined = _DELIMITER.join(batch)
         last_reason = "no attempt was made"
 
         for client_id in _CLIENT_IDS:
-            ctx.check_cancelled()
             params = {
                 "client": client_id,
                 "sl": "auto",
@@ -186,21 +211,17 @@ class GoogleTranslateBackend:
                 "dt": "t",
                 "q": combined,
             }
+
             try:
-                response = requests.get(
-                    _TRANSLATE_URL,
-                    params=params,
-                    headers={"User-Agent": _USER_AGENT},
+                response = self._get_with_retry(
+                    requests,
+                    params,
+                    ctx,
+                    what=f"google batch request ({client_id})",
                     timeout=_BATCH_TIMEOUT_SECONDS,
                 )
-            except (OSError, ValueError, TypeError) as exc:
-                last_reason = f"client={client_id} raised {type(exc).__name__}: {exc}"
-                _logger.warning("google batch request (%s) failed: %s", client_id, exc)
-                continue
-
-            if response.status_code != 200:
-                last_reason = f"client={client_id} returned HTTP {response.status_code}"
-                _logger.warning("google batch request (%s) returned HTTP %s", client_id, response.status_code)
+            except TranslationBackendError as exc:
+                last_reason = _reason_of(exc, client_id)
                 continue
 
             try:
@@ -225,6 +246,63 @@ class GoogleTranslateBackend:
             ]
 
         raise TranslationBackendError(self.name, "google translation request failed", reason=last_reason)
+
+    def _get_with_retry(
+        self,
+        requests: Any,
+        params: dict[str, str],
+        ctx: RunContext,
+        *,
+        what: str,
+        timeout: float,
+    ) -> Any:
+        """GET once, retrying a throttle instead of failing the backend on it.
+
+        Shared by the batch and per-cue paths deliberately. The first version of
+        this fix put the retry only in ``_translate_batch``, which is the same
+        mistake §13.47 made with ``_build_metadata``: a second call site with the
+        same defect, found later. Both paths go through here now.
+        """
+        last_reason = "no attempt was made"
+
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            ctx.check_cancelled()
+            try:
+                response = requests.get(
+                    _TRANSLATE_URL,
+                    params=params,
+                    headers={"User-Agent": _USER_AGENT},
+                    timeout=timeout,
+                )
+            except (OSError, ValueError, TypeError) as exc:
+                last_reason = f"raised {type(exc).__name__}: {exc}"
+                if attempt >= MAX_ATTEMPTS:
+                    raise TranslationBackendError(
+                        self.name, f"{what} failed", reason=last_reason
+                    ) from exc
+                _logger.warning("%s failed (%s); retrying", what, exc)
+                wait_for_retry(ctx, retry_delay(attempt))
+                continue
+
+            if response.status_code == 200:
+                return response
+
+            if retryable_status(response.status_code) and attempt < MAX_ATTEMPTS:
+                delay = retry_delay(attempt, retry_after=retry_after_seconds(response))
+                _logger.warning(
+                    "%s returned HTTP %s; retrying in %.1fs",
+                    what,
+                    response.status_code,
+                    delay,
+                )
+                wait_for_retry(ctx, delay)
+                continue
+
+            raise TranslationBackendError(
+                self.name, f"{what} failed", status=response.status_code
+            )
+
+        raise TranslationBackendError(self.name, f"{what} failed", reason=last_reason)
 
     def _translate_each(
         self,
@@ -253,24 +331,13 @@ class GoogleTranslateBackend:
                 "dt": "t",
                 "q": text,
             }
-            try:
-                response = requests.get(
-                    _TRANSLATE_URL,
-                    params=params,
-                    headers={"User-Agent": _USER_AGENT},
-                    timeout=_SINGLE_TIMEOUT_SECONDS,
-                )
-            except (OSError, ValueError, TypeError) as exc:
-                raise TranslationBackendError(
-                    self.name, "google single request failed", reason=str(exc)
-                ) from exc
-
-            if response.status_code != 200:
-                raise TranslationBackendError(
-                    self.name,
-                    "google single request failed",
-                    status=response.status_code,
-                )
+            response = self._get_with_retry(
+                requests,
+                params,
+                ctx,
+                what=f"google single request ({_CLIENT_IDS[0]})",
+                timeout=_SINGLE_TIMEOUT_SECONDS,
+            )
 
             try:
                 lines = _parse_payload(response.json())

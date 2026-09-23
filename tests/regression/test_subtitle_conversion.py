@@ -59,6 +59,47 @@ class TestSourceSubtitleSelection:
     def test_original_suffix_variants(self) -> None:
         assert select_source_lang({"de-original": [{}], "en": [{}]}) == "de-original"
 
+    def test_a_dubbed_video_is_disambiguated_by_its_declared_language(self) -> None:
+        """YouTube auto-dubbing makes ``*-orig`` non-unique: one per language.
+
+        Real case: an English video (``language: en-US``) whose caption map
+        lists ``ar-orig`` at index 6 and ``en-orig`` at index 160. Returning the
+        first in document order burned Arabic subtitles over an English video,
+        and because a Chinese track existed the plan then reported "translation
+        not needed" -- so no English appeared anywhere in the output.
+        """
+        auto_subs = {
+            "ar-orig": [{"ext": "vtt"}],
+            "ar": [{"ext": "vtt"}],
+            "en-orig": [{"ext": "vtt"}],
+            "zh-Hans": [{"ext": "vtt"}],
+        }
+        assert select_source_lang(auto_subs, is_auto=True, declared_lang="en-US") == "en-orig"
+
+    def test_the_source_preference_decides_when_no_language_is_declared(self) -> None:
+        """Document order is random, so the priority list is used before it."""
+        auto_subs = {"ar-orig": [{}], "en-orig": [{}]}
+        assert select_source_lang(auto_subs, is_auto=True) == "en-orig"
+
+    def test_a_declared_non_english_language_beats_the_priority_list(self) -> None:
+        """The one case the priority list gets wrong, so the tiebreak matters.
+
+        An Arabic video with auto-dubbing carries both ``ar-orig`` and
+        ``en-orig``. ``SOURCE_LANG_PRIORITY`` leads with ``en``, so without the
+        declared language this returns English subtitles for an Arabic video.
+        """
+        auto_subs = {"ar-orig": [{}], "en-orig": [{}]}
+        assert select_source_lang(auto_subs, is_auto=True, declared_lang="ar") == "ar-orig"
+
+    def test_a_declared_language_matching_no_track_falls_through(self) -> None:
+        auto_subs = {"ar-orig": [{}], "en-orig": [{}]}
+        assert select_source_lang(auto_subs, is_auto=True, declared_lang="fr-FR") == "en-orig"
+
+    def test_document_order_remains_the_final_fallback(self) -> None:
+        """Neither ``ar`` nor ``sw`` is preferred, so the first one is taken."""
+        auto_subs = {"ar-orig": [{}], "sw-orig": [{}]}
+        assert select_source_lang(auto_subs, is_auto=True) == "ar-orig"
+
     def test_auto_captions_do_not_fall_back_to_arbitrary_track(self) -> None:
         """A non-priority auto track is a poor source, so it is rejected."""
         assert select_source_lang({"sw": [{"ext": "vtt"}]}, is_auto=True) is None

@@ -45,7 +45,7 @@ from porter.context import RunContext
 from porter.logging import get_logger
 from porter.translate.base import TranslationBackendError, TranslationOutcome
 
-__all__ = ["LLMTranslationBackend"]
+__all__ = ["LLMTranslationBackend", "effective_llm_model"]
 
 _logger = get_logger(__name__)
 
@@ -56,6 +56,19 @@ _BATCH_SIZE = 20
 _CLIENT_TIMEOUT_SECONDS = 30.0
 _DEFAULT_BASE_URL = "https://api.openai.com/v1"
 _SYSTEM_PROMPT = "You are a professional video transcript translator. Respond ONLY in valid JSON array."
+
+
+def effective_llm_model(ctx: RunContext) -> str:
+    """The LLM model to use: the per-job override, else the configured default.
+
+    ``--llm-model`` / ``porter_job_start(llm_model=...)`` was another field both
+    frontends accepted and no engine read, so the flag was a silent no-op and the
+    only way to change the model was editing the config file. Two backends read
+    this value -- the LLM translator and the ``videocaptioner-llm`` adapter, which
+    passes it on as ``--model`` -- so the resolution lives here rather than being
+    duplicated and drifting.
+    """
+    return ctx.options.llm_model or ctx.config.llm.model
 
 
 def _load_openai() -> Any:
@@ -137,7 +150,7 @@ class LLMTranslationBackend:
             return TranslationOutcome(texts=[], origin=self.name)
 
         client = self._client_for(ctx)
-        model = ctx.config.llm.model
+        model = effective_llm_model(ctx)
 
         translated: list[str] = []
         refined: list[str] = []

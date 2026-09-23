@@ -57,17 +57,24 @@ def configure(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -
     parser.add_argument(
         "--asr-engine",
         metavar="ENGINE",
-        help="Force one ASR engine instead of walking the fallback chain.",
+        help=(
+            "Try this ASR engine first. The other engines stay as fallback: "
+            "whisper-local, whisper-api, bcut, google-web, videocaptioner, "
+            "or a VideoCaptioner engine (bijian, jianying, whisper-cpp)."
+        ),
     )
     parser.add_argument(
         "--translator",
         metavar="BACKEND",
-        help="Force one translation backend (llm, bing, google, mymemory, videocaptioner).",
+        help=(
+            "Try this translation backend first. The others stay as fallback: "
+            "llm, bing, google, mymemory, videocaptioner-llm, videocaptioner."
+        ),
     )
     parser.add_argument(
         "--llm-model",
         metavar="MODEL",
-        help="Override the configured LLM model, e.g. deepseek-chat.",
+        help="Override the configured LLM model for this run, e.g. deepseek-chat.",
     )
     parser.add_argument(
         "--target-lang",
@@ -75,6 +82,14 @@ def configure(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="Target language tag. Defaults to zh-Hans.",
     )
     parser.add_argument("--cookies", metavar="FILE", help="Netscape cookies.txt for gated media.")
+    parser.add_argument(
+        "--subtitle-file",
+        metavar="FILE",
+        help=(
+            "Use an existing .srt/.vtt as the source track, instead of the "
+            "platform's subtitles or speech recognition."
+        ),
+    )
     parser.add_argument(
         "--cookies-from-browser",
         metavar="BROWSER",
@@ -132,6 +147,7 @@ def run(args: argparse.Namespace) -> int:
         target_lang=args.target_lang or "zh-Hans",
         cookies_file=args.cookies,
         cookies_browser=args.cookies_from_browser,
+        subtitle_file=args.subtitle_file,
         audio_denoise=not args.no_denoise,
         only_phase=Phase(args.only_phase) if args.only_phase else None,
         force=args.force,

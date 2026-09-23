@@ -55,6 +55,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from porter.asr import whisper_local
 from porter.config import PorterConfig
 from porter.errors import PorterError
 from porter.logging import get_logger
@@ -496,13 +497,34 @@ def probe_asr_route(config: PorterConfig, *, which: Any = None) -> Finding:
     the question an operator actually has — "will this spend money and how
     reliable is the path?" — without constructing a chain or a run context.
 
-    The distinction that matters is between the **keyed, documented** engines
-    (OpenAI-compatible Whisper endpoints, the VideoCaptioner CLI) and the
-    **key-free, reverse-engineered** ones (Bcut, Google Web). The latter are
-    labelled as unverified here because their failure mode is a silent fallback,
-    and finding out afterwards is worse than being told up front.
+    The order mirrors :func:`porter.pipeline._default_transcriber`, because the
+    route it names has to be the route a run takes:
+
+    1. **Local Whisper** (``[asr-local]``) — no key, no network, no third party.
+    2. **Whisper API** — keyed and documented.
+    3. **VideoCaptioner CLI** — external GPL-3.0 process, local engines only.
+    4. **Bcut / Google Web** — key-free and reverse-engineered. Both were
+       measured returning empty results on 2026-09-22 (§13.21), so this is the
+       branch that means "transcription will fail".
+
+    Before §13.48 there was no branch 1, and the wording here said the key-free
+    endpoints were the only free option and that they do not transcribe — true
+    then, and false once a local model is installed. A doctor that reports a
+    stale fact is worse than one that reports nothing.
     """
     lookup = which or shutil.which
+
+    if whisper_local.is_installed():
+        model = config.asr.whisper_local_model or whisper_local.DEFAULT_MODEL
+        cached = whisper_local.model_is_cached(model)
+        detail = (
+            f"local Whisper ({model}, "
+            + ("already downloaded" if cached else "downloads on first use")
+            + ") — no key, no network"
+        )
+        if config.asr.whisper_api_key or config.llm.api_key:
+            detail += f", falling back to the Whisper API ({config.asr.whisper_model})"
+        return Finding.passed("asr_route", "Speech-to-text route", detail)
 
     if config.asr.whisper_api_key or config.llm.api_key:
         return Finding.passed(
@@ -526,7 +548,8 @@ def probe_asr_route(config: PorterConfig, *, which: Any = None) -> Finding:
         "the key-free Bcut / Google Web endpoints, which are reverse-engineered "
         "and, as measured on 2026-09-22, do not transcribe at all (Google Web "
         "returns an empty result for every request). Set an LLM or Whisper API "
-        "key, or install the VideoCaptioner CLI, or transcription will fail",
+        "key, or install porter-workflow[asr-local] for offline transcription "
+        "with no key, or transcription will fail",
     )
 
 

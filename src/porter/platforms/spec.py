@@ -133,10 +133,14 @@ class PlatformSpec:
         return None
 
     def select_source_lang(
-        self, subtitles: dict[str, Any], *, is_auto: bool = False
+        self,
+        subtitles: dict[str, Any],
+        *,
+        is_auto: bool = False,
+        declared_lang: str | None = None,
     ) -> str | None:
         """Choose the source-language track, per the shared priority list."""
-        return select_source_lang(subtitles, is_auto=is_auto)
+        return select_source_lang(subtitles, is_auto=is_auto, declared_lang=declared_lang)
 
     def select_chinese_lang(self, subtitles: dict[str, Any]) -> str | None:
         """Choose an existing Chinese track, per the shared priority list."""

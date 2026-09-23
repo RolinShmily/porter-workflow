@@ -349,9 +349,49 @@ class TestSubtitlePlan:
         plan = extractor.plan_subtitles(info)
         assert plan == {SUBTITLE_NAME: ("en-orig", True)}
 
+    def test_a_dubbed_video_uses_the_declared_language(self, extractor) -> None:
+        """The regression: ``*-orig`` is one-per-language on a dubbed video.
+
+        Choosing by document order picked Arabic for an English video, and
+        because a Chinese track existed the plan then declared translation
+        unnecessary -- Arabic and Chinese subtitles over an English video.
+        """
+        info = info_dict(
+            language="en-US",
+            automatic_captions={"ar-orig": [{}], "en-orig": [{}], "zh-Hans": [{}]},
+        )
+        plan = extractor.plan_subtitles(info)
+        assert plan[SUBTITLE_NAME] == ("en-orig", True)
+        assert plan[SUBTITLE_ZH_NAME] == ("zh-Hans", True)
+
+    def test_a_video_declaring_no_language_still_avoids_document_order(self, extractor) -> None:
+        info = info_dict(automatic_captions={"ar-orig": [{}], "en-orig": [{}]})
+        assert extractor.plan_subtitles(info)[SUBTITLE_NAME] == ("en-orig", True)
+
     def test_human_track_wins_over_auto(self, extractor) -> None:
         info = info_dict(subtitles={"en": [{}]}, automatic_captions={"en-orig": [{}]})
         assert extractor.plan_subtitles(info)[SUBTITLE_NAME] == ("en", False)
+
+    def test_the_metadata_and_the_plan_cannot_disagree(self, extractor) -> None:
+        """Both call ``select_source_lang``; both must get the tiebreak.
+
+        ``_build_metadata`` is the second call site of the same decision. When
+        only ``plan_subtitles`` passed ``declared_lang``, the metadata and the
+        plan disagreed -- the same defect fixed in one place and left standing
+        in the other.
+
+        The declared language is deliberately **non-English**: with ``en-US``
+        the shared priority list would pick ``en-orig`` anyway and this test
+        would pass even with the call site un-fixed (it did, until the reverse
+        check caught it). ``ar`` is the case where the two signals disagree.
+        """
+        info = info_dict(
+            language="ar",
+            automatic_captions={"ar-orig": [{}], "en-orig": [{}], "zh-Hans": [{}]},
+        )
+        metadata = extractor._build_metadata(URL, info)
+        assert metadata.official_subtitle_lang == "ar-orig"
+        assert metadata.official_subtitle_lang == extractor.plan_subtitles(info)[SUBTITLE_NAME][0]
 
     def test_no_tracks_means_the_plan_is_empty(self, extractor) -> None:
         assert extractor.plan_subtitles(info_dict()) == {}

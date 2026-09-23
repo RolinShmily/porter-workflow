@@ -449,6 +449,42 @@ class TestRegistryFileLocation:
         assert registry_file().name == "jobs.json"
         assert "porter" in str(registry_file())
 
+    def test_a_default_registry_follows_the_seam_after_construction(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The default path is resolved per access, not frozen in ``__init__``.
+
+        ``porter_mcp.tools.jobs`` builds its store at module import, so its
+        registry is constructed before any test fixture runs. Resolving the path
+        at construction froze the developer's real ``~/.cache/porter/jobs.json``
+        and the suite wrote real job records into it -- four per full run, which
+        is how it surfaced: ``porter jobs list`` showed ``/videos/a.mp4`` entries
+        created by the test process itself. The §13.33 fixture patched the seam
+        correctly but too late to matter for an already-built registry.
+        """
+        from porter.jobs import records as records_module
+
+        # Stands in for import time: built while the seam pointed elsewhere.
+        built_early = records_module.JobRegistry()
+        later = tmp_path / "later" / "jobs.json"
+        monkeypatch.setattr(records_module, "registry_file", lambda: later)
+
+        assert built_early.path == later
+        assert built_early.lock_path == later.with_name("jobs.lock")
+
+    def test_an_explicit_path_is_still_pinned(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Lazy resolution must not undo injection for tests and embedders."""
+        from porter.jobs import records as records_module
+
+        pinned = tmp_path / "pinned.json"
+        registry = records_module.JobRegistry(pinned)
+        monkeypatch.setattr(records_module, "registry_file", lambda: tmp_path / "other.json")
+
+        assert registry.path == pinned
+        assert registry.lock_path == pinned.with_name("jobs.lock")
+
 
 # ----------------------------------------------------------------------
 # Record construction from engine objects
