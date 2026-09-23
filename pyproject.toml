@@ -38,6 +38,11 @@ dependencies = [
     "requests>=2.31",
     "pydantic>=2.0",
     "platformdirs>=4.0",
+    # `tomllib` is stdlib only from 3.11. `tomli` is the reference implementation
+    # that was upstreamed into it, so this keeps the declared >=3.10 floor
+    # honest rather than silently broken -- `import porter` reads TOML config, so
+    # without it the whole package fails to import on 3.10.
+    "tomli>=2.0; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]

@@ -2558,6 +2558,7 @@ store 把状态**投影**进 registry。反过来（registry 为权威）会让�
 
 `porter_job_start` / `_status` / `_result` / `_cancel` / `_list` + `porter://jobs/{id}/log` 资源。作业用后台线程跑，`_HEAVY_JOBS` 信号量**串行化重活**（一次编码已经打满机器，并发只会让两者都变慢）。`_run_job` 绝不放过异常——线程静默死掉会让作业永远停在 `running`。
 
+| — | 1.7 | 新增 §13.46：CI 矩阵证伪了一个从 P1 起就存在的声明——`requires-python >=3.10` 是**假的**，`src/porter/config.py` 的模块级 `import tomllib`（3.11+ stdlib）使 3.10 上 `import porter` 直接失败；grep 确认 `tomllib` 是唯一障碍（代码库其余部分刻意做了 `(str, Enum)` 等 3.10 适配），修法为 `tomli as tomllib` 条件导入 + 条件依赖，并在**真的 3.10.21** 上跑完全量套件（1341 passed）。 |
 | — | 1.6 | 新增 §13.45：上线后 CI 首次运行暴露的「测试偷偷依赖开发机环境」三类缺陷（测试替身漏了真实文件系统 / 硬编码 `/usr/bin/ffmpeg` / 断言把开发机核数写死）、`uv run` shim PATH 的复现方法与它覆盖不到的 3 个、三处“只改环境取数不改断言”的修法、CI 装 ffmpeg 而非标 `slow` 的依据（`test_burn.py` 的 docstring 指定了真编码层），以及新增的 **hermetic 作业**（先装再藏 ffmpeg 并自证藏成功）。 |
 | — | 1.5 | 新增 §13.44：P5 收尾——四份 `docs/` 逐条对照代码复核（含文档比代码更诚实的几处死字段断言）、三个 GitHub Actions 工作流（test 矩阵 / PyPI Trusted Publishing / 三平台 EXE 发布）与 `packaging/launcher.py` 引导器的四个设计细节及本地验证。 |
 | — | 1.4 | 新增 §13.43：P5 skill 资产落地（SKILL.md + references + scripts + assets，含文案诚实性测试 34 项）、机制决策「skill 驱动 CLI、MCP 作补充文档」、`porter plan` CLI 命令补齐对称性、以及本轮发现的真 bug（`porter plan` 对不存在的本地文件报可行）与其连带的「三个 plan 测试假绿」修正。 |
@@ -3101,3 +3102,65 @@ uv run pytest -m "not slow" --deselect tests/regression/test_synthesizer_port.py
 | — | ruff / mypy（94 文件）/ import-linter | `All checks passed!` / no issues / 2 kept 0 broken |
 
 第二行是本次修复的核心证据：**唯一残留的 ffmpeg 依赖，就是那个故意的真编码层。** 这也把「CI 需要 ffmpeg」从一句经验之谈，变成了一条被测过的边界。
+
+---
+
+### 13.46 CI 矩阵证伪了一个从 P1 起就存在的声明：Python 3.10 上 `import porter` 直接失败
+
+§13.45 的修复推送后，CI 只剩 `gate (py3.10)` 一个作业红（退出码 2 = collection error），其余全绿——包括**新增的 hermetic 作业**（53 s 通过）。
+
+#### 根因
+
+`src/porter/config.py:32` 的**模块级** `import tomllib`。而 `tomllib` 是 **Python 3.11** 才进入标准库的。于是 3.10 上：
+
+```
+ModuleNotFoundError: No module named 'tomllib'
+ERROR collecting tests/integration/test_burn_pipeline.py
+ERROR collecting tests/regression/test_ass_port.py
+...（共 11 个模块）
+```
+
+`tests/` 里**没有任何一处**直接 import `tomllib`——它们只是 import 了 `porter`，而 `porter` 拉进 `porter.config`，整个包在那行就死了。
+
+而项目同时声明着四处 3.10 支持：`requires-python = ">=3.10"`、classifier `Programming Language :: Python :: 3.10`、ruff `target-version = "py310"`、mypy `python_version = "3.10"`。**这条声明从 P1 起就从未被真正执行过**：开发机是 Python 3.14，本地一直全绿。
+
+`mypy` 对这类错误恰好是**盲的**：`[tool.mypy]` 设了 `ignore_missing_imports = true`，所以即便 `python_version = "3.10"`，缺失的 `tomllib` 也只是被当作 `Any` 放过。这正是「target-version 不是兼容性测试」的具体体现。
+
+#### 它确实是唯一障碍
+
+讽刺的是代码库其余部分**刻意**为 3.10 做了适配：`media/encode.py:90` 与 `doctor/probes.py:107` 都有注释说明「用 `(str, Enum)` 而不是 `enum.StrEnum`，因为后者是 3.11+，而本项目的下限是 3.10」。也就是说 3.10 的功课是做过功课的，`tomllib` 是唯一漏掉的一处。
+
+在动手前先用 grep 扫过全部 3.11+ 构造确认这一点（`datetime.UTC` / `Self` / `StrEnum` / `typing.override` / `TaskGroup` / `hashlib.file_digest` / `except*` / `ExceptionGroup` / PEP 695 的 `type X =` 与 `class X[T]`），除上述两处**注释**外零命中。
+
+#### 修法（用户选定：保留 3.10 支持，补后向移植）
+
+```python
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib      # 3.11 的 tomllib 就是 tomli 上游化的结果
+```
+
+外加条件依赖 `tomli>=2.0; python_version < "3.11"`。
+
+选**模块级**而不是把导入挪进 `load_config_file()`：它是标准库级模块，没有启动开销可省；而模块级导入能在条件依赖于缺失时**尽早且响亮**地失败，而不是等用户第一次读 TOML 才报错。
+
+#### 验证：在真的 3.10 上跑
+
+这是本轮唯一有意义的验证方式——开发机是 3.14，在 3.14 上怎么跑都不可能重现。用 `uv python install 3.10` 装上 Python 3.10.21，建独立 venv，`uv pip install -e ".[all,dev]"`：
+
+| 检查 | 结果 |
+|---|---|
+| `import porter`（原本就死在这一行） | OK → `0.2.0` |
+| `porter.config.tomllib is tomli` | True（tomli 2.4.1） |
+| 真实读一个 `.toml` 并 `resolve()` | `output_dir` / `style.zh_font_size` 都正确 |
+| 全量 pytest @ 3.10.21 | **1341 passed**（与 3.14 同数） |
+| mypy @ 3.10 venv | no issues in **94** source files |
+| ruff / import-linter @ 3.10 | `All checks passed!` / 2 kept, 0 broken |
+| 回归：全量 pytest @ 3.14 | **1341 passed** |
+
+第一次安装撞上 `openai` wheel 的下载超时（`UV_HTTP_TIMEOUT` 默认 30 s 偏小），改成 `UV_HTTP_TIMEOUT=180` 后通过。与代码无关，但值得记下来——CI 上没出现只是因为 runner 的网络更好。
+
+#### 教训
+
+**「声明支持某版本」与「在该版本上跑过」是两件事。** `requires-python`、classifier、`target-version`、`python_version` 四处的 3.10 声明全部没被执行过，而 `ignore_missing_imports = true` 恰好让 mypy 对「stdlib 版本差异」这一类错误失明。CI 的版本矩阵是这里唯一能发现它的东西——这就是为什么那个矩阵值得占四个并行作业。
