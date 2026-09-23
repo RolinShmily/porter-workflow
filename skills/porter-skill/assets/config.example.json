@@ -1,0 +1,59 @@
+{
+  "_comment": "Copy to ./porter.json (project) or the user config path from `porter config list`. Every key is optional; unset keys use the defaults shown here. API keys may instead come from OPENAI_API_KEY / WHISPER_API_KEY, which is safer than putting them in a file.",
+
+  "output_dir": "./porter_output",
+
+  "llm": {
+    "api_key": "",
+    "api_base": "https://api.deepseek.com/v1",
+    "model": "deepseek-chat"
+  },
+
+  "asr": {
+    "_comment": "engine: null walks the fallback chain. Transcription needs a key (whisper_api_key, or llm.api_key) or the VideoCaptioner CLI -- the key-free speech endpoints no longer work.",
+    "engine": null,
+    "language": "auto",
+    "whisper_api_key": "",
+    "whisper_api_base": "https://api.openai.com/v1",
+    "whisper_model": "whisper-1",
+    "audio_denoise": true
+  },
+
+  "ffmpeg": {
+    "_comment": "auto_tune adjusts preset and crf to the detected hardware tier. Leave video_codec alone unless you have a reason; the burn phase selects the real encoder itself.",
+    "ffmpeg_path": "ffmpeg",
+    "ffprobe_path": "ffprobe",
+    "video_codec": "libx264",
+    "preset": "veryfast",
+    "crf": 18,
+    "pixel_format": "yuv420p",
+    "audio_codec": "aac",
+    "audio_bitrate": "192k",
+    "audio_sample_rate": 44100,
+    "wav_sample_rate": 16000,
+    "auto_tune": true
+  },
+
+  "style": {
+    "_comment": "ASS subtitle styling. Sizes are in pixels at the video's own resolution; vertical videos are detected and margins adapt.",
+    "zh_font": "Microsoft YaHei",
+    "en_font": "Arial",
+    "zh_font_size": 52,
+    "en_font_size": 34,
+    "zh_primary_color": "&H00FFFFFF",
+    "en_primary_color": "&H0000FFFF",
+    "outline_color": "&H00000000",
+    "outline_width": 3.5,
+    "shadow": 1.5,
+    "margin_v": 35,
+    "margin_l": 20,
+    "margin_r": 20,
+    "bilingual_zh_margin_v": 90,
+    "bilingual_en_margin_v": 35,
+    "fade_in_ms": 120,
+    "fade_out_ms": 120
+  },
+
+  "cookies_file": null,
+  "cookies_browser": null
+}

@@ -1,0 +1,114 @@
+name: release-pypi
+
+# Publishes `porter-workflow` to PyPI on a version tag.
+#
+# Authentication is PyPI Trusted Publishing (OIDC), not an API token. There is
+# no secret to store, rotate or leak, and the `id-token: write` permission below
+# is scoped to the publish job only.
+#
+# One-time setup, done by a human on PyPI (it cannot be done from here):
+#   PyPI -> your project -> Publishing -> Add a new pending publisher
+#     Owner:            RolinShmily
+#     Repository:       porter-workflow
+#     Workflow name:    release-pypi.yml
+#     Environment:      pypi
+# A pending publisher works for the first release, before the project exists.
+
+on:
+  push:
+    tags:
+      - "v*"
+  # Lets a release be retried after a PyPI outage without re-tagging.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install the package
+        run: |
+          uv venv
+          uv pip install -e ".[all,dev]"
+
+      - name: ruff
+        run: uv run ruff check src tests
+
+      - name: mypy
+        run: uv run mypy src
+
+      - name: import-linter
+        run: uv run lint-imports
+
+      # A tag is the one moment the artifact becomes permanent, so the release
+      # path runs the full suite rather than the fast loop. Nothing is published
+      # if this fails.
+      - name: pytest
+        run: uv run pytest -m "not slow"
+
+      - name: The tag must match the version in pyproject.toml
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(uv run python -c 'import porter; print(porter.__version__)')"
+          if [ "$tag" != "$version" ]; then
+            echo "tag v$tag does not match porter.__version__ = $version" >&2
+            exit 1
+          fi
+          echo "tag and version agree: $version"
+
+  build:
+    name: build
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Build sdist + wheel
+        run: uv build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    # The `pypi` environment is what the trusted publisher is scoped to; it is
+    # also where a human can add a required reviewer for a manual gate.
+    environment:
+      name: pypi
+      url: https://pypi.org/p/porter-workflow
+    permissions:
+      # Required for OIDC. Without it there is no way to authenticate.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # `uv build` writes both an sdist and a wheel; both are published.
+          packages-dir: dist/

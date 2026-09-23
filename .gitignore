@@ -1,92 +1,83 @@
-# Byte-compiled / optimized / DLL files
+# ---------------------------------------------------------------------------
+# porter-workflow
+# ---------------------------------------------------------------------------
+
+# Python
 __pycache__/
-**/__pycache__/
 *.py[cod]
-**/*.py[cod]
 *$py.class
-
-# C extensions
 *.so
-
-# Distribution / packaging
 .Python
 build/
-develop-eggs/
 dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
 *.egg-info/
-.installed.cfg
-*.egg
+.eggs/
+wheels/
+sdist/
 MANIFEST
 
-# Virtual Environments
+# Virtualenvs / tooling caches
 .venv/
 venv/
 ENV/
-env/
-env.bak/
-venv.bak/
-
-# Unit test / coverage / linter caches
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 .coverage
 .coverage.*
-.cache
-nosetests.xml
 coverage.xml
-*.cover
-*.py,cover
+htmlcov/
+.tox/
 .hypothesis/
 
-# Local configuration files containing sensitive secrets
+# ---------------------------------------------------------------------------
+# Secrets & local configuration  (NEVER commit)
+# ---------------------------------------------------------------------------
 config.json
+porter.json
 porter_config.json
 .env
 .env.*
 !.env.example
-
-# Cookie files
 *.cookies
 *.cookie
 cookies.txt
 
-# Media files & Pipeline outputs
-output/
+# ---------------------------------------------------------------------------
+# Pipeline media output & scratch
+# ---------------------------------------------------------------------------
 porter_output/
+output/
 downloads/
 *.mp4
 *.mkv
 *.webm
+*.mov
+*.flv
 *.wav
 *.mp3
 *.flac
 *.aac
+*.m4a
 *.jpg
 *.jpeg
 *.png
+*.webp
 *.part
 *.ytdl
-
-# Temporary files & Session exports
+*.ass
+*.srt
+*.vtt
 .tmp/
 tmp/
 *.tmp
-.memory/
-pi-session*
-*.session.html
 
-# IDE & OS files
+# ---------------------------------------------------------------------------
+# Agent / editor / OS
+# ---------------------------------------------------------------------------
+.pi/**
+.memory/
+.cache/
 .idea/
 .vscode/
 *.swp
@@ -94,6 +85,9 @@ pi-session*
 *~
 .DS_Store
 Thumbs.db
+desktop.ini
 
-# Pi-Agent
-.pi/**
+# Pi session exports & local scratch
+pi-session-*.html
+*.session.html
+scratch/

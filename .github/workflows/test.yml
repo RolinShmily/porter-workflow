@@ -1,0 +1,99 @@
+name: test
+
+# The gate from docs/REFACTOR_PLAN.md §7.1. All four commands are run
+# individually rather than as one script so that a failure names itself in the
+# GitHub UI without the reader having to open the log.
+#
+# `slow` tests are excluded: they shell out to ffmpeg and hit the network, which
+# makes them both flaky and slow in CI. They still run locally, and the
+# non-slow suite covers the same code through stubs and fakes.
+
+on:
+  push:
+    branches:
+      - main
+      - "refactor/**"
+  pull_request:
+
+# One run per branch. A force-push should cancel the run it superseded instead
+# of leaving two gates racing to report.
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: gate (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # requires-python is >=3.10, so 3.10 is the floor that must keep working
+        # and 3.13 is the newest interpreter the project claims.
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      # `[all]` because the MCP tools, the LLM backends and the transcript
+      # readers are all importable surfaces that must be linted and type-checked
+      # -- importing only the core would let `openai`/`fastmcp` typing drift.
+      # `[dev]` carries the four gate commands themselves.
+      - name: Install the package
+        run: |
+          uv venv --python ${{ matrix.python-version }}
+          uv pip install -e ".[all,dev]"
+
+      - name: ruff
+        run: uv run ruff check src tests
+
+      - name: mypy
+        run: uv run mypy src
+
+      - name: import-linter
+        run: uv run lint-imports
+
+      - name: pytest
+        run: uv run pytest -m "not slow"
+
+  build:
+    name: build sdist + wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      # A packaging break (a moved package dir, a missing py.typed) is invisible
+      # to the test suite, which imports from the source tree. Building here is
+      # what catches it, and it is why this is a separate job rather than a
+      # step after pytest.
+      - name: Build
+        run: uv build
+
+      - name: Verify the wheel contains all three top-level packages
+        run: >
+          python -c "import glob, zipfile, sys;
+          w = glob.glob('dist/*.whl')[0];
+          tops = {n.split('/')[0] for n in zipfile.ZipFile(w).namelist()};
+          missing = sorted({'porter', 'porter_cli', 'porter_mcp'} - tops);
+          sys.exit(f'{w} is missing: {missing}') if missing else print(f'{w}: all three packages present')"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/

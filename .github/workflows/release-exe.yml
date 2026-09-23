@@ -1,0 +1,138 @@
+name: release-exe
+
+# Builds the `porter` launcher binaries and attaches them to a GitHub Release.
+#
+# The binary is a *launcher*, not a frozen application: it creates
+# `~/.porter/venv`, installs `porter-workflow[all]` into it, keeps yt-dlp
+# reasonably fresh, and then execs the real CLI. See packaging/launcher.py for
+# why the engine is deliberately not frozen. Two consequences show up here:
+#
+#   * PyInstaller only ever sees packaging/launcher.py, which imports nothing
+#     outside the standard library, so there is no `--collect-all yt_dlp` and no
+#     hidden-import guesswork.
+#   * The result is a few hundred KB per platform instead of ~60 MB.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x86_64
+            binary: porter
+          # macos-latest is arm64. A universal2 build would need both slices of
+          # the interpreter, which setup-python does not provide for free.
+          - os: macos-latest
+            target: macos-arm64
+            binary: porter
+          - os: windows-latest
+            target: windows-x86_64
+            binary: porter.exe
+    steps:
+      - uses: actions/checkout@v4
+
+      # 3.12, not the newest: PyInstaller trails new CPython releases, and the
+      # launcher uses no 3.13+ syntax, so pinning to what PyInstaller supports
+      # is free.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyInstaller
+        run: python -m pip install --disable-pip-version-check pyinstaller
+
+      # The launcher must parse on the oldest interpreter we ship to, because a
+      # user with only 3.10 on PATH may run `python launcher.py` directly when
+      # the binary is unavailable.
+      - name: The launcher must not use 3.13+ syntax
+        run: python -m py_compile packaging/launcher.py
+        if: matrix.os == 'ubuntu-latest'
+
+      - name: Build the one-file launcher
+        run: pyinstaller --onefile --name porter --distpath dist --workpath build packaging/launcher.py
+
+      # A release artifact that cannot even start is worse than no artifact:
+      # `--version` is handled by the launcher path only after a successful
+      # install, so exercise the parts that must work offline instead.
+      - name: Smoke-test the binary's argument hand-over
+        if: matrix.os != 'windows-latest'
+        run: |
+          set -euo pipefail
+          # A pre-made fake venv: the launcher should find it, skip installing,
+          # and hand the arguments to the script we placed there.
+          export PORTER_HOME="$RUNNER_TEMP/porter-smoke"
+          mkdir -p "$PORTER_HOME/venv/bin"
+          printf '#!/bin/sh\necho SMOKE-OK:"$@"\n' > "$PORTER_HOME/venv/bin/porter"
+          chmod +x "$PORTER_HOME/venv/bin/porter"
+          touch "$PORTER_HOME/venv/.ytdlp-refresh"
+          out="$(./dist/porter smoke-test arg)"
+          echo "$out"
+          test "$out" = 'SMOKE-OK:smoke-test arg'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: porter-${{ matrix.target }}
+          path: dist/${{ matrix.binary }}
+          if-no-files-found: error
+
+  release:
+    name: attach to the GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Rename the binaries to include their platform
+        run: |
+          set -euo pipefail
+          cd artifacts
+          for dir in porter-*; do
+            target="${dir#porter-}"
+            for f in "$dir"/*; do
+              base="$(basename "$f")"
+              # Keep the .exe suffix recognisable; append the platform otherwise.
+              case "$base" in
+                *.exe) mv "$f" "porter-${target}.exe" ;;
+                *)     mv "$f" "porter-${target}" ;;
+              esac
+            done
+          done
+          ls -l
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/porter-*
+          # Users have to know the download is not self-contained.
+          body: |
+            ## 安装方式
+
+            下载对应平台的 `porter-*` 文件，放到 `PATH` 上的任意目录，然后直接运行 `porter`。
+
+            这个可执行文件是**引导器，不是完整程序**：首次运行时它会在
+            `~/.porter/venv` 建立虚拟环境并安装 `porter-workflow[all]`，
+            之后每隔约一周自动更新一次 yt-dlp（这是最容易失效的组件，
+            因而必须能被更新，而不是被冻进二进制里）。因此**首次运行需要联网**。
+
+            * 想跳过自动更新：设置 `PORTER_LAUNCHER_NO_UPDATE=1`
+            * 想换安装位置：设置 `PORTER_HOME`
+            * 想离线部署：`PORTER_LAUNCHER_SPEC` 指向本地 wheel
+
+            不含 FFmpeg / Deno，两者需另行安装，详见
+            [README](https://github.com/RolinShmily/porter-workflow#系统依赖)。
