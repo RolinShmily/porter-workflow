@@ -44,6 +44,22 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
+      # The runner image has no ffmpeg, but ffmpeg is the one system dependency
+      # porter cannot work without. Two groups of tests need the real binary:
+      # tests/regression/test_synthesizer_port.py runs actual encodes on purpose
+      # (test_burn.py's _stub_probe docstring names that file as the real-ffmpeg
+      # tier), and the doctor/encoder probes consult the real filesystem and a
+      # real trial encode. Ubuntu's build includes libass, which hardsubbing
+      # needs -- without it those burns would degrade instead of being exercised.
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          # Fail here, not 200 tests later, if the archive was unreachable or the
+          # package landed somewhere unexpected.
+          ffmpeg -version | head -1
+          ffprobe -version | head -1
+
       # `[all]` because the MCP tools, the LLM backends and the transcript
       # readers are all importable surfaces that must be linted and type-checked
       # -- importing only the core would let `openai`/`fastmcp` typing drift.
@@ -64,6 +80,64 @@ jobs:
 
       - name: pytest
         run: uv run pytest -m "not slow"
+
+  hermetic:
+    # The gate job above runs the suite *with* ffmpeg. This job runs it without
+    # one and requires the same result, except for the single file that is
+    # deliberately about the real binary.
+    #
+    # It exists because the opposite assumption was silently baked into several
+    # tests: they resolved the host's ffmpeg, or asserted the development
+    # machine's core count, and passed everywhere except CI. The failures read
+    # as "CI is missing ffmpeg" but the defect was the tests.
+    name: the suite must not need ffmpeg on PATH
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      # Installed only so that hiding it below is a real experiment. If it were
+      # absent to begin with, this job would pass without proving anything.
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+
+      - name: Install the package
+        run: |
+          uv venv
+          uv pip install -e ".[all,dev]"
+
+      - name: Hide ffmpeg and re-run the suite
+        run: |
+          set -euo pipefail
+          for tool in ffmpeg ffprobe; do
+            path="$(command -v "$tool" || true)"
+            if [ -z "$path" ]; then
+              echo "::error::$tool was not installed, so this guard would be vacuous"
+              exit 1
+            fi
+            sudo mv "$path" "$path.hidden"
+          done
+
+          # A guard that silently does nothing is worse than no guard: prove the
+          # hide actually took effect before trusting the result below.
+          if command -v ffmpeg >/dev/null 2>&1 || command -v ffprobe >/dev/null 2>&1; then
+            echo "::error::ffmpeg/ffprobe are still on PATH; this job is not testing anything"
+            exit 1
+          fi
+          echo "ffmpeg and ffprobe are now invisible to the suite"
+
+          # tests/regression/test_synthesizer_port.py is the one deliberate
+          # real-ffmpeg tier (see test_burn.py's _stub_probe docstring) and runs
+          # in the gate job above, where ffmpeg is installed.
+          uv run pytest -m "not slow" --deselect tests/regression/test_synthesizer_port.py
 
   build:
     name: build sdist + wheel

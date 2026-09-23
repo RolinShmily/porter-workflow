@@ -1224,18 +1224,23 @@ LIGHT = asyncio.Semaphore(4)   # inspect / doctor 并发
 > 每个阶段末尾有**验收命令**。不通过不进入下一阶段。
 > **AGENTS.md 红线：不得擅自 `git commit`。** 所有变更留在工作区，由用户决定提交。
 
-### P0 —— 仓库整理（本分支已部分完成）
+### P0 —— 仓库整理（✅ 已完成）
 
 ```bash
 # 已完成：新分支 + 清空旧实现 + 重写 .gitignore + 本手册
+# 已完成：仓库改名（GitHub 侧）
+gh repo rename porter-workflow        # gh 会同时把本地 origin 改成新地址
 
-# 待你执行（GitHub 侧，需你确认）：
-#   1. GitHub → Settings → Rename repository: porter-skill → porter-workflow
-#   2. 本地：git remote set-url origin https://github.com/RolinShmily/porter-workflow.git
-#   3. 确认旧地址 302 重定向：curl -sI https://github.com/RolinShmily/porter-skill | head -1
+# 实测验收（§13.45）
+curl -sI https://github.com/RolinShmily/porter-skill    # → HTTP/2 301，location 指向新名
+curl -sI https://github.com/RolinShmily/porter-workflow  # → HTTP/2 200
+git remote -v                                            # → .../porter-workflow.git
 ```
 
-**验收**：`git remote -v` 指向新地址；旧地址返回 301/302。
+**验收结果**：`git remote -v` 指向新地址；旧地址返回 301（GitHub 保留重定向）。
+
+> 注意一个**顺序**坑：提交里的 README / `pyproject.toml` 已经把 URL 写成 `porter-workflow`，所以先改名再 push，推送的那一刻所有链接就是有效的；反之会有一段 404 窗口（虽然改名完成后重定向会把它们救回来）。
+> 另：本地目录仍叫 `/home/rol1n/Projects/porter-skill` —— 这只是本地路径，不影响仓库名，且改名会打断 `.venv` 里的 editable 安装路径，因此不动。
 
 ### P1 —— 骨架与工具链
 
@@ -1471,12 +1476,12 @@ ffprobe -v error -show_entries format=duration,probe_score \
 
 | 阶段 | 状态 | 验收证据 |
 |---|---|---|
-| **P0 仓库整理** | 🟡 本地完成，GitHub 改名待你操作 | 新分支 `refactor/porter-workflow`；44 个旧文件已清空；`.gitignore` 重写 |
+| **P0 仓库整理** | ✅ 完成（含 GitHub 改名：`porter-skill` → `porter-workflow`，旧地址 301 重定向） | 见 §9-P0、§13.45 |
 | **P1 骨架与工具链** | ✅ 完成 | 见 §13.2 |
 | **P2 引擎外科手术** | ✅ 完成（`fetch()` + `inspect()` + 回归移植；`test_pipeline`/`test_synthesizer` 阻塞于 P3/P4） | 见 §13.7、§13.9 |
 | **P3 解耦** | ✅ 完成（端口/事件/取消、platformdirs 配置、doctor 拆分、两条后端链） | 见 §13.12–§13.22 |
 | **P4 前端** | ✅ 完成（CLI 重建 + MCP 13 工具 / 作业注册表 / 资源与提示） | 见 §13.27、§13.33、§13.35、§13.38、§13.41、§13.42 |
-| **P5 资产与发布** | 🟡 本地完成（skill 资产、`porter plan`、四份 `docs/`、三个 workflow、EXE 引导器；仅剩 GitHub 侧仓库改名待你操作） | 见 §13.43、§13.44 |
+| **P5 资产与发布** | ✅ 完成 | 见 §13.43、§13.44、§13.45 |
 
 ### 13.2 P1 验收结果
 
@@ -2553,6 +2558,7 @@ store 把状态**投影**进 registry。反过来（registry 为权威）会让�
 
 `porter_job_start` / `_status` / `_result` / `_cancel` / `_list` + `porter://jobs/{id}/log` 资源。作业用后台线程跑，`_HEAVY_JOBS` 信号量**串行化重活**（一次编码已经打满机器，并发只会让两者都变慢）。`_run_job` 绝不放过异常——线程静默死掉会让作业永远停在 `running`。
 
+| — | 1.6 | 新增 §13.45：上线后 CI 首次运行暴露的「测试偷偷依赖开发机环境」三类缺陷（测试替身漏了真实文件系统 / 硬编码 `/usr/bin/ffmpeg` / 断言把开发机核数写死）、`uv run` shim PATH 的复现方法与它覆盖不到的 3 个、三处“只改环境取数不改断言”的修法、CI 装 ffmpeg 而非标 `slow` 的依据（`test_burn.py` 的 docstring 指定了真编码层），以及新增的 **hermetic 作业**（先装再藏 ffmpeg 并自证藏成功）。 |
 | — | 1.5 | 新增 §13.44：P5 收尾——四份 `docs/` 逐条对照代码复核（含文档比代码更诚实的几处死字段断言）、三个 GitHub Actions 工作流（test 矩阵 / PyPI Trusted Publishing / 三平台 EXE 发布）与 `packaging/launcher.py` 引导器的四个设计细节及本地验证。 |
 | — | 1.4 | 新增 §13.43：P5 skill 资产落地（SKILL.md + references + scripts + assets，含文案诚实性测试 34 项）、机制决策「skill 驱动 CLI、MCP 作补充文档」、`porter plan` CLI 命令补齐对称性、以及本轮发现的真 bug（`porter plan` 对不存在的本地文件报可行）与其连带的「三个 plan 测试假绿」修正。 |
 | — | 1.3 | 新增 §13.33：持久化作业注册表（`jobs/store.py` + `jobs/records.py`，两层投影）、5 个 MCP 作业工具与日志资源、CLI `jobs` 四个动作、`porter.jobs` 补入分层契约、看门狗式跨进程取消（修掉 sink 观察在长下载期间完全无效的设计缺陷）、`to_record` 产物丢失、conftest 全局隔离用户 cache。 |
@@ -3029,3 +3035,69 @@ v0.1 的 SKILL.md 让 agent 把 bash `timeout` 抬到 1200 秒。v0.2 改为**�
 #### 门禁
 
 ruff / mypy（94 文件）/ import-linter（2 kept, 0 broken）全绿；**1341 passed**（第二次全量运行，与 §13.43 同一数字——本轮只改文档、workflow 与新增的 `packaging/`，不进包也不进测试路径）。
+
+---
+
+### 13.45 上线后 CI 首次运行：测试对开发机环境的依赖，与新增 hermetic 门禁
+
+仓库改名完成后把 `main` 推到 `origin`，立即触发 `test.yml` → **失败**（52 s，9 failed / 5 errors）。失败的**读法**很关键：表面是「CI 没装 ffmpeg」，实际是**几个测试把开发机环境悄悄写死了**。三类：
+
+| 类 | 具体 | 本地为何测不出 |
+|---|---|---|
+| 测试替身漏了真实文件系统 | `TestProbeAll._context` 注入了 fake runner / fake `which` / fake `cpu_count`，却把 `tools` 留成 `None`，于是 `probe_ffmpeg` 仍走真实 `shutil.which` + `Path.is_file` | 开发机有 ffmpeg，报告不会短路 |
+| 硬编码本机绝对路径 | `TestFfmpegProbe` 把 `/usr/bin/ffmpeg` 当作「存在的那一个」 | 本机该路径确实存在 |
+| 断言把开发机 CPU 写死 | 断言 `SOFTWARE_FAST`，而 `_FAST_CPU_CORES = 8`；本机 10 核过、runner 4 核挂 | 纯硬件差异，本地永远看不到 |
+
+第三类最能说明问题：测试的**意图**是「决定档位的是试编码，而不是 `-encoders` 清单里有没有」，但断言写成具体档位，等于把开发机的 CPU 编进了测试。
+
+#### 复现手段：造一个「除 ffmpeg 外什么都有」的 PATH
+
+`ubuntu-latest` 没有 ffmpeg（CI 日志里 `FileNotFoundError: 'ffmpeg'` 与 doctor 的 `not found on PATH` 都指向这一点）。但开发机上 ffmpeg 在 `/bin`、`/usr/bin`、`/usr/sbin` **三处**都有，且 `bash` 也在 `/usr/sbin` —— 所以**不能靠砍 PATH 目录来模拟**：第一次尝试砍 PATH 顺带砍掉了 `bash`，冒出来一批与 ffmpeg 无关的假失败（`test_jobs` 8 个、`test_cli` 1 个、`test_skill_assets` 1 个），差点把归因带偏。
+
+最终做法是建一个 shim 目录：把 `/usr/bin`、`/bin`、`/usr/sbin`、`/sbin`、`/usr/local/bin` 下**除 `ffmpeg*` / `ffprobe*` 之外**的每个可执行文件都符号链接进去（共 2270 个），并把 `.venv/bin` 接在后面。这个 PATH 精确复现了 CI 的 14 个失败中的 **11 个**。
+
+剩下 **3 个无法用 shim 复现**，因为它们根本不是「ffmpeg 不在 PATH 上」：
+
+* 两个 `TestFfmpegProbe` 硬编码 `/usr/bin/ffmpeg`——本机该文件存在，与 PATH 无关；
+* `test_the_trial_encode_is_what_decides` 是**核数**差异（本机 10 核 vs runner 4 核），与 ffmpeg 无关。
+
+这两类只能靠读代码 + CI 日志定位。**这是本轮最重要的方法结论：复现手段只能覆盖它覆盖的那一类，不能因为「shim 下只剩 3 个」就把它们归到别的原因上。**
+
+#### 修法（三处，都不是「让它变绿」）
+
+1. `tests/unit/test_doctor_probes.py` —— 新增 `present_tools` fixture，在 `tmp_path` 里造两个**真实存在**的空文件交给 `FFmpegTools`，并作为 `TestProbeAll._context` 的默认 `tools`（显式传 `tools=` 的测试仍然覆盖默认值——`defaults.update(kwargs)` 的顺序保证了这一点）。理由是：`probe_ffmpeg` 在注入了 fake runner 时**仍然**检查真实文件系统，所以不给它存在的路径，报告就会短路成一个 ffmpeg blocker，测试**静默地不再覆盖它声称覆盖的东西**。
+2. `tests/unit/test_encode.py` —— 改成断言**不变量**：回落后是本机的软件档位 `software_profile_for().tier`；并补一条 `assert profile.tier in (SOFTWARE_FAST, SOFTWARE_SLOW)` 保持鉴别力，防止第一条把它变成空转。
+3. `tests/unit/test_pipeline_assembly.py` —— `TestRendererWiring` 加一个**类内** autouse fixture，把 `EncoderSelector.select` 打桩成 `software_profile_for()`。该类的主题是「render 失败必须变成数据、且归属 BURN 阶段」，它需要**真实**的 `FfmpegRenderer`（假 stub 不写 ASS 文件，正是真实校验拒绝烧录），但不需要真实的硬件探测。**没有放进 `conftest.py`**，因为全局 autouse 会影响真正要测编码器行为的 `test_encode.py`。
+
+三处的共同点：**保留全部原有断言**，改的是「测试从环境里取什么」，不是「测试断言什么」。两处反向验证都做了（撤掉修复即复现原报错）。
+
+#### CI 装 ffmpeg，而不是把那批测试标 `slow`
+
+`tests/regression/test_synthesizer_port.py` 的 5 个测试跑**真的** ffmpeg。它们没有被标 `slow` 是**有意的**：`tests/unit/test_burn.py` 的 `_stub_probe` docstring 明确写着「真实探测与真实编码由 `tests/regression/test_synthesizer_port.py` 覆盖，它跑真的 ffmpeg」。也就是说那批测试**被设计成**真编码层——把它们踢出 CI，等于丢掉最易出错的 burn 路径的覆盖。所以 `test.yml` 与 `release-pypi.yml`（同一个 gate）都装上 ffmpeg（Ubuntu 的包带 libass），并在装完后立刻 `ffmpeg -version | head -1` / `ffprobe -version | head -1` 自证。
+
+顺带确认**不需要 CJK 字体**：`CapabilityReport.ok` 的实现是 `return not self.blockers`，字体缺失只是 DEGRADED，不影响 `ok`。
+
+#### 新增门禁：hermetic 作业
+
+把这次的 bug 变成永久门禁。`test.yml` 的第三个作业（`hermetic`）**先装 ffmpeg，再把它藏起来**，然后重跑非慢速套件：
+
+```bash
+sudo mv "$(command -v ffmpeg)" "$(command -v ffmpeg).hidden"   # ffprobe 同理
+uv run pytest -m "not slow" --deselect tests/regression/test_synthesizer_port.py
+```
+
+两个自证细节：**先装再藏**（否则作业会在「本来就没有」的情况下通过，什么都没证明）；藏完立刻用 `command -v` 复查，还在就 `exit 1`。也就是说这个作业**不可能因为「没藏成」而假绿**。
+
+本地验证了同一套 shell 逻辑（用替身工具跑隐藏逻辑，并单独确认「工具不存在」时会走进 vacuity 分支并 `exit 1`），并在无 ffmpeg 的 shim PATH 下确认 `--deselect` 后是 **1300 passed, 1 skipped, 40 deselected, 0 errors**。
+
+#### 验证矩阵
+
+| 环境 | 命令 | 结果 |
+|---|---|---|
+| 有 ffmpeg | `pytest -m "not slow"` | 1307 passed, 34 deselected |
+| 无 ffmpeg（shim）| `pytest -m "not slow"` | 1301 passed, 1 skipped，**仅 `test_synthesizer_port.py` 的 5 个 error** |
+| 无 ffmpeg（shim）| 同上 + `--deselect tests/regression/test_synthesizer_port.py` | 1300 passed, 1 skipped, 40 deselected, **0 errors** |
+| 有 ffmpeg | `pytest`（全量）| **1341 passed** |
+| — | ruff / mypy（94 文件）/ import-linter | `All checks passed!` / no issues / 2 kept 0 broken |
+
+第二行是本次修复的核心证据：**唯一残留的 ffmpeg 依赖，就是那个故意的真编码层。** 这也把「CI 需要 ffmpeg」从一句经验之谈，变成了一条被测过的边界。

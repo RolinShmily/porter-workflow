@@ -187,6 +187,28 @@ class TestRendererWiring:
     replaced rather than deleted.
     """
 
+    @pytest.fixture(autouse=True)
+    def _no_trial_encode(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Answer the encoder question without invoking real ffmpeg.
+
+        This class is about wiring, and about a render failure becoming data
+        rather than a traceback. Those tests do need the *real* ``FfmpegRenderer``
+        -- the stubs below never write the ASS files, so the genuine validation
+        is what refuses the burn -- but they do not need the encoder trial
+        encode. Without this stub ``Pipeline.default`` probes the hardware first
+        and, on a machine without ffmpeg (as on CI), fails with
+        ``capability_missing`` before the renderer is ever consulted.
+
+        Stubbing ``select`` to the software profile is enough: it needs no
+        device and ``needs_trial`` is False, so no ffmpeg binary is required.
+        Real encoder selection is covered by ``tests/unit/test_encode.py``; real
+        encoding by ``tests/regression/test_synthesizer_port.py``, which runs
+        actual ffmpeg.
+        """
+        from porter.media.encode import EncoderSelector, software_profile_for
+
+        monkeypatch.setattr(EncoderSelector, "select", lambda self: software_profile_for())
+
     def test_default_wires_the_real_renderer(self, tmp_path) -> None:
         from porter.media.burn import FfmpegRenderer
         from porter.ports import Renderer

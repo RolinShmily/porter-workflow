@@ -87,6 +87,25 @@ def config(tmp_path) -> PorterConfig:
     return PorterConfig(output_dir=tmp_path / "out")
 
 
+@pytest.fixture
+def present_tools(tmp_path) -> FFmpegTools:
+    """A pair of binaries that really exist on disk.
+
+    ``probe_ffmpeg`` checks the real filesystem even when the runner is faked:
+    ``FFmpegTools.missing()`` calls ``shutil.which`` and ``Path.is_file``. Left
+    at its default the doctor resolves the *host's* tools, so on a machine
+    without ffmpeg (a CI runner, say) the report short-circuits to a single
+    ffmpeg blocker and every test that claims to cover a dependent probe
+    silently stops covering it. Pointing the tools at these empty files keeps
+    the report honest instead. Nothing executes them — the runner stays fake.
+    """
+    ffmpeg = tmp_path / "ffmpeg"
+    ffprobe = tmp_path / "ffprobe"
+    ffmpeg.write_text("")
+    ffprobe.write_text("")
+    return FFmpegTools(ffmpeg=str(ffmpeg), ffprobe=str(ffprobe))
+
+
 # ----------------------------------------------------------------------
 # Finding constructors
 # ----------------------------------------------------------------------
@@ -177,9 +196,8 @@ class TestPythonProbe:
 
 
 class TestFfmpegProbe:
-    def test_both_binaries_present(self) -> None:
-        tools = FFmpegTools(ffmpeg="/usr/bin/ffmpeg", ffprobe="/usr/bin/ffprobe")
-        assert probe_ffmpeg(tools).ok is True
+    def test_both_binaries_present(self, present_tools) -> None:
+        assert probe_ffmpeg(present_tools).ok is True
 
     def test_a_missing_binary_blocks(self) -> None:
         tools = FFmpegTools(ffmpeg="ffmpeg-not-here", ffprobe="ffprobe-not-here")
@@ -188,8 +206,8 @@ class TestFfmpegProbe:
         assert "ffmpeg, ffprobe" in finding.detail, "the tool kinds are named"
         assert "ffmpeg-not-here" in finding.detail, "and the path actually searched"
 
-    def test_it_reports_what_is_missing_not_just_that_something_is(self) -> None:
-        tools = FFmpegTools(ffmpeg="/usr/bin/ffmpeg", ffprobe="ffprobe-not-here")
+    def test_it_reports_what_is_missing_not_just_that_something_is(self, present_tools) -> None:
+        tools = FFmpegTools(ffmpeg=present_tools.ffmpeg, ffprobe="ffprobe-not-here")
         finding = probe_ffmpeg(tools)
         assert "ffprobe" in finding.detail
         assert "ffmpeg," not in finding.detail
@@ -413,8 +431,11 @@ class FakeRunnerNvenc:
 
 
 class TestProbeAll:
-    def _context(self, config: PorterConfig, **kwargs: Any) -> ProbeContext:
+    def _context(
+        self, config: PorterConfig, present_tools: FFmpegTools, **kwargs: Any
+    ) -> ProbeContext:
         defaults: dict[str, Any] = {
+            "tools": present_tools,
             "runner": FakeRunner(),
             "which": _which_for("deno"),
             "cpu_count": 8,
@@ -422,8 +443,8 @@ class TestProbeAll:
         defaults.update(kwargs)
         return ProbeContext(config=config, **defaults)
 
-    def test_reports_every_capability(self, config) -> None:
-        report = probe_all(config, context=self._context(config))
+    def test_reports_every_capability(self, config, present_tools) -> None:
+        report = probe_all(config, context=self._context(config, present_tools))
         keys = {f.key for f in report.findings}
 
         assert {
@@ -438,12 +459,13 @@ class TestProbeAll:
             "output_dir",
         } <= keys
 
-    def test_a_missing_ffmpeg_produces_one_blocker_not_five(self, config) -> None:
+    def test_a_missing_ffmpeg_produces_one_blocker_not_five(self, config, present_tools) -> None:
         """Every dependent probe would otherwise report its own misleading failure."""
         report = probe_all(
             config,
             context=self._context(
                 config,
+                present_tools,
                 runner=None,
                 tools=FFmpegTools(ffmpeg="nope-ffmpeg", ffprobe="nope-ffprobe"),
             ),
@@ -451,20 +473,20 @@ class TestProbeAll:
         assert [f.key for f in report.blockers] == ["ffmpeg"]
         assert report.get("libass") is None, "no ffmpeg means the libass question is moot"
 
-    def test_a_healthy_machine_reports_ok(self, config) -> None:
-        report = probe_all(config, context=self._context(config))
+    def test_a_healthy_machine_reports_ok(self, config, present_tools) -> None:
+        report = probe_all(config, context=self._context(config, present_tools))
         assert report.ok is True
 
-    def test_a_hostile_machine_still_produces_a_report(self, config) -> None:
+    def test_a_hostile_machine_still_produces_a_report(self, config, present_tools) -> None:
         """Probes must describe a broken machine, not raise while describing it."""
         report = probe_all(
             config,
-            context=self._context(config, runner=FailingRunner(), which=_which_for()),
+            context=self._context(config, present_tools, runner=FailingRunner(), which=_which_for()),
         )
         assert report.findings
         assert report.get("libass").ok is False
 
-    def test_an_unusable_ffmpeg_is_degraded_not_blocked(self, config) -> None:
+    def test_an_unusable_ffmpeg_is_degraded_not_blocked(self, config, present_tools) -> None:
         """ffmpeg is present but its filter/encoder questions cannot be answered.
 
         Still not a blocker: the phases needing no filter or hardware encoder can
@@ -473,20 +495,20 @@ class TestProbeAll:
         """
         report = probe_all(
             config,
-            context=self._context(config, runner=FailingRunner(), which=_which_for()),
+            context=self._context(config, present_tools, runner=FailingRunner(), which=_which_for()),
         )
         assert report.get("libass").severity is Severity.DEGRADED
         assert report.ok is True
 
-    def test_encoder_selection_is_reused_when_supplied(self, config) -> None:
+    def test_encoder_selection_is_reused_when_supplied(self, config, present_tools) -> None:
         selector = EncoderSelector(FakeRunnerNvenc({"h264_nvenc": (0, "")}))
         report = probe_all(
-            config, context=self._context(config, selector=selector)
+            config, context=self._context(config, present_tools, selector=selector)
         )
         assert report.get("encoder").detail.endswith("(hardware)")
 
-    def test_platform_is_recorded(self, config) -> None:
-        assert probe_all(config, context=self._context(config)).platform
+    def test_platform_is_recorded(self, config, present_tools) -> None:
+        assert probe_all(config, context=self._context(config, present_tools)).platform
 
 
 # ----------------------------------------------------------------------

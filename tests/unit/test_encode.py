@@ -85,7 +85,12 @@ class TestWsl2Regression:
         profile = EncoderSelector(runner).select()
 
         assert profile.name != "h264_nvenc"
-        assert profile.tier is HardwareTier.SOFTWARE_FAST
+        # The tier is derived from this machine's core count by
+        # ``software_profile_for()``, so pinning a specific tier would bake the
+        # development machine's CPU into the test -- it would false-fail on a
+        # 4-core CI runner, which falls back to SOFTWARE_SLOW.
+        assert profile.tier is software_profile_for().tier
+        assert profile.tier in (HardwareTier.SOFTWARE_FAST, HardwareTier.SOFTWARE_SLOW)
 
     def test_vaapi_does_keep_its_device_check(self) -> None:
         """VAAPI *is* defined in terms of a node, so its absence is conclusive."""
