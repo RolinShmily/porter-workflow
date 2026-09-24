@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-24
+
+A patch release. v0.2.0 reached PyPI without its downloadable binaries, and its
+README carried a claim that had stopped being true.
+
+### Fixed
+
+- **The launcher binaries are actually attached to the release.** The
+  `release-exe` workflow built all three platforms successfully and then failed
+  at the step that flattens them, so v0.2.0 shipped with no downloadable
+  binaries at all. Each artifact lands in a directory *named* `porter-<target>`,
+  and the step renamed the file inside it to `porter-<target>` — which resolves
+  to that same directory — so `mv` moved each file into itself. Only the Windows
+  case looked correct, because `porter-<target>.exe` happens not to be a
+  directory name.
+- **The README no longer says there is no key-free speech-to-text path.** Local
+  Whisper (`[asr-local]`) has been the first backend the chain tries since
+  v0.2.0: no key, no network after a one-time model download. Measured on real
+  speech — 18 s of audio became 3 cues in 7.2 s on CPU with the default `small`
+  model. The two dead key-free *endpoints* (Bcut, Google Web) are still
+  documented as dead; what changed is that "the endpoint is gone" and "the
+  backend is not installed" are no longer conflated.
+
 ## [0.2.0] - 2026-09-24
 
 The first published release. v0.2 is a structural rewrite into one engine with
@@ -234,6 +257,7 @@ Skill of the same name).
   assets and a standardised `raw/` + `cooked/` output layout.
 - Agent Skill packaging (`SKILL.md`, scripts, references, example config).
 
-[Unreleased]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/RolinShmily/porter-workflow/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/RolinShmily/porter-workflow/commit/c2e4286

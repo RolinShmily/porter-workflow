@@ -27,7 +27,7 @@ All three call the same `porter` library. The engine contains no argument
 parsing and never writes to stdout — a requirement, because in an MCP stdio
 server stdout *is* the JSON-RPC channel.
 
-> **Status: `v0.2.0` is the current development line on `main`.**
+> **Status: `v0.2.x` is the current development line on `main`.**
 > The v0.2 rewrite — one engine, three frontends — has landed. The v0.1
 > implementation is preserved in git history at commit `b5fd577`.
 
