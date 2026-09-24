@@ -1,11 +1,11 @@
 """Tools: the three phase-level stages.
 
-§8.1's stage tools work on **artifacts**, not on pipeline runs: an SRT in and an
+The stage tools work on **artifacts**, not on pipeline runs: an SRT in and an
 SRT out, a video plus an ASS in and a video out. That is what makes them worth
 having next to ``porter_job_start`` -- an agent can translate a subtitle file it
 already has, or burn a track it just corrected, without re-running acquisition.
 
-They are blocking, and §8.1 says why the job API remains the reliable path: an MCP
+They are blocking, and the job API remains the reliable path because an MCP
 tool call has a timeout of a minute or two, and a 1080p burn takes tens of
 minutes. So the rule applied here is that **every accepted input is one whose work
 finishes quickly**:
@@ -19,7 +19,7 @@ finishes quickly**:
     first -- is a download, and a download is exactly the long task the job API
     exists for. A URL is refused with a pointer to
     ``porter_job_start(only_phase="transcribe")`` rather than accepted and then
-    timing out. §8.1 writes the input as ``audio|url``; the ``url`` half moved to
+    timing out. The input was first specified as ``audio|url``; the ``url`` half moved to
     the job API, and this is the honest place to record that.
 
 None of these re-derive anything. The chain comes from ``Pipeline.default(ctx)``
@@ -292,7 +292,7 @@ def register(server: FastMCP) -> None:
             return {"ok": False, "error": f"configuration could not be resolved: {exc}"}
 
         # Refuse a URL here rather than accepting it and blocking for minutes on a
-        # download the caller cannot cancel. §8.1 documents the input as
+        # download the caller cannot cancel. The input is documented as
         # ``audio|url``; the URL half belongs to the job API.
         looks_like_url = "://" in source and not source.startswith("file://")
         if looks_like_url:

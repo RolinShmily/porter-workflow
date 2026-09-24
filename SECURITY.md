@@ -5,7 +5,7 @@
 | Version | Supported |
 | --- | --- |
 | `0.2.x` (current line) | ✅ |
-| `0.1.x` (`porter-skill`) | ❌ — upgrade to `0.2.x`; see [`docs/MIGRATION.md`](docs/MIGRATION.md) |
+| `0.1.x` (`porter-skill`) | ❌ — upgrade to `0.2.x` |
 
 v0.1 is unmaintained. If you are on it, the migration guide is short and the
 security posture of v0.2 is materially better (see *Hardening already in

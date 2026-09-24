@@ -58,7 +58,7 @@ MAX_DELAY_SECONDS = 8.0
 
 #: How many times one request is attempted before the backend gives up.
 #:
-#: Both key-free endpoints refused on the §13.48 run -- Google with HTTP 429 on
+#: Both key-free endpoints refused on a measured run -- Google with HTTP 429 on
 #: both of its clients, Bing with a body it would not translate. A single attempt
 #: turns a temporary throttle into "this backend is broken", which is exactly what
 #: the operator then reads in the job report.

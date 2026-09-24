@@ -5,7 +5,7 @@ The pipeline owns *sequencing*, nothing else. Each phase is delegated to a port
 production and against fakes in tests.
 
 Compared with v0.1's ``run_pipeline()``, this changes four behaviours the MCP
-frontend requires (see ``docs/ARCHITECTURE.md``):
+frontend requires:
 
 ==========================  ==========================  ==============================
 v0.1                        v0.2                        why
@@ -347,10 +347,10 @@ def _default_transcriber(ctx: RunContext) -> Transcriber:
     5. VideoCaptioner CLI   external process, GPL-3.0
     ======================  ===================================================
 
-    **Local Whisper leads** (added in §13.48). The v0.1 order put the paid API
+    **Local Whisper leads**. The v0.1 order put the paid API
     first for quality and speed, which was written when the key-free endpoints
     still worked -- both were measured returning empty results on 2026-09-22
-    (§13.21), so the first slot should go to the backend most likely to finish.
+    , so the first slot should go to the backend most likely to finish.
     Local inference is also the only one that is unmetered, offline-capable and
     immune to an endpoint being withdrawn.
 
@@ -362,9 +362,9 @@ def _default_transcriber(ctx: RunContext) -> Transcriber:
     * Any other name that matches a backend (``whisper-local``, ``whisper-api``,
       ``bcut``, ``google-web``, ``videocaptioner``) promotes that backend.
 
-    Before §13.48 only the first rule existed, so ``--asr-engine whisper-api``
-    was accepted by the CLI and silently ignored -- ``docs/CONFIG.md`` even
-    documented it as reordering the chain. A name matching nothing now logs a
+    Before the local backend existed, only the first rule applied, so ``--asr-engine whisper-api``
+    was accepted by the CLI and silently ignored -- it was documented as
+    reordering the chain, which it did not. A name matching nothing now logs a
     warning instead of passing unremarked.
     """
     from porter.asr.base import AsrBackend
@@ -429,7 +429,7 @@ def _default_translator(ctx: RunContext) -> Translator:
 
     Promotion rather than filtering is deliberate: a user who names a backend
     wants it *tried first*, not to have the job die when that one endpoint is
-    rate-limited. ``docs/CONFIG.md`` documents this as the flag's semantics.
+    rate-limited. The ``--translator`` flag documents this as its semantics.
     """
     from porter.translate.base import TranslationBackend
     from porter.translate.bing import BingTranslateBackend

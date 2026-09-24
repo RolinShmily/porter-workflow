@@ -63,7 +63,7 @@ class JobOptions(BaseModel):
     #: An existing subtitle file to use as the source track, instead of the
     #: platform's track or speech recognition. ``.srt`` and ``.vtt``.
     #:
-    #: Added in §13.51 to close the gap §13.29 deliberately left: a ``.srt`` beside
+    #: Added to close a gap deliberately left open: a ``.srt`` beside
     #: a local video is still not picked up automatically, because it could be the
     #: source or the translation and guessing wrong either skips ASR for no reason
     #: or overwrites the user's file. Naming the file removes the ambiguity rather

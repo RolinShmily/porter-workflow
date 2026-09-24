@@ -260,7 +260,7 @@ class GoogleTranslateBackend:
 
         Shared by the batch and per-cue paths deliberately. The first version of
         this fix put the retry only in ``_translate_batch``, which is the same
-        mistake §13.47 made with ``_build_metadata``: a second call site with the
+        mistake made with ``_build_metadata``: a second call site with the
         same defect, found later. Both paths go through here now.
         """
         last_reason = "no attempt was made"

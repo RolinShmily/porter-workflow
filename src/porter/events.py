@@ -33,8 +33,8 @@ class Phase(str, Enum):
 class ArtifactKind(str, Enum):
     """Kinds of files the pipeline produces.
 
-    Mirrors the on-disk contract (``raw/`` and ``cooked/``) documented in
-    ``docs/ARCHITECTURE.md``. The names must not change without a migration
+    Mirrors the on-disk contract (``raw/`` and ``cooked/``). The names must not
+    change without a migration
     note — downstream agents match on them.
     """
 

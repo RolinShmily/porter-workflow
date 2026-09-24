@@ -35,7 +35,7 @@ pytest -m "not slow"
       [`THIRD_PARTY_NOTICES.md`](https://github.com/RolinShmily/porter-workflow/blob/main/THIRD_PARTY_NOTICES.md) are both updated.
 - [ ] **No copyleft dependency was introduced** as an in-process import.
 - [ ] Documentation is updated in the same PR (`README.md`, `README_zh.md`,
-      `docs/`, `CHANGELOG.md` as applicable).
+      `CHANGELOG.md` as applicable).
 - [ ] No secrets, tokens, cookies or personal data are included in the diff or logs.
 
 ## Notes for the reviewer

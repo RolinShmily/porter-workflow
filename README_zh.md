@@ -24,9 +24,7 @@
 三者调用同一个 `porter` 库。引擎内不含任何参数解析，且**绝不向 stdout 写入**——因为 MCP 的 stdio 传输里 stdout 就是 JSON-RPC 通道。
 
 > **状态：`v0.2.0` 是 `main` 上的当前开发线。**
-> v0.2 重构（一个引擎 + 三个前端）已落地。架构说明见
-> [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)，从 v0.1 升级见
-> [`docs/MIGRATION.md`](docs/MIGRATION.md)。v0.1 的原实现保留在 git 历史中，
+> v0.2 重构（一个引擎 + 三个前端）已落地。v0.1 的原实现保留在 git 历史中，
 > 最后一个 v0.1 提交为 `b5fd577`。
 
 ---
@@ -158,8 +156,6 @@ porter config list
 5. 用户级配置目录（`platformdirs`）
 6. 内置默认值
 
-详见 [`docs/CONFIG.md`](docs/CONFIG.md)。
-
 ---
 
 ## MCP 服务端
@@ -175,7 +171,7 @@ porter config list
 }
 ```
 
-长任务以 start / status / result / cancel 的形式暴露，而不是一次阻塞调用——因为压制 1080p 视频要几十分钟。详见 [`docs/MCP.md`](docs/MCP.md)。
+长任务以 start / status / result / cancel 的形式暴露，而不是一次阻塞调用——因为压制 1080p 视频要几十分钟。
 
 ---
 
@@ -201,7 +197,6 @@ src/porter_cli/         CLI 前端
 src/porter_mcp/         MCP 前端
 skills/porter-skill/    Agent Skill 资产（SKILL.md、scripts、references）
 tests/{unit,regression,integration}/
-docs/
 ```
 
 ---

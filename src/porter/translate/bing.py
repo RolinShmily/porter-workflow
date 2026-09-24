@@ -76,7 +76,7 @@ _BATCH_SIZE = 8
 #: ============  ==========  ================================================
 #:
 #: So the shared ``MAX_TEXTS_PER_REQUEST`` (15, chosen for Google's truncation)
-#: is above Bing's real ceiling, and §13.48's failure was not a throttle that
+#: is above Bing's real ceiling, and that failure was not a throttle that
 #: would have cleared -- it was a size limit, hit on every 15-cue batch. 8 is the
 #: largest size measured to work.
 #:
@@ -319,7 +319,7 @@ class BingTranslateBackend:
         if parsed is None:
             refusal = _refusal(body)
             if refusal is not None:
-                # The batch is an optimisation, not a contract (§13.40). Bing
+                # The batch is an optimisation, not a contract. Bing
                 # refuses oversized payloads with an HTTP-200 refusal object, and
                 # failing the backend over it hands the whole job to a worse
                 # engine when one request per cue works fine -- measured: single

@@ -1,6 +1,6 @@
 """Resources and a prompt: the reference material an agent reads up front.
 
-§8.2 lists three resources and one prompt. Two of the resources are here (the
+The MCP contract lists three resources and one prompt. Two of the resources are here (the
 third, ``porter://jobs/{id}/log``, belongs with the job tools that own the data)
 along with the prompt.
 
@@ -35,7 +35,7 @@ __all__ = ["ARCHITECTURE_URI", "CONFIG_URI", "PROMPT_NAME", "register"]
 ARCHITECTURE_URI = "porter://docs/architecture"
 CONFIG_URI = "porter://config"
 
-#: §8.2 spells this ``porter://prompts/localize-video``. It is registered as an
+#: The contract spelled this ``porter://prompts/localize-video``. It is registered as an
 #: MCP *prompt* named ``localize-video`` instead of a resource with that URI:
 #: prompts are the primitive clients surface as reusable commands, which is
 #: exactly what "guide the agent through the loop" means. A resource would have

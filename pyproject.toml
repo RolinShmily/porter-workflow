@@ -99,7 +99,6 @@ packages = ["src/porter", "src/porter_cli", "src/porter_mcp"]
 [tool.hatch.build.targets.sdist]
 include = [
     "/src",
-    "/docs",
     "/skills",
     "/README.md",
     "/LICENSE",

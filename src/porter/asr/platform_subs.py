@@ -82,7 +82,7 @@ def load_supplied_subtitles(path: Path) -> list[SubtitleItem]:
     no subtitles at all would be worse still. So every failure is an error, and
     each one names what to do about it.
 
-    This is also the escape hatch §13.29 left open. A ``.srt`` sitting beside a
+    This is also the escape hatch that local input leaves open. A ``.srt`` sitting beside a
     local video is still **not** picked up automatically -- it could be the source
     or the translation, and guessing wrong either skips ASR for no reason or
     overwrites the user's file. Naming the file removes the ambiguity instead of

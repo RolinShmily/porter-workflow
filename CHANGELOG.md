@@ -80,8 +80,7 @@ tag has been cut yet, so the section stays under `Unreleased` until one is.
 - **The claimed key-free speech-to-text path.** Every key-free ASR endpoint
   (Bcut, Google Web) was measured and found non-functional as of 2026-09-22.
   Transcription now needs an API key or the VideoCaptioner CLI, and
-  `porter doctor` says so before a job starts. `docs/MIGRATION.md` records the
-  measurements.
+  `porter doctor` says so before a job starts.
 - **Hard dependencies on `openai`, `pillow`, `SpeechRecognition`** in the
   default install.
 

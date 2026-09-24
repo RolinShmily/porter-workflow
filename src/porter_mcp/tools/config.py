@@ -1,6 +1,6 @@
 """Tool: read-only configuration.
 
-§8.5 allows ``porter_config`` exactly two actions, both reads, and requires every
+The MCP contract allows ``porter_config`` exactly two actions, both reads, and requires every
 secret to be masked. It is the only tool that exists purely so an agent can *see*
 what it is working with: which LLM model, which output directory, whether an API
 key is configured at all. Without it an agent diagnosing "why did translation use

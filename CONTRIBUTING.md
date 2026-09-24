@@ -1,9 +1,8 @@
 # Contributing to Porter Workflow
 
 Thanks for taking the time to contribute. This document covers what you need to
-build, test and land a change. Anything not covered here is usually answered in
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (how the engine is put together)
-or [`docs/CONFIG.md`](docs/CONFIG.md) (what every configuration key does).
+build, test and land a change. The engine's rationale lives in the code itself:
+every non-obvious decision is explained in a module docstring next to it.
 
 By participating you agree to the [Code of Conduct](CODE_OF_CONDUCT.md).
 
@@ -113,7 +112,7 @@ Porter is MIT. Contributions are accepted under the same terms.
 3. Add or update tests. A bug fix should come with a test that fails before it.
 4. Run the gate above.
 5. Update documentation in the same PR. Behaviour changes that are not
-   reflected in `README.md`, `docs/` or `CHANGELOG.md` are incomplete.
+   reflected in `README.md`, `README_zh.md` or `CHANGELOG.md` are incomplete.
 6. Open the pull request and fill in the template.
 
 ### Commit messages
@@ -127,7 +126,6 @@ fine; match the change, not a language policy.
 
 * `README.md` is English, `README_zh.md` is Chinese. A user-visible change
   should update both.
-* Contributor and design documents under `docs/` are in Chinese.
 * Governance files (`CONTRIBUTING`, `CODE_OF_CONDUCT`, `SECURITY`,
   `CHANGELOG`, `THIRD_PARTY_NOTICES`) and GitHub templates are in English.
 * `THIRD_PARTY_NOTICES.md` is in English: it is a legal notice.

@@ -47,8 +47,8 @@ __all__ = [
 
 _logger = get_logger(__name__)
 
-#: Filenames inside ``raw/``. Part of the on-disk contract, documented in
-#: ``docs/ARCHITECTURE.md``. They are the same for every source: a local file and
+#: Filenames inside ``raw/``. Part of the on-disk contract. They are the same
+#: for every source: a local file and
 #: a downloaded video produce indistinguishable task directories on purpose, so
 #: nothing downstream needs to know where the master came from.
 VIDEO_NAME = "video.mp4"

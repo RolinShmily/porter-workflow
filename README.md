@@ -28,9 +28,7 @@ parsing and never writes to stdout — a requirement, because in an MCP stdio
 server stdout *is* the JSON-RPC channel.
 
 > **Status: `v0.2.0` is the current development line on `main`.**
-> The v0.2 rewrite — one engine, three frontends — has landed. Architecture is
-> documented in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and upgrading
-> from v0.1 is covered by [`docs/MIGRATION.md`](docs/MIGRATION.md). The v0.1
+> The v0.2 rewrite — one engine, three frontends — has landed. The v0.1
 > implementation is preserved in git history at commit `b5fd577`.
 
 ---
@@ -175,8 +173,6 @@ Resolved in this order, highest priority first:
 5. User-level config directory (`platformdirs`)
 6. Built-in defaults
 
-See [`docs/CONFIG.md`](docs/CONFIG.md).
-
 ---
 
 ## MCP server
@@ -193,8 +189,7 @@ See [`docs/CONFIG.md`](docs/CONFIG.md).
 ```
 
 Long jobs are exposed as a start/status/result/cancel API rather than one
-blocking call, because encoding a 1080p video can take tens of minutes. See
-[`docs/MCP.md`](docs/MCP.md).
+blocking call, because encoding a 1080p video can take tens of minutes.
 
 ---
 
@@ -220,7 +215,6 @@ src/porter_cli/    CLI frontend
 src/porter_mcp/    MCP frontend
 skills/porter-skill/   Agent Skill assets (SKILL.md, scripts, references)
 tests/{unit,regression,integration}/
-docs/
 ```
 
 ---

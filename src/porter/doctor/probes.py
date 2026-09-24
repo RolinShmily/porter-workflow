@@ -504,10 +504,10 @@ def probe_asr_route(config: PorterConfig, *, which: Any = None) -> Finding:
     2. **Whisper API** — keyed and documented.
     3. **VideoCaptioner CLI** — external GPL-3.0 process, local engines only.
     4. **Bcut / Google Web** — key-free and reverse-engineered. Both were
-       measured returning empty results on 2026-09-22 (§13.21), so this is the
+       measured returning empty results on 2026-09-22, so this is the
        branch that means "transcription will fail".
 
-    Before §13.48 there was no branch 1, and the wording here said the key-free
+    Before the local backend existed there was no branch 1, and the wording here said the key-free
     endpoints were the only free option and that they do not transcribe — true
     then, and false once a local model is installed. A doctor that reports a
     stale fact is worse than one that reports nothing.

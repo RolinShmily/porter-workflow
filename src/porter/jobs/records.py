@@ -308,8 +308,8 @@ class JobRegistry:
     store such as ``porter_mcp.tools.jobs._STORE``, is import time, before any
     fixture can run. That is how the suite came to write real job records into
     the developer's ``~/.cache/porter/jobs.json`` (four per full run: the
-    cancellation and failure tests of ``porter_job_*``), which the §13.33
-    isolation fixture did not catch because it patched the seam too late.
+    cancellation and failure tests of ``porter_job_*``), which the isolation
+    fixture did not catch because it patched the seam too late.
     """
 
     def __init__(self, path: Path | None = None) -> None:

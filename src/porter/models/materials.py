@@ -30,7 +30,7 @@ TMP_DIRNAME = ".tmp"
 class TaskLayout(BaseModel):
     """Filesystem layout of one localization task.
 
-    The public contract (documented in ``docs/ARCHITECTURE.md``) is::
+    The public contract is::
 
         <output_root>/<video_id>_<safe_title>/
             raw/      standardised master assets
