@@ -76,6 +76,7 @@ from porter.platforms.ydl import (
     build_ydl,
     download_progress_hook,
     has_video_stream,
+    translate_ydl_errors,
 )
 from porter.subtitles.srt import bilibili_json_to_srt, vtt_to_srt
 from porter.utils.text import sanitize_filename
@@ -338,7 +339,10 @@ class YtDlpExtractor:
         merged = replace(policy, extract_flat=extract_flat)
 
         try:
-            with build_ydl(merged) as ydl:
+            with (
+                translate_ydl_errors(url=url, platform=self.spec.name),
+                build_ydl(merged) as ydl,
+            ):
                 info = ydl.extract_info(url, download=False)
         except ImportError as exc:  # pragma: no cover - yt-dlp is a core dep
             raise CapabilityMissingError(

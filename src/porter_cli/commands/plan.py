@@ -54,6 +54,16 @@ def configure(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="Plan to stop after this phase.",
     )
     parser.add_argument(
+        "--cookies",
+        metavar="FILE",
+        help="Netscape cookies.txt, for links that require authentication.",
+    )
+    parser.add_argument(
+        "--cookies-from-browser",
+        metavar="BROWSER",
+        help="Read cookies from a browser profile.",
+    )
+    parser.add_argument(
         "--json",
         dest="as_json",
         action="store_true",
@@ -80,6 +90,12 @@ def run(args: argparse.Namespace) -> int:
         burn=BurnMode(args.burn) if args.burn else BurnMode.DUAL,
         target_lang=args.target_lang or "zh-Hans",
         only_phase=args.only_phase,
+        # The plan inspects the source, so it needs the same credentials the run
+        # would need -- otherwise it reports "blocked: authentication required"
+        # for a link that is perfectly usable, and the advice to pass cookies is
+        # advice this very command could not follow.
+        cookies_file=args.cookies,
+        cookies_browser=args.cookies_from_browser,
     )
 
     try:

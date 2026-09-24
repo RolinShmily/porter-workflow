@@ -386,6 +386,41 @@ def restore_english_punctuation_heuristic(text: str) -> str:
     return final_text
 
 
+def _is_latin_word_char(char: str) -> bool:
+    """Whether ``char`` belongs to a run that must not be cut through.
+
+    ASCII letters, digits and the underscore only. A CJK character can be split
+    anywhere; ``Windows`` cannot be served as ``Wi`` / ``ndows``.
+    """
+    return char.isascii() and (char.isalnum() or char == "_")
+
+
+def _word_boundary(text: str, index: int) -> int | None:
+    """Move ``index`` out of the middle of an ASCII word, if it lands in one.
+
+    Returns the nearer edge of the word run (on a tie the left edge, which keeps
+    the word with the clause it started in), ``index`` itself when the cut is
+    already on a boundary, or ``None`` when the word runs the whole string and
+    there is therefore no boundary to move to.
+    """
+    if index <= 0 or index >= len(text):
+        return index
+    if not (_is_latin_word_char(text[index - 1]) and _is_latin_word_char(text[index])):
+        return index
+
+    left = index
+    while left > 0 and _is_latin_word_char(text[left - 1]):
+        left -= 1
+    right = index
+    while right < len(text) and _is_latin_word_char(text[right]):
+        right += 1
+
+    candidates = [pos for pos in (left, right) if 0 < pos < len(text)]
+    if not candidates:
+        return None
+    return min(candidates, key=lambda pos: (abs(pos - index), pos))
+
+
 def split_chinese_text_by_phrase(zh_text: str, max_len: int = 28) -> list[str]:
     """Break Chinese into line-sized phrases without cutting words apart.
 
@@ -393,6 +428,13 @@ def split_chinese_text_by_phrase(zh_text: str, max_len: int = 28) -> list[str]:
     with the phrase it closes), then on a connective, then near the middle. The
     final merge pass rejoins adjacent short pieces, which is what stops a run of
     commas from producing a stack of two-character lines.
+
+    The "without cutting words apart" promise holds for the midpoint pass too: a
+    CJK character may be cut anywhere, but a run of Latin letters may not, so the
+    midpoint is moved to the nearer edge of any ASCII word it lands inside. A
+    piece that is one unbreakable token end to end -- a URL, a long identifier --
+    is left whole, because a line over ``max_len`` reads better than ``Wi`` /
+    ``ndows``.
     """
     zh_text = zh_text.strip()
     if not zh_text or len(zh_text) <= max_len:
@@ -423,7 +465,12 @@ def split_chinese_text_by_phrase(zh_text: str, max_len: int = 28) -> list[str]:
             head = piece[:split_pos].strip()
             tail = piece[split_pos:].strip()
         else:
-            mid = len(piece) // 2
+            mid = _word_boundary(piece, len(piece) // 2)
+            if mid is None:
+                # One unbreakable token from end to end: a URL, a long
+                # identifier. A line over ``max_len`` beats a severed word.
+                refined_pieces.append(piece)
+                continue
             head = piece[:mid].strip()
             tail = piece[mid:].strip()
 

@@ -69,6 +69,23 @@ tag has been cut yet, so the section stays under `Unreleased` until one is.
   ASCII under the `POSIX`/`C` locale.
 - **CLI, MCP and skill agree on one engine**, so a fix lands in all three at
   once; v0.1 duplicated the pipeline across entry points.
+- **yt-dlp failures are reported as data, not as a traceback.** A removed video,
+  a geo-block, a bot check or a format selector that matches nothing all arrive
+  as `yt_dlp.utils.YoutubeDLError`; only the metadata path let one escape, so the
+  user got a Python stack trace for a condition the tool is meant to explain. It
+  is now mapped to `ExtractionError` with the URL, platform and original message.
+- **Subtitles no longer cut an English word in half.** The midpoint pass in
+  `split_chinese_text_by_phrase` used a raw character index, serving a real
+  subtitle as `这里的所有内容都在 Wi` / `ndows 上本地运行` — despite the function
+  promising not to cut words apart. The cut now snaps to the nearest word
+  boundary, and a piece that is one unbreakable token is left whole.
+- **`porter plan` accepts `--cookies` / `--cookies-from-browser`.** It inspects
+  the source, so it needs the credentials a run needs; its own blocker text told
+  users to pass flags the command did not have. (`inspect` always had them.)
+- **Glyphs degrade to ASCII on a non-UTF-8 console.** A GBK or cp1252 terminal
+  cannot encode `✓`/`✗`, and `errors="backslashreplace"` printed a literal
+  `\u2713` at the user. Symbols the console *can* encode (`→`, `…`, `·`) are
+  still used; only the impossible ones fall back.
 
 ### Removed
 

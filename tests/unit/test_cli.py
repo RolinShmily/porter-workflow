@@ -705,3 +705,80 @@ def _dead_pid() -> int:
     proc = subprocess.Popen(["true"])
     proc.wait()
     return proc.pid
+
+
+class TestPlanAcceptsCookies:
+    """``plan`` inspects the source, so it needs the credentials ``run`` needs.
+
+    It used to lack the flags while its own blocker text told the user to pass
+    them -- advice the command could not follow. ``inspect`` always had them.
+    """
+
+    def test_the_cookie_flags_parse(self) -> None:
+        from porter_cli.app import build_parser
+
+        args = build_parser().parse_args(
+            ["plan", URL, "--cookies-from-browser", "firefox", "--cookies", "c.txt"]
+        )
+
+        assert args.cookies_from_browser == "firefox"
+        assert args.cookies == "c.txt"
+
+    def test_the_flags_reach_the_job_options(self, monkeypatch) -> None:
+        from porter.errors import ExtractionError
+        from porter_cli.app import build_parser
+        from porter_cli.commands import plan as plan_cmd
+
+        captured: dict[str, object] = {}
+
+        def fake_plan_for(source, options=None, ctx=None):
+            captured["options"] = options
+            # A ``PorterError`` is caught by ``run`` and returned as a status,
+            # which ends the test before it needs a fully-formed plan.
+            raise ExtractionError("stop here")
+
+        monkeypatch.setattr("porter.plan.plan_for", fake_plan_for)
+
+        args = build_parser().parse_args(
+            ["plan", URL, "--cookies-from-browser", "firefox", "--cookies", "c.txt"]
+        )
+
+        assert plan_cmd.run(args) == render.EXIT_ERROR
+        options = captured["options"]
+        assert options.cookies_browser == "firefox"
+        # ``cookies_file`` is a ``Path`` on the model, not a ``str``.
+        assert options.cookies_file == Path("c.txt")
+
+
+class TestSymbolDegradesOnANonUtf8Console:
+    """A GBK or cp1252 console cannot encode ``✓``/``✗``.
+
+    ``make_stdout_safe`` sets ``errors="backslashreplace"``, so this cannot
+    crash the command -- but the user would read a literal ``\\u2713``, which is
+    worse than a plain mark, since legibility is the mark's only job.
+    """
+
+    @pytest.fixture
+    def gbk_console(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(render, "_stream_encoding", lambda stream: "gbk")
+
+    def test_a_glyph_the_console_cannot_encode_falls_back(self, gbk_console: None) -> None:
+        assert render.symbol("✓", "ok") == "ok"
+        assert render.symbol("✗", "x") == "x"
+        assert render.symbol("⊘", "-") == "-"
+
+    def test_a_glyph_gbk_can_encode_is_kept(self, gbk_console: None) -> None:
+        # GBK covers these, so there is no reason to degrade them.
+        assert render.symbol("…", ".") == "…"
+        assert render.symbol("→", ">") == "→"
+
+    def test_a_utf8_console_keeps_the_glyph(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(render, "_stream_encoding", lambda stream: "utf-8")
+
+        assert render.symbol("✓", "ok") == "✓"
+
+    def test_job_state_uses_the_fallback(self, gbk_console: None) -> None:
+        # Single ASCII glyphs, so the ``porter jobs`` column keeps its width.
+        assert render.render_job_state(JobState.DONE) == "+"
+        assert render.render_job_state(JobState.FAILED) == "x"
+        assert render.render_job_state(JobState.RUNNING) == ">"

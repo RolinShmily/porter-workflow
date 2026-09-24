@@ -29,8 +29,11 @@ from __future__ import annotations
 import pytest
 
 from porter.models.subtitle import SubtitleItem
-from porter.subtitles.phrasing import merge_short_fragments
-from porter.subtitles.transcript import reconstruct_sentences_from_fragments
+from porter.subtitles.phrasing import merge_short_fragments, split_chinese_text_by_phrase
+from porter.subtitles.transcript import (
+    reconstruct_sentences_from_fragments,
+    split_chinese_sentence_into_cues,
+)
 
 
 def _frags(*texts: str, gap_ms: int = 100) -> list[SubtitleItem]:
@@ -382,3 +385,49 @@ class TestTheTwoStagePipeline:
             "What is going on here?",
             "I think that's right.",
         ]
+
+
+class TestACueIsNeverSplitInsideALatinWord:
+    """A CJK character may be cut anywhere; ``Windows`` may not.
+
+    The midpoint pass used a raw character index, which served a real subtitle as
+    ``这里的所有内容都在 Wi`` / ``ndows 上本地运行``. The English is cut to match
+    the Chinese, so both lines came out wrong. Chinese/Latin mixing is the common
+    case, not the exotic one: brand names, ``AI``, ``Python``.
+    """
+
+    ZH = "这里的所有内容都在 Windows 上本地运行"
+
+    def test_the_phrase_splitter_keeps_the_word_whole(self) -> None:
+        pieces = split_chinese_text_by_phrase(self.ZH, max_len=20)
+
+        assert any("Windows" in piece for piece in pieces), pieces
+        assert not any(piece.endswith(" Wi") for piece in pieces), pieces
+        assert not any(piece.startswith("ndows") for piece in pieces), pieces
+
+    def test_no_cue_starts_mid_word(self) -> None:
+        cues = split_chinese_sentence_into_cues(
+            "Everything here runs locally on Windows.",
+            self.ZH,
+            start_ms=0,
+            end_ms=6000,
+        )
+
+        assert len(cues) > 1, "longer than max_cjk_len, so it must split"
+        assert not any(cue.target_text.startswith("ndows") for cue in cues)
+        assert any("Windows" in cue.target_text for cue in cues)
+
+    def test_splitting_still_happens_for_pure_chinese(self) -> None:
+        """The fix must not turn long Chinese into one oversized line."""
+        pieces = split_chinese_text_by_phrase("这是第一句话。这是第二句话。", max_len=8)
+
+        assert pieces == ["这是第一句话", "这是第二句话"]
+
+    def test_one_unbreakable_token_is_left_whole(self) -> None:
+        """A token with no boundary at all cannot be split without severing it.
+
+        A line over ``max_len`` reads better than half an identifier.
+        """
+        token = "a" * 30
+
+        assert split_chinese_text_by_phrase(token, max_len=10) == [token]

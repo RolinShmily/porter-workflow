@@ -33,12 +33,14 @@ Defence in depth, in the order it takes effect:
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
 import yt_dlp
 
+from porter.errors import ExtractionError
 from porter.events import EventSink, Phase, ProgressUpdated
 from porter.logging import get_logger
 
@@ -64,6 +66,7 @@ __all__ = [
     "build_ydl",
     "download_progress_hook",
     "has_video_stream",
+    "translate_ydl_errors",
 ]
 
 _logger = get_logger(__name__)
@@ -315,6 +318,27 @@ def build_ydl(
         opts["progress_hooks"] = [progress_hook]
 
     return yt_dlp.YoutubeDL(opts)
+
+
+@contextmanager
+def translate_ydl_errors(*, url: str, platform: str) -> Iterator[None]:
+    """Turn yt-dlp's own exceptions into :class:`~porter.errors.ExtractionError`.
+
+    yt-dlp raises :class:`yt_dlp.utils.YoutubeDLError` for a whole family of
+    site-side conditions: a removed video, a geo-block, a bot check, or -- the
+    case that exposed this -- a format selector that matches nothing because the
+    site stopped serving those streams to the client that was used.
+
+    Letting one escape hands the user a Python traceback, which the engine
+    promises never to do. Every expected failure is a ``PorterError`` with a
+    ``code`` and structured detail, so the CLI can render it and the MCP
+    frontend can return it as data. The yt-dlp message is preserved verbatim,
+    because it is usually the most precise description of what happened.
+    """
+    try:
+        yield
+    except yt_dlp.utils.YoutubeDLError as exc:
+        raise ExtractionError(str(exc), url=url, platform=platform) from exc
 
 
 def _merge_extractor_args(raw: Mapping[str, Any]) -> dict[str, Any]:

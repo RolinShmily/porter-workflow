@@ -628,6 +628,25 @@ class TestFailureHandling:
         with pytest.raises(ExtractionError, match="no metadata"):
             extractor.fetch(URL, ctx, runner=runner)
 
+    def test_a_ytdlp_error_is_reported_as_data_not_a_traceback(
+        self, extractor, ctx, runner, fake_ydl
+    ) -> None:
+        """A site-side yt-dlp failure must surface as ``ExtractionError``.
+
+        yt-dlp reports a dead format selector, a bot check or a geo-block as
+        ``yt_dlp.utils.YoutubeDLError``. Letting one escape hands the user a
+        Python traceback for a condition the tool is supposed to explain -- and
+        it did, on a real YouTube URL whose formats YouTube had stopped serving.
+        """
+        import yt_dlp
+
+        fake_ydl.raise_on_extract = yt_dlp.utils.DownloadError(
+            "ERROR: [youtube] 0tqty8ltKDA: Requested format is not available"
+        )
+
+        with pytest.raises(ExtractionError, match="Requested format is not available"):
+            extractor.fetch(URL, ctx, runner=runner)
+
     def test_no_downloadable_media_raises(self, extractor, ctx, runner, fake_ydl) -> None:
         fake_ydl.media_payload = None
         with pytest.raises(ExtractionError, match="could not download"):
