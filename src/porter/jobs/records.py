@@ -109,7 +109,13 @@ def _kernel32() -> Any:
     import ctypes
     from ctypes import wintypes
 
-    lib = ctypes.WinDLL("kernel32", use_last_error=True)
+    # ``cast(Any, ...)`` for the same reason ``fcntl`` and ``msvcrt`` are cast
+    # above: ``WinDLL`` exists only in the Windows typeshed, so naming it directly
+    # is an ``attr-defined`` error under the Linux platform the CI type-checks.
+    # mypy evaluates one platform at a time, so a Windows run cannot see it --
+    # this is what made the gate red while a local check was clean.
+    windows = cast(Any, ctypes)
+    lib = windows.WinDLL("kernel32", use_last_error=True)
     lib.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     lib.OpenProcess.restype = wintypes.HANDLE
     lib.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
@@ -143,12 +149,16 @@ def _windows_pid_is_alive(pid: int) -> bool:
     import ctypes
     from ctypes import wintypes
 
+    windows = cast(Any, ctypes)
     kernel32 = _kernel32()
     handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
     if not handle:
         # ERROR_INVALID_PARAMETER is "no such process"; anything else -- access
         # denied, most importantly -- means it is there.
-        return ctypes.get_last_error() != _ERROR_INVALID_PARAMETER
+        #
+        # ``bool(...)`` because ``get_last_error`` is Windows-only in typeshed: the
+        # comparison is ``Any``, and the declared return type is ``bool``.
+        return bool(windows.get_last_error() != _ERROR_INVALID_PARAMETER)
     try:
         exit_code = wintypes.DWORD()
         if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):

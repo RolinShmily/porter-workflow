@@ -133,6 +133,11 @@ ignore = ["E501"]
 python_version = "3.10"
 strict = true
 ignore_missing_imports = true
+# CI type-checks on Linux, and mypy evaluates one platform at a time: without this
+# the local gate on a Windows machine checks win32 semantics and CI checks POSIX
+# ones, so `ctypes.WinDLL` (Windows-only in typeshed) passed locally while the
+# gate went red. Pinning the platform makes `uv run mypy src` mean what CI means.
+platform = "linux"
 files = ["src"]
 mypy_path = "src"
 explicit_package_bases = true
