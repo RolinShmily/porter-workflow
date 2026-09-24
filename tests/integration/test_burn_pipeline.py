@@ -59,6 +59,36 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 Dialogue: 0,0:00:00.00,0:00:02.00,Default,,0,0,0,,{text}
 """
 
+#: Near-white pixel count that counts as "subtitle text is visible".
+#:
+#: Deliberately far below what any font renders, because the count depends on which
+#: font libass picks: the fixture asks for Microsoft YaHei (see ``_ASS``), which the
+#: Ubuntu runner does not have, so its fallback draws thinner glyphs. Measured for one
+#: line of Chinese text: 91 on the runner, over 100 on a Windows box that has the font.
+#: The master is a flat colour and scores exactly 0, so the gap this assertion needs is
+#: wide either way -- a floor set near one font's count is what failed the release gate
+#: on a machine with different fonts installed.
+VISIBLE_TEXT_PIXELS = 25
+
+
+def near_white_pixels(video: Path) -> int:
+    """How many near-white pixels one frame at t=1s contains.
+
+    A single frame is enough: the synthetic source is a flat colour and the fixture's
+    dialogue runs from 0s to 2s, so a burnt-in subtitle is always on screen there.
+    """
+    raw = subprocess.run(
+        [
+            "ffmpeg", "-nostdin", "-v", "error", "-ss", "1", "-i", str(video),
+            "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
+        ],
+        check=True,
+        capture_output=True,
+    ).stdout
+    return sum(
+        1 for i in range(0, len(raw), 3) if raw[i] > 200 and raw[i + 1] > 200 and raw[i + 2] > 200
+    )
+
 
 def _synthetic_master(dest: Path) -> Path:
     subprocess.run(
@@ -222,24 +252,11 @@ def test_the_subtitles_are_actually_burned_in(ctx: RunContext, tmp_path: Path) -
     """
     result = _run(ctx, tmp_path, BurnMode.DUAL)
 
-    def near_white_pixels(video: Path) -> int:
-        raw = subprocess.run(
-            [
-                "ffmpeg", "-nostdin", "-v", "error", "-ss", "1", "-i", str(video),
-                "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
-            ],
-            check=True,
-            capture_output=True,
-        ).stdout
-        return sum(
-            1 for i in range(0, len(raw), 3) if raw[i] > 200 and raw[i + 1] > 200 and raw[i + 2] > 200
-        )
-
     master_white = near_white_pixels(result.raw.video)
     burned_white = near_white_pixels(result.burn.video_bilingual)
 
     assert master_white == 0, "the synthetic master should be a flat colour"
-    assert burned_white > 100, "the burned video has no visible subtitle text"
+    assert burned_white > VISIBLE_TEXT_PIXELS, "the burned video has no visible subtitle text"
 
 
 def test_burn_skip_leaves_no_release_videos(ctx: RunContext, tmp_path: Path) -> None:
@@ -432,23 +449,8 @@ def test_the_local_release_videos_have_visible_subtitles(
 
     result = _run_local(local_ctx, tmp_path, source, BurnMode.ZH_ONLY)
 
-    def near_white_pixels(video: Path) -> int:
-        raw = subprocess.run(
-            [
-                "ffmpeg", "-nostdin", "-v", "error", "-ss", "1", "-i", str(video),
-                "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
-            ],
-            check=True,
-            capture_output=True,
-        ).stdout
-        return sum(
-            1
-            for i in range(0, len(raw), 3)
-            if raw[i] > 200 and raw[i + 1] > 200 and raw[i + 2] > 200
-        )
-
     assert near_white_pixels(result.raw.video) == 0
-    assert near_white_pixels(result.burn.video_zh) > 100
+    assert near_white_pixels(result.burn.video_zh) > VISIBLE_TEXT_PIXELS
 
 
 def test_re_running_a_local_video_reuses_the_master(local_ctx: RunContext, tmp_path: Path) -> None:
