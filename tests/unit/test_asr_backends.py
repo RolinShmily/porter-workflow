@@ -29,6 +29,7 @@ from typing import Any
 import pytest
 import requests
 
+from porter import mirrors
 from porter.asr import bcut, google_web, videocaptioner, whisper_api, whisper_local
 from porter.asr.base import AsrBackend, AsrBackendError
 from porter.config import ASRConfig, PorterConfig
@@ -1001,6 +1002,18 @@ class TestWhisperLocalModelCache:
     would make the suite depend on which models this machine happens to have
     downloaded, which is the host-dependence class of defect §13.45 was about.
     """
+
+    @pytest.fixture(autouse=True)
+    def _huggingface_path_only(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Pin the mirror decision off: this class is about the HF resolver.
+
+        Without it the answers below depend on the host twice over -- whether the
+        machine looks Chinese, and whether a ModelScope copy happens to be on
+        disk already -- reintroducing exactly the host-dependence this class was
+        written to avoid. The mirror path has its own tests in
+        ``test_whisper_mirror.py``.
+        """
+        monkeypatch.setattr(mirrors, "use_china_mirrors", lambda: False)
 
     def test_a_missing_model_reports_a_miss(self, monkeypatch: pytest.MonkeyPatch) -> None:
         def _resolver(_model: str, *, local_files_only: bool) -> str:

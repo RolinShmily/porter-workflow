@@ -126,6 +126,23 @@ def test_frontends_do_not_import_each_other(frontend: str) -> None:
 # ----------------------------------------------------------------------
 
 
+def _constant_modes(node: ast.expr) -> list[str] | None:
+    """Every string an expression can evaluate to, or ``None`` if not constant.
+
+    A ternary mode (``"ab" if resuming else "wb"``) is an ``IfExp`` rather than a
+    literal, and treating an unrecognised expression as "unknown, therefore
+    text" is exactly how a binary write gets reported as an unencoded one.
+    """
+    if isinstance(node, ast.Constant):
+        return [node.value] if isinstance(node.value, str) else None
+    if isinstance(node, ast.IfExp):
+        body, other = _constant_modes(node.body), _constant_modes(node.orelse)
+        if body is None or other is None:
+            return None
+        return body + other
+    return None
+
+
 def _is_binary_open(node: ast.Call) -> bool:
     """Whether an ``open`` call uses a binary mode, where no encoding applies.
 
@@ -134,13 +151,15 @@ def _is_binary_open(node: ast.Call) -> bool:
     builtin ``open(file, mode)`` is a ``Name`` call and is never matched, which is
     also why it needs no handling.
     """
-    mode: object = None
+    modes: list[str] | None = None
     for keyword in node.keywords:
-        if keyword.arg == "mode" and isinstance(keyword.value, ast.Constant):
-            mode = keyword.value.value
-    if mode is None and node.args and isinstance(node.args[0], ast.Constant):
-        mode = node.args[0].value
-    return isinstance(mode, str) and "b" in mode
+        if keyword.arg == "mode":
+            modes = _constant_modes(keyword.value)
+    if modes is None and node.args:
+        modes = _constant_modes(node.args[0])
+    # Every mode it could take has to be binary: one branch we cannot read means
+    # we cannot make the claim, and the safer answer is to keep looking.
+    return modes is not None and all("b" in mode for mode in modes)
 
 
 def _text_writes_without_encoding(tree: ast.AST) -> list[int]:

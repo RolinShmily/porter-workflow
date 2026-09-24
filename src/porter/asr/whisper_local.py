@@ -38,9 +38,14 @@ finally report a feasible ASR route without a caveat.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any
 
+import platformdirs
+import requests
+
+from porter import mirrors
 from porter.asr.base import AsrBackendError, AsrOutcome, coerce_items
 from porter.context import RunContext
 from porter.errors import JobCancelled
@@ -75,6 +80,27 @@ DEFAULT_COMPUTE_TYPE = "auto"
 #: ``int8`` the CPU one; both come from faster-whisper's own guidance.
 _CUDA_COMPUTE_TYPE = "float16"
 _CPU_COMPUTE_TYPE = "int8"
+
+#: The files faster-whisper reads from a local model directory. Taken from a
+#: working Hugging Face snapshot of ``Systran/faster-whisper-small``, which holds
+#: exactly these four and nothing else -- no ``preprocessor_config.json``. The
+#: ModelScope copy has the same names and the same byte counts.
+_MODEL_FILES = ("config.json", "model.bin", "tokenizer.json", "vocabulary.txt")
+
+#: ModelScope serves repository files from this path; ``master`` is its default
+#: branch. Direct HTTP rather than the ``modelscope`` package, which would be a
+#: large dependency for four downloads.
+_MODELSCOPE_FILE_URL = "{endpoint}/api/v1/models/{repo}/repo?Revision=master&FilePath={path}"
+
+#: One mebibyte: small enough that a cancellation is felt at once, large enough
+#: that a 480 MB model is not 480,000 Python-level iterations.
+_CHUNK_BYTES = 1 << 20
+
+#: No timeout on the transfer itself -- a 480 MB file is slow by nature -- but a
+#: hard one on connecting and on silence between chunks, so a dead mirror fails
+#: in seconds instead of hanging the job.
+_CONNECT_TIMEOUT_SECONDS = 15
+_READ_TIMEOUT_SECONDS = 60
 
 
 def _load_faster_whisper() -> Any:
@@ -121,6 +147,127 @@ def is_installed() -> bool:
     return True
 
 
+def _modelscope_root() -> Path:
+    """Where ModelScope copies live: the same cache directory the registry uses."""
+    return Path(platformdirs.user_cache_dir("porter", appauthor=False)) / "modelscope"
+
+
+def modelscope_model_dir(model: str) -> Path | None:
+    """Where a ModelScope copy of ``model`` belongs, or ``None`` if unmirrored.
+
+    A path, not a decision. Whether to *use* it depends on
+    :func:`porter.mirrors.use_china_mirrors`, which is the caller's question.
+    """
+    repo = mirrors.modelscope_whisper_repo(model)
+    if repo is None:
+        return None
+    return _modelscope_root() / repo.replace("/", "--")
+
+
+def _model_dir_is_complete(directory: Path) -> bool:
+    """Whether every file faster-whisper needs is present and non-empty.
+
+    Non-empty, not merely present: an interrupted download leaves a truncated
+    ``model.bin``, and counting that as cached would surface much later as a
+    loading error far from its cause. Same rule the Hugging Face path follows.
+    """
+    return all(
+        (directory / name).is_file() and (directory / name).stat().st_size > 0
+        for name in _MODEL_FILES
+    )
+
+
+def _download_file(url: str, destination: Path, ctx: RunContext) -> None:
+    """Stream ``url`` to ``destination``, resuming a partial download.
+
+    The bytes land in a ``.part`` file that is renamed only once complete, so a
+    crash or a cancellation never leaves a short file where a whole one belongs.
+    Resuming matters here because a 480 MB transfer over a link that drops is
+    otherwise restarted from zero on every attempt.
+    """
+    partial = destination.with_name(f"{destination.name}.part")
+    sent = partial.stat().st_size if partial.exists() else 0
+    headers = {"Range": f"bytes={sent}-"} if sent else {}
+
+    with requests.get(
+        url,
+        stream=True,
+        headers=headers,
+        timeout=(_CONNECT_TIMEOUT_SECONDS, _READ_TIMEOUT_SECONDS),
+    ) as response:
+        if sent and response.status_code == 200:
+            # The server ignored the range and is sending the whole file, so what
+            # is already on disk is not a prefix of it: start over rather than
+            # appending to bytes that do not line up.
+            sent = 0
+        response.raise_for_status()
+        with partial.open("ab" if sent else "wb") as handle:
+            for chunk in response.iter_content(chunk_size=_CHUNK_BYTES):
+                # Between chunks, so cancelling a 480 MB download is felt while
+                # it is happening rather than after it finishes.
+                ctx.check_cancelled()
+                handle.write(chunk)
+
+    partial.replace(destination)
+
+
+def _fetch_model_files(repo: str, directory: Path, ctx: RunContext) -> None:
+    """Fetch every missing file of ``repo`` into ``directory``."""
+    directory.mkdir(parents=True, exist_ok=True)
+    for name in _MODEL_FILES:
+        destination = directory / name
+        if destination.is_file() and destination.stat().st_size > 0:
+            continue
+        url = _MODELSCOPE_FILE_URL.format(
+            endpoint=mirrors.MODELSCOPE_ENDPOINT, repo=repo, path=name
+        )
+        _download_file(url, destination, ctx)
+
+
+def download_from_modelscope(model: str, ctx: RunContext) -> Path | None:
+    """Ensure the ModelScope copy of ``model`` is on disk; ``None`` to use HF.
+
+    ``None`` means "carry on with the official source", and it is returned both
+    for a size ModelScope does not mirror and for a download that failed. A
+    failure is logged rather than raised: the mirror is a preference, and a
+    university service being down must not be worse for the user than never
+    having tried it. ``JobCancelled`` is the exception -- a cancel is the user's
+    instruction, not a mirror problem.
+    """
+    directory = modelscope_model_dir(model)
+    if directory is None:
+        return None
+    if _model_dir_is_complete(directory):
+        return directory
+
+    repo = mirrors.modelscope_whisper_repo(model)
+    if repo is None:  # unreachable: modelscope_model_dir checked the same thing
+        return None
+
+    started = time.monotonic()
+    try:
+        _fetch_model_files(repo, directory, ctx)
+    except JobCancelled:
+        raise
+    except (requests.RequestException, OSError) as exc:
+        _logger.warning(
+            "could not fetch model %r from ModelScope (%s); falling back to the "
+            "official source",
+            model,
+            exc,
+        )
+        return None
+
+    size = sum((directory / name).stat().st_size for name in _MODEL_FILES)
+    _logger.info(
+        "downloaded %s from ModelScope (%.0f MB in %.1fs)",
+        repo,
+        size / (1 << 20),
+        time.monotonic() - started,
+    )
+    return directory
+
+
 def model_is_cached(model: str) -> bool:
     """Whether ``model`` is already on disk. Never raises, never networks.
 
@@ -134,6 +281,15 @@ def model_is_cached(model: str) -> bool:
     its ``config.json`` but no ``model.bin``, and treating that as cached would
     promise an offline run that cannot happen.
     """
+    # The ModelScope copy counts only when it is the copy a run would actually
+    # use. With the mirrors switched off the same files sit on disk unused, and
+    # answering "cached" for them would turn into a download the moment the job
+    # started.
+    if mirrors.use_china_mirrors():
+        local = modelscope_model_dir(model)
+        if local is not None and _model_dir_is_complete(local):
+            return True
+
     try:
         download_model = _load_download_model()
     except ImportError:
@@ -210,6 +366,21 @@ class WhisperLocalBackend:
         attempts = self._attempts(ctx)
         failures: list[str] = []
 
+        # From China the weights come from ModelScope, a domestic mirror of the
+        # same files; anywhere else -- or if that fails, or if a loader was
+        # supplied and therefore owns model acquisition -- this stays the size
+        # name and faster-whisper fetches it from Hugging Face exactly as before.
+        #
+        # ``is_installed`` fixes the order of the two failures: 480 MB of weights
+        # must not be fetched only to discover afterwards that the extra is
+        # missing. It also keeps the mirror a replacement for a download that was
+        # going to happen anyway, never a new one.
+        model_ref: str = model_name
+        if self._loader is None and is_installed() and mirrors.use_china_mirrors():
+            mirrored = download_from_modelscope(model_name, ctx)
+            if mirrored is not None:
+                model_ref = str(mirrored)
+
         for device, compute_type in attempts:
             ctx.check_cancelled()
             if not self._loader and not model_is_cached(model_name):
@@ -221,7 +392,7 @@ class WhisperLocalBackend:
                     model_name,
                 )
             try:
-                model = self._build(model_name, device, compute_type)
+                model = self._build(model_ref, device, compute_type)
             except (AsrBackendError, JobCancelled):
                 raise
             except Exception as exc:  # load failures are expected: a missing

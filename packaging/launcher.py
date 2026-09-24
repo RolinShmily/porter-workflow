@@ -46,11 +46,13 @@ Environment variables
 from __future__ import annotations
 
 import contextlib
+import locale
 import os
 import shutil
 import subprocess
 import sys
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 __all__ = ["main"]
@@ -65,6 +67,30 @@ __all__ = ["main"]
 #: retries taking 219 seconds before it died. Re-entry is now an immediate,
 #: legible failure instead.
 REENTRY_MARKER = "PORTER_LAUNCHER_IN_PROGRESS"
+
+# -- Where packages come from ------------------------------------------------
+#
+# Deliberately a copy of porter.mirrors rather than an import. This file is
+# frozen by PyInstaller and has to run *before* porter exists, so importing the
+# engine would mean bundling it into the launcher. tests/unit/test_launcher.py
+# drives both copies through the same environments and asserts they agree,
+# because a silent drift between them would be worse than either being wrong.
+
+MIRROR_ENV = "PORTER_MIRROR"
+USTC_PYPI_INDEX = "https://mirrors.ustc.edu.cn/pypi/simple"
+_MIRROR_ON = frozenset({"cn", "china", "1", "true", "yes", "on"})
+_MIRROR_OFF = frozenset({"off", "0", "false", "no", "none", "intl"})
+_TZ_MARKERS = (
+    "china",
+    "chinese",
+    "shanghai",
+    "chongqing",
+    "harbin",
+    "urumqi",
+    "beijing",
+    "prc",
+    "中国",
+)
 
 #: Release requirement. Overridable so an offline install can point at a wheel.
 DEFAULT_SPEC = "porter-workflow[all]"
@@ -109,10 +135,94 @@ def _log(message: str) -> None:
 
 
 def _child_env() -> dict[str, str]:
-    """The environment for a child process, marked as launcher-spawned."""
+    """The environment for a child process, marked as launcher-spawned.
+
+    It also decides which index packages come from. Order, and why:
+
+    1. A uv index the user set is left alone.
+    2. A *pip* index the user set is copied to uv. uv ignores ``PIP_INDEX_URL``
+       -- verified: pointed at an unreachable host it still resolved from PyPI --
+       so without this, the most common way to configure a mirror in China
+       (``pip config set global.index-url ...``) silently does nothing at all.
+    3. Otherwise, on a machine that looks Chinese, both point at USTC.
+    """
     env = dict(os.environ)
     env[REENTRY_MARKER] = "1"
+    _apply_index_mirror(env)
     return env
+
+
+def _apply_index_mirror(env: dict[str, str]) -> None:
+    """Point ``env`` at a mirror, unless the user already chose an index."""
+    if any(env.get(name, "").strip() for name in ("UV_DEFAULT_INDEX", "UV_INDEX_URL")):
+        return
+
+    pip_index = env.get("PIP_INDEX_URL", "").strip()
+    if pip_index:
+        # The user has an index. Make uv respect it rather than quietly using PyPI.
+        env["UV_DEFAULT_INDEX"] = pip_index
+        return
+
+    if _use_china_mirrors():
+        env["UV_DEFAULT_INDEX"] = USTC_PYPI_INDEX
+        env["PIP_INDEX_URL"] = USTC_PYPI_INDEX
+
+
+def _local_now() -> datetime:
+    """This machine's current time, as a seam for the tests below."""
+    return datetime.now().astimezone()
+
+
+def _mirrors_forced() -> bool | None:
+    """``True``/``False`` when ``PORTER_MIRROR`` says so, else ``None``."""
+    raw = os.environ.get(MIRROR_ENV, "").strip().lower()
+    if raw in _MIRROR_ON:
+        return True
+    if raw in _MIRROR_OFF:
+        return False
+    return None
+
+
+def _use_china_mirrors() -> bool:
+    """Whether to prefer the mirrors, honouring ``PORTER_MIRROR`` first.
+
+    Shaped exactly like :func:`porter.mirrors.use_china_mirrors`; the two are
+    compared case by case in tests/unit/test_launcher.py.
+    """
+    explicit = _mirrors_forced()
+    if explicit is not None:
+        return explicit
+
+    tz = os.environ.get("TZ", "").strip().lower()
+    if tz:
+        # Believed in both directions, and final: an explicit America/New_York
+        # must not be overruled by a Chinese locale.
+        return any(marker in tz for marker in _TZ_MARKERS)
+
+    try:
+        local = _local_now()
+    except (OSError, ValueError, OverflowError):
+        return False
+
+    if any(marker in (local.tzname() or "").lower() for marker in _TZ_MARKERS):
+        return True
+    try:
+        # UTC+8: Greater China, Singapore, Perth. Survives Windows localisation
+        # and an absent TZ variable, both of which this machine demonstrates.
+        if local.utcoffset() == timedelta(hours=8):
+            return True
+    except (OSError, ValueError, OverflowError):
+        return False
+
+    try:
+        language, _encoding = locale.getlocale()
+    except (locale.Error, ValueError, TypeError):
+        return False
+    if not language:
+        return False
+    # ``zh_CN`` on POSIX, ``Chinese (Simplified)_China`` on Windows.
+    lowered = language.lower()
+    return lowered.startswith("zh") or "china" in lowered
 
 
 def _run(argv: list[str]) -> None:

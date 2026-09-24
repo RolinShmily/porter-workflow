@@ -151,6 +151,35 @@ Install it yourself if you want those engines:
 pip install videocaptioner
 ```
 
+### Slow or blocked? Mirrors for China
+
+Both of porter's downloads default to endpoints that are painful from mainland
+China: the packages come from PyPI, and the Whisper weights from Hugging Face. On
+a machine that looks Chinese -- by timezone, by a UTC+8 offset, or by a `zh`
+locale -- porter switches to domestic mirrors on its own:
+
+| What | Default elsewhere | Default in China | Change it with |
+| --- | --- | --- | --- |
+| Python packages | PyPI | [USTC](https://mirrors.ustc.edu.cn/pypi/simple) | `UV_DEFAULT_INDEX` |
+| Whisper weights | Hugging Face | [ModelScope](https://modelscope.cn) | `HF_ENDPOINT` |
+
+The `faster-whisper-*` repositories on ModelScope hold the official CTranslate2
+weights rather than a re-conversion: their `config.json` is **byte-identical** to
+`Systran/faster-whisper-small`'s. Each model size is downloaded from there once.
+
+To force a direction, or to use a mirror of your own choosing:
+
+```bash
+PORTER_MIRROR=cn     # always prefer the mirrors
+PORTER_MIRROR=off    # never; always use the official sources
+```
+
+**An index you set yourself always wins** and is never overwritten. Setting
+`UV_DEFAULT_INDEX` (or the older `UV_INDEX_URL`) is enough on its own.
+`PIP_INDEX_URL` is honoured as well, and is copied across to uv -- because uv
+ignores `PIP_INDEX_URL` by itself, so `pip config set global.index-url <mirror>`
+alone would silently do nothing at all.
+
 ---
 
 ## Usage

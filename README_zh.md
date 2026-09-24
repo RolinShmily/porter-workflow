@@ -127,6 +127,33 @@ porter "<URL>" --asr-engine bijian --burn skip
 pip install videocaptioner
 ```
 
+### 慢或被墙？国内镜像
+
+porter 的两处下载默认都指向在国内很难受的端点：包走 PyPI，Whisper 权重走
+Hugging Face。当机器看起来在中国（时区、UTC+8、或 `zh` 区域设置）时，porter 会
+自动改用国内镜像：
+
+| 内容 | 其他地区默认 | 国内默认 | 可用它改掉 |
+| --- | --- | --- | --- |
+| Python 包 | PyPI | [中科大](https://mirrors.ustc.edu.cn/pypi/simple) | `UV_DEFAULT_INDEX` |
+| Whisper 权重 | Hugging Face | [魔搭 ModelScope](https://modelscope.cn) | `HF_ENDPOINT` |
+
+魔搭上的 `faster-whisper-*` 是官方 CTranslate2 权重，不是重新转换的版本：它的
+`config.json` 与 `Systran/faster-whisper-small` 的**逐字节相同**（SHA-256 一致）。
+每个模型尺寸只需从那里下一次。
+
+想强制指定方向，或用自己选择的源：
+
+```bash
+PORTER_MIRROR=cn     # 总是优先用镜像
+PORTER_MIRROR=off    # 从不用；始终走官方源
+```
+
+**你手动设置的索引永远优先**，porter 绝不覆盖。设了 `UV_DEFAULT_INDEX`（或旧名字
+`UV_INDEX_URL`）就用你的。`PIP_INDEX_URL` 同样被尊重，并且会被复制给 uv —— 因为
+uv 自己**不认** `PIP_INDEX_URL`，只设它（`pip config set global.index-url <镜像>`
+就是这么干的）会静默失效。
+
 ---
 
 ## 用法

@@ -8,28 +8,40 @@ Frozen by PyInstaller it is the launcher binary itself, and ``uv`` inspects a
 launcher called ``uv`` again, and ``porter.exe --version`` on a clean machine
 became 970 nested retries taking 219 seconds before failing.
 
-Two things are therefore pinned here:
+Three things are therefore pinned here:
 
 * **The bug** -- a frozen launcher must never offer itself as an interpreter.
 * **The blast radius** -- re-entry must fail immediately and legibly rather than
   recursing, because that is what turned one wrong argument into a fork bomb.
+* **Where packages come from** -- the mirror decision, including the two copies
+  of the China heuristic being kept in step.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import locale
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from porter import mirrors
+
 LAUNCHER_PATH = Path(__file__).resolve().parents[2] / "packaging" / "launcher.py"
 
 
 def _load_launcher() -> Any:
-    """Import ``packaging/launcher.py`` by path; it is not an installed module."""
+    """Import ``packaging/launcher.py`` by path; it is not an installed module.
+
+    Each call *re-executes* the file and hands back a fresh module object, so
+    everything that patches the launcher must share one instance: patching one
+    and asserting on another compares a patched copy against an unpatched one.
+    The ``launcher`` fixture below is that single instance.
+    """
     spec = importlib.util.spec_from_file_location("porter_launcher", LAUNCHER_PATH)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -37,8 +49,9 @@ def _load_launcher() -> Any:
     return module
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def launcher() -> Any:
+    """One module instance for the whole file. See ``_load_launcher``."""
     return _load_launcher()
 
 
@@ -128,3 +141,179 @@ class TestReEntry:
         # Deliberately pinned: the marker is set in child environments, so
         # changing the name silently would un-guard every nested invocation.
         assert launcher.REENTRY_MARKER == "PORTER_LAUNCHER_IN_PROGRESS"
+
+
+#: Every variable the index decision reads, so each test starts from nothing set.
+_INDEX_KEYS = (
+    "PORTER_MIRROR",
+    "UV_DEFAULT_INDEX",
+    "UV_INDEX_URL",
+    "PIP_INDEX_URL",
+    "TZ",
+)
+
+USTC = "https://mirrors.ustc.edu.cn/pypi/simple"
+TSINGHUA = "https://pypi.tuna.tsinghua.edu.cn/simple"
+ALIYUN = "https://mirrors.aliyun.com/pypi/simple/"
+
+
+class TestIndexMirror:
+    """Where the launcher sends package downloads.
+
+    Every assertion reads a child environment built by ``_child_env``, never a
+    hand-made dict: ``_apply_index_mirror`` looks at the environment it is
+    *given*, so passing it ``{}`` cannot see the user's own variables. A test
+    written that way passes while the real path does the wrong thing -- which is
+    how the first version of this class was written, and why it is spelled out.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clean_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        for key in _INDEX_KEYS:
+            monkeypatch.delenv(key, raising=False)
+
+    @staticmethod
+    def _child(launcher: Any) -> tuple[str, str]:
+        """``(uv index, pip index)`` exactly as a spawned child would see them."""
+        child = launcher._child_env()
+        return child.get("UV_DEFAULT_INDEX", ""), child.get("PIP_INDEX_URL", "")
+
+    def test_a_machine_elsewhere_is_left_on_pypi(
+        self, monkeypatch: pytest.MonkeyPatch, launcher: Any
+    ) -> None:
+        monkeypatch.setenv("TZ", "America/New_York")
+        assert self._child(launcher) == ("", "")
+
+    def test_a_chinese_machine_gets_ustc(
+        self, monkeypatch: pytest.MonkeyPatch, launcher: Any
+    ) -> None:
+        monkeypatch.setenv("PORTER_MIRROR", "cn")
+        # pip as well as uv, because which of the two runs depends only on
+        # whether uv happens to be on PATH.
+        assert self._child(launcher) == (USTC, USTC)
+
+    def test_a_user_pip_index_is_passed_to_uv(
+        self, monkeypatch: pytest.MonkeyPatch, launcher: Any
+    ) -> None:
+        # The regression this block exists for: uv ignores PIP_INDEX_URL, so a
+        # user who configured a mirror the way every Chinese guide tells them to
+        # got no mirror, no error, and no explanation.
+        monkeypatch.setenv("PIP_INDEX_URL", TSINGHUA)
+        monkeypatch.setenv("PORTER_MIRROR", "cn")
+
+        uv, pip = self._child(launcher)
+        assert uv == TSINGHUA, "uv must be told too, or the mirror has no effect"
+        assert pip == TSINGHUA
+        assert USTC not in (uv, pip), "the user's own index must win"
+
+    @pytest.mark.parametrize("key", ["UV_DEFAULT_INDEX", "UV_INDEX_URL"])
+    def test_a_user_uv_index_is_left_alone(
+        self, monkeypatch: pytest.MonkeyPatch, launcher: Any, key: str
+    ) -> None:
+        monkeypatch.setenv(key, ALIYUN)
+        monkeypatch.setenv("PORTER_MIRROR", "cn")
+
+        uv, pip = self._child(launcher)
+        assert uv == (ALIYUN if key == "UV_DEFAULT_INDEX" else "")
+        assert pip == "", "no index the user did not ask for"
+
+    def test_off_wins_over_a_chinese_machine(
+        self, monkeypatch: pytest.MonkeyPatch, launcher: Any
+    ) -> None:
+        monkeypatch.setenv("PORTER_MIRROR", "off")
+        assert self._child(launcher) == ("", "")
+
+    def test_the_marker_still_rides_along(
+        self, monkeypatch: pytest.MonkeyPatch, launcher: Any
+    ) -> None:
+        # _apply_index_mirror is only useful because _child_env, which every
+        # spawned process goes through, calls it -- and it must not have lost the
+        # re-entry marker on the way.
+        monkeypatch.setenv("PORTER_MIRROR", "cn")
+        child = launcher._child_env()
+        assert child["PORTER_LAUNCHER_IN_PROGRESS"] == "1"
+        assert child["UV_DEFAULT_INDEX"] == USTC
+
+
+class TestTheTwoDetectionCopiesAgree:
+    """``packaging/launcher.py`` cannot import ``porter.mirrors``, so it copies it.
+
+    The launcher has to run *before* porter exists -- installing it is the
+    launcher's whole job -- so an import is not available to it. Duplication is
+    only safe if it is checked, hence this class: both copies are driven through
+    the identical environment and clock, and any disagreement fails. Without it
+    the two heuristics would drift, and the launcher would send a machine to a
+    mirror that the engine then declines to use.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clean_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        for key in _INDEX_KEYS:
+            monkeypatch.delenv(key, raising=False)
+
+    @staticmethod
+    def _ask_both(
+        monkeypatch: pytest.MonkeyPatch,
+        launcher: Any,
+        *,
+        tzname: str,
+        offset: int,
+        language: str | None,
+    ) -> tuple[bool, bool]:
+        """``(launcher's answer, porter.mirrors' answer)`` for one machine."""
+        now = datetime(2026, 9, 24, 12, 0, tzinfo=timezone(timedelta(hours=offset), tzname))
+        monkeypatch.setattr(launcher, "_local_now", lambda: now)
+        monkeypatch.setattr(mirrors, "_local_now", lambda: now)
+        # One patch covers both copies: they reference the same module object.
+        monkeypatch.setattr(locale, "getlocale", lambda: (language, "UTF-8"))
+        return launcher._use_china_mirrors(), mirrors.use_china_mirrors()
+
+    @pytest.mark.parametrize(
+        ("tz", "tzname", "offset", "language"),
+        [
+            (None, "UTC", 0, "en_US"),
+            (None, "Eastern Standard Time", -5, "en_US"),
+            (None, "China Standard Time", 8, "en_US"),
+            (None, "\u4e2d\u56fd\u6807\u51c6\u65f6\u95f4", 8, None),
+            (None, "UTC", 0, "zh_CN"),
+            (None, "UTC", 0, "Chinese (Simplified)_China"),
+            (None, "UTC", 0, None),
+            ("Asia/Shanghai", "UTC", 0, "en_US"),
+            ("America/New_York", "China Standard Time", 8, "zh_CN"),
+            ("Europe/Berlin", "UTC", 0, "de_DE"),
+            ("PRC", "UTC", 0, None),
+        ],
+    )
+    def test_they_agree(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        launcher: Any,
+        tz: str | None,
+        tzname: str,
+        offset: int,
+        language: str | None,
+    ) -> None:
+        if tz is not None:
+            monkeypatch.setenv("TZ", tz)
+
+        from_launcher, from_engine = self._ask_both(
+            monkeypatch, launcher, tzname=tzname, offset=offset, language=language
+        )
+        assert from_launcher == from_engine, (
+            f"the launcher and porter.mirrors disagree for "
+            f"{tz=} {tzname=} {offset=} {language=}"
+        )
+
+    @pytest.mark.parametrize("value", ["cn", "off", "chian"])
+    def test_they_agree_on_the_override_too(
+        self, monkeypatch: pytest.MonkeyPatch, launcher: Any, value: str
+    ) -> None:
+        monkeypatch.setenv("PORTER_MIRROR", value)
+        from_launcher, from_engine = self._ask_both(
+            monkeypatch, launcher, tzname="UTC", offset=0, language=None
+        )
+        assert from_launcher == from_engine
+
+    def test_the_constants_match(self, launcher: Any) -> None:
+        assert launcher.USTC_PYPI_INDEX == mirrors.USTC_PYPI_INDEX
+        assert launcher.MIRROR_ENV == mirrors.ENV_OVERRIDE

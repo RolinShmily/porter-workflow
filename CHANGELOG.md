@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-09-24
+
+### Added
+
+- **Domestic mirrors for China, chosen automatically.** Both downloads defaulted
+  to endpoints that are slow or unreachable from mainland China: the packages
+  come from PyPI, and the Whisper weights from Hugging Face. On a machine that
+  looks Chinese -- by timezone, by a UTC+8 offset, or by a `zh` locale -- porter
+  now uses USTC's PyPI index for packages and ModelScope for the weights.
+  `PORTER_MIRROR=cn` / `~off` forces either direction; an index set by the user
+  always wins. ModelScope's `faster-whisper-*` repositories are the official
+  CTranslate2 weights rather than a re-conversion -- their `config.json` has the
+  same SHA-256 as `Systran/faster-whisper-small`'s -- and they are fetched over
+  plain HTTP, so no `modelscope` dependency was needed.
+- The ModelScope download resumes an interrupted transfer instead of restarting
+  it, writes into a `.part` file that is renamed only when complete, and checks
+  for cancellation between chunks so a 480 MB fetch can be stopped while it runs.
+
+### Fixed
+
+- **`PIP_INDEX_URL` now reaches uv.** uv ignores it -- verified: pointed at an
+  unreachable host it still resolved from PyPI -- so the most common way to
+  configure a mirror in China (`pip config set global.index-url ...`) silently
+  did nothing when uv was on `PATH`. The launcher now copies it to
+  `UV_DEFAULT_INDEX` rather than letting it be quietly discarded.
+- A local Whisper run no longer downloads several hundred megabytes of weights
+  before discovering that the `[asr-local]` extra is not installed; the package
+  is checked first, and the model second.
+
 ## [0.2.2] - 2026-09-24
 
 The launcher binaries were broken. This fixes them.
@@ -293,7 +322,8 @@ Skill of the same name).
   assets and a standardised `raw/` + `cooked/` output layout.
 - Agent Skill packaging (`SKILL.md`, scripts, references, example config).
 
-[Unreleased]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/RolinShmily/porter-workflow/compare/v0.1.0...v0.2.0
