@@ -67,16 +67,19 @@ def source(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def shared_cache(tmp_path: Path) -> Path:
+def shared_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A cache directory the subprocess CLI and this process both resolve to.
 
-    ``registry_file`` is built from ``platformdirs.user_cache_dir``, which on
-    Linux is ``$XDG_CACHE_HOME/porter``. Pointing the environment variable at a
-    temp directory therefore puts both processes on the same file without either
-    of them being told a path.
+    ``PORTER_CACHE_DIR``, not ``XDG_CACHE_HOME``. platformdirs ignores the XDG
+    variable on Windows -- it asks the Known Folder API instead -- so the CLI
+    subprocess read the developer's *real* registry while this process wrote to a
+    temporary one, and both tests failed as "unknown job id" for a job that
+    existed. The product gained the override so this is expressible on every
+    platform rather than only where the XDG convention happens to hold.
     """
     cache = tmp_path / "cache"
-    (cache / "porter").mkdir(parents=True)
+    cache.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("PORTER_CACHE_DIR", str(cache))
     return cache
 
 
@@ -86,7 +89,7 @@ def _cli(cache: Path, *args: str) -> subprocess.CompletedProcess[str]:
         [sys.executable, "-m", "porter_cli", *args],
         capture_output=True,
         text=True,
-        env={**os.environ, "XDG_CACHE_HOME": str(cache)},
+        env={**os.environ, "PORTER_CACHE_DIR": str(cache)},
         cwd=cache,
     )
 
@@ -110,7 +113,7 @@ def test_a_cancel_from_another_process_stops_the_job(
     """
     from porter.platforms.local import LocalFileDownloader
 
-    registry = JobRegistry(shared_cache / "porter" / "jobs.json")
+    registry = JobRegistry(shared_cache / "jobs.json")
     store = JobStore(registry=registry)
     request = JobRequest.from_source(
         # SKIP keeps BURN out of the phase list, so the checkpoint after PREPARE
@@ -175,7 +178,7 @@ def test_the_registry_is_where_the_two_processes_meet(
     a reason that has nothing to do with cancellation -- and it would look like a
     cancellation bug. This makes that failure mode legible.
     """
-    registry = JobRegistry(shared_cache / "porter" / "jobs.json")
+    registry = JobRegistry(shared_cache / "jobs.json")
     store = JobStore(registry=registry)
     job = store.create(JobRequest.from_source(source, JobOptions()))
 

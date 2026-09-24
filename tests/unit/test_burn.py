@@ -324,7 +324,14 @@ class TestEscapeFunction:
     """``escape_ffmpeg_filter_path`` keeps the v0.1 contract and states its limit."""
 
     def test_a_plain_path_is_unchanged_apart_from_resolution(self, tmp_path: Path) -> None:
-        assert escape_ffmpeg_filter_path(tmp_path / "sub.ass").startswith(tmp_path.as_posix())
+        escaped = escape_ffmpeg_filter_path(tmp_path / "sub.ass")
+
+        # The drive colon is escaped by design, so ``as_posix()`` is not a prefix on
+        # Windows: ``C:/tmp/sub.ass`` becomes ``C\:/tmp/sub.ass``, which is what
+        # ffmpeg's filtergraph parser needs. Escaping the expected prefix keeps the
+        # assertion about "nothing else changed" on every platform.
+        assert escaped.startswith(tmp_path.as_posix().replace(":", r"\:"))
+        assert escaped.endswith("sub.ass")
 
     def test_a_colon_is_escaped(self) -> None:
         assert r"\:" in escape_ffmpeg_filter_path("C:/Users/user/sub.ass")

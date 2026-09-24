@@ -7,12 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-The v0.2 line: a structural rewrite into one engine with three frontends. It is
-what `main` currently carries. `porter.__version__` reads `0.2.0`; no release
-tag has been cut yet, so the section stays under `Unreleased` until one is.
+## [0.2.0] - 2026-09-24
+
+The first published release. v0.2 is a structural rewrite into one engine with
+three frontends (CLI, MCP server, Agent Skill). The `0.1.0` entry below was a
+commit, never a tag or an upload, so this is the first version anyone can install.
 
 ### Added
 
+- **`PORTER_CACHE_DIR`** overrides where the job registry lives. Needed for more
+  than tidiness: `platformdirs` ignores `XDG_CACHE_HOME` on Windows (it asks the
+  Known Folder API), so there was no way to point two processes at a temporary
+  registry — which is exactly what the cross-process cancellation test has to do.
+  It is also the knob for a cache directory that is shared or read-only.
+- **TRANSLATE reuses its translation.** A re-run over unchanged cues skips the
+  backends and re-renders the subtitles from the cached text, so editing
+  `style.*` and re-running is free and still gives the new look. This was the one
+  phase with no reuse, on the grounds that its output includes the rendered
+  subtitle files and those depend on the style — which is true of the *files*,
+  and is why the **text** is cached and never the files. The cache is keyed on a
+  content hash of the sentences plus the target language and the engine's
+  identity (backend, model, endpoint), so changing the model or editing the cues
+  misses while changing the style hits. `--force` bypasses it.
 - **The MCP server shuts down gracefully on a signal.** `SIGINT`/`SIGTERM` (and
   `SIGBREAK` on Windows) now ask every running job to stop and wait briefly for
   them to unwind, instead of killing them mid-write. A job that unwinds records
@@ -69,6 +85,40 @@ tag has been cut yet, so the section stays under `Unreleased` until one is.
 
 ### Fixed
 
+- **The job registry is safe for concurrent writers in one process.** The lock
+  claimed to make that safe and did not: `msvcrt.locking` refuses rather than
+  waits when the same process already holds the byte range through another
+  handle, raising `OSError(EDEADLK, "Resource deadlock avoided")`. That is not an
+  exotic case — the MCP server publishes to the registry from one thread per job —
+  and measured, 16 concurrent publishers lost up to 5 records. A process-local
+  lock now serialises threads, with the file lock still serialising processes.
+- **A failed lock no longer reports the wrong error.** When taking the lock
+  failed, the cleanup tried to unlock a handle that had never locked it, which
+  raises `PermissionError` on Windows and *replaced* the `EDEADLK` that explained
+  the failure. The caller saw "permission denied" and never the cause.
+- **`--asr-engine` works.** It was written into `JobOptions.asr_engine` by all
+  three frontends and read by nobody, so `porter run --asr-engine whisper-api`,
+  MCP `porter_job_start(asr_engine=…)` and `porter_transcribe(engine=…)` were
+  silently ignored while the same value in `asr.engine` worked — which is
+  precisely what made it hard to notice. The flag now wins over the config key.
+  The test that appeared to cover this set the *config key* while its docstring
+  described the *flag*, which is how the gap survived.
+- **Platform subtitle tracks are written as UTF-8.** The `.json` (Bilibili) and
+  `.vtt` branches of the subtitle downloader read with `encoding="utf-8"` and
+  then wrote with `Path.write_text`'s default — the *locale* encoding, GBK on a
+  Windows console. Any cue holding an emoji or a replacement character raised
+  `UnicodeEncodeError` and killed a job whose subtitle had just been fetched
+  successfully. A mechanical test now rejects locale-encoded text writes across
+  `src/`, because a behavioural test cannot catch this on CI: Ubuntu's locale is
+  UTF-8, so the same code produces the same bytes there.
+- **The two release videos are announced as themselves.** BURN emitted both the
+  bilingual and the Chinese-only release as the generic `video` kind, so a
+  consumer matching on `ArtifactKind` — which its own docstring says downstream
+  agents do — could not tell them apart, even though `video_bilingual` and
+  `video_zh` existed for exactly that.
+- **`porter jobs cancel` no longer promises a checkpoint.** Its message said the
+  owning process "stops at the next checkpoint", referring to a resume mechanism
+  that was removed; it now says cancellation check.
 - **`porter jobs list` no longer crashes on Windows.** `os.kill(pid, 0)` reports a
   dead PID as `OSError(ERROR_INVALID_PARAMETER)` there rather than
   `ProcessLookupError`, and it escaped unhandled -- so a single stale record, which
@@ -129,6 +179,21 @@ tag has been cut yet, so the section stays under `Unreleased` until one is.
 
 ### Removed
 
+- **`porter_mcp/progress.py`, and the claim that went with it.** A complete
+  bridge from engine events to MCP progress notifications — phase weights,
+  monotonic percent, the lot — imported by nothing, while `server.py` listed
+  "progress notifications" among the things the frontend owns. It does not send
+  any: jobs run on background threads and are polled, and the blocking stage
+  tools are short enough that a token would buy nothing. The docstring now says
+  so instead of the module implying otherwise.
+- **Dead helpers whose docstrings described capabilities they did not have.**
+  `JobStore._observe_cancel_now` ("exists for the watchdog's own tests"; no test
+  called it), `translate.base.apply_texts_to_items` (promised a `strict=True`
+  length check that never ran, because the chain applies text through
+  `_cues_from_sentences`), `doctor.guides.platform_hint`, and
+  `SubtitleSet.has_translation` — whose real check is
+  `has_chinese_translation`, since a backend echoing its input satisfies the
+  former.
 - **Unused checkpoint scaffolding on `RunContext`** (`checkpoint_dir`,
   `stage_dir`, `stage_cached`). Nothing called it, no code ever set
   `checkpoint_dir`, and its docstrings advertised a resume-from-disk feature
@@ -162,5 +227,6 @@ Skill of the same name).
   assets and a standardised `raw/` + `cooked/` output layout.
 - Agent Skill packaging (`SKILL.md`, scripts, references, example config).
 
-[Unreleased]: https://github.com/RolinShmily/porter-workflow/compare/b5fd577...HEAD
+[Unreleased]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/RolinShmily/porter-workflow/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/RolinShmily/porter-workflow/commit/c2e4286

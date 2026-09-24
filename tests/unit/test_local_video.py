@@ -331,7 +331,11 @@ class TestInputValidation:
         assert ".mp4" in excinfo.value.details["supported"]
 
     def test_a_tilde_path_is_expanded(self, tmp_path: Path, monkeypatch) -> None:
+        # Both variables, because the platform consults only one of them:
+        # ``expanduser`` reads USERPROFILE on Windows and HOME elsewhere. The test
+        # is about the product expanding ``~``, not about which variable it asks.
         monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
         video = tmp_path / "v.mp4"
         video.write_bytes(b"x")
 

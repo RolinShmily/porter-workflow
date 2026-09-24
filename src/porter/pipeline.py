@@ -354,18 +354,22 @@ def _default_transcriber(ctx: RunContext) -> Transcriber:
     Local inference is also the only one that is unmetered, offline-capable and
     immune to an endpoint being withdrawn.
 
-    ``asr.engine`` then moves the named backend to the front, keeping every other
-    backend as a fallback. Two rules, in this order:
+    ``--asr-engine`` (``options.asr_engine``) or the ``asr.engine`` config key then
+    moves the named backend to the front, keeping every other backend as a
+    fallback. The flag wins over the config key, being the more specific request.
+    Two rules, in this order:
 
     * One of VideoCaptioner's engine names (``bijian``/``jianying``/``whisper-cpp``)
       promotes the external CLI, which is how v0.1 asked for it.
     * Any other name that matches a backend (``whisper-local``, ``whisper-api``,
       ``bcut``, ``google-web``, ``videocaptioner``) promotes that backend.
 
-    Before the local backend existed, only the first rule applied, so ``--asr-engine whisper-api``
-    was accepted by the CLI and silently ignored -- it was documented as
-    reordering the chain, which it did not. A name matching nothing now logs a
-    warning instead of passing unremarked.
+    Both sources are consulted, and that is a fix rather than symmetry: for a long
+    time only the config key was, because the flag went into
+    ``JobOptions.asr_engine`` -- written by all three frontends, read by nobody.
+    ``porter run --asr-engine whisper-api`` therefore did nothing while the same
+    value in ``asr.engine`` worked, which is exactly what makes such a gap hard to
+    notice. A name matching nothing logs a warning instead of passing unremarked.
     """
     from porter.asr.base import AsrBackend
     from porter.asr.bcut import BcutBackend
@@ -375,7 +379,9 @@ def _default_transcriber(ctx: RunContext) -> Transcriber:
     from porter.asr.whisper_api import WhisperApiBackend
     from porter.asr.whisper_local import WhisperLocalBackend
 
-    configured = (ctx.config.asr.engine or "").strip().lower()
+    configured = (
+        ctx.options.asr_engine or ctx.config.asr.engine or ""
+    ).strip().lower()
 
     # Annotated with the *backend* protocol, not ``Transcriber``: the chain's
     # elements recognise audio and return ``AsrOutcome``, while ``Transcriber`` is

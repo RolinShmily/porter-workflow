@@ -3,7 +3,10 @@
 A thin adapter over the ``porter`` engine. It owns three things the engine
 deliberately does not:
 
-1. **Protocol framing** — stdio transport, tool schemas, progress notifications.
+1. **Protocol framing** — stdio transport and tool schemas. Progress
+   notifications are *not* sent: jobs run on background threads and are polled
+   (see :mod:`porter_mcp.tools.jobs`), and the blocking stage tools are short
+   enough that a token would buy nothing.
 2. **Stdout hygiene** — see :mod:`porter_mcp.stdout_guard`. In an MCP stdio
    server stdout is the JSON-RPC channel, so *nothing* may print. All engine
    logging goes to stderr.

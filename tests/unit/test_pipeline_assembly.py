@@ -161,20 +161,52 @@ class TestAsrChainOrder:
     @pytest.mark.parametrize(
         "engine", ["whisper-local", "whisper-api", "bcut", "google-web", "videocaptioner"]
     )
-    def test_a_named_backend_is_promoted_to_the_front(self, tmp_path, engine: str) -> None:
-        """The flag was documented as reordering the chain and did nothing.
+    def test_the_named_backend_flag_is_promoted_to_the_front(
+        self, tmp_path, engine: str
+    ) -> None:
+        """``--asr-engine``, which is what the CLI and both MCP tools actually pass.
 
-        ``--asr-engine whisper-api`` was collected by the CLI and read by no one:
-        only VideoCaptioner's three engine names had any effect, so a user asking
-        for a specific backend silently got the default order.
+        This test used to set ``asr.engine`` in the config while its own docstring
+        described the *flag* being ignored -- and the flag really was ignored: all
+        three frontends wrote ``JobOptions.asr_engine`` and no code read it, so
+        ``porter run --asr-engine whisper-api`` did nothing while the same value in
+        the config worked. Testing the config key under a docstring about the flag
+        is how that survived.
         """
-        ctx = _ctx(tmp_path, PorterConfig(asr={"engine": engine}))
+        ctx = _ctx(tmp_path, asr_engine=engine)
         names = [backend.name for backend in Pipeline.default(ctx).transcriber.backends]
 
         assert names[0] == engine
         # Promotion is a reorder, not a filter: the rest stay as fallbacks.
         assert names.count(engine) == 1
         assert len(names) == 5
+
+    @pytest.mark.parametrize(
+        "engine", ["whisper-local", "whisper-api", "bcut", "google-web", "videocaptioner"]
+    )
+    def test_a_configured_backend_is_promoted_to_the_front(
+        self, tmp_path, engine: str
+    ) -> None:
+        """The config key is the other way to ask, and it must keep working."""
+        ctx = _ctx(tmp_path, PorterConfig(asr={"engine": engine}))
+        names = [backend.name for backend in Pipeline.default(ctx).transcriber.backends]
+
+        assert names[0] == engine
+        assert len(names) == 5
+
+    def test_the_flag_wins_over_the_config_key(self, tmp_path) -> None:
+        """Two sources, one answer, and the more specific one wins.
+
+        Without a stated rule the outcome would depend on which line happened to
+        be written first -- the kind of ambiguity that surfaces as a bug report
+        years later.
+        """
+        ctx = _ctx(tmp_path, PorterConfig(asr={"engine": "google-web"}), asr_engine="bcut")
+
+        names = [backend.name for backend in Pipeline.default(ctx).transcriber.backends]
+
+        assert names[0] == "bcut"
+        assert names.count("google-web") == 1
 
     def test_an_unrecognised_engine_keeps_the_default_order(
         self, tmp_path, monkeypatch

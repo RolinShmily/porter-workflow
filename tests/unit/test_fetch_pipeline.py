@@ -177,7 +177,11 @@ class FakeYDL:
                 # subtitle fetch silently found nothing for as long as that held.
                 lang = (self._policy.subtitle_langs or ["und"])[0]
                 target = directory / f"sub.{lang}.{self._state.subtitle_extension}"
-                target.write_text(self._state.subtitle_payload)
+                # utf-8, like the product. This fixture used the locale encoding,
+                # which on a GBK console silently wrote the payload as GBK -- so
+                # the product read it as utf-8-with-replace, got replacement
+                # characters, and the two bugs masked each other.
+                target.write_text(self._state.subtitle_payload, encoding="utf-8")
             return
 
         if self._state.media_payload is not None:

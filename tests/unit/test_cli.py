@@ -439,7 +439,10 @@ class TestJsonIsEncodingIndependent:
         decoded = json.loads(capsys.readouterr().out)
         assert decoded["title"] == "中文标题"
         assert decoded["emoji"] == "🎬"
-        assert decoded["path"] == "/var/porter/x"
+        # ``str(Path(...))`` rather than the literal: on Windows the same path is
+        # ``\var\porter\x``. The invariant is "a Path serialises as its own
+        # string", not "with POSIX separators".
+        assert decoded["path"] == str(Path("/var/porter/x"))
 
     def test_emit_json_serialises_paths_and_enums(self, capsys) -> None:
         from porter.events import Phase
@@ -447,7 +450,7 @@ class TestJsonIsEncodingIndependent:
         render.emit_json({"phase": Phase.PREPARE, "path": Path("/var/porter/a/b")})
         decoded = json.loads(capsys.readouterr().out)
 
-        assert decoded["path"] == "/var/porter/a/b"
+        assert decoded["path"] == str(Path("/var/porter/a/b"))
         assert decoded["phase"] == "prepare"
 
 

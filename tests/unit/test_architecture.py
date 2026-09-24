@@ -119,3 +119,67 @@ def test_frontends_do_not_import_each_other(frontend: str) -> None:
     assert not offenders, (
         f"{frontend} must not import {sorted(others)}: " + "; ".join(offenders)
     )
+
+
+# ----------------------------------------------------------------------
+# Text encoding
+# ----------------------------------------------------------------------
+
+
+def _is_binary_open(node: ast.Call) -> bool:
+    """Whether an ``open`` call uses a binary mode, where no encoding applies.
+
+    The mode is the *first* positional argument here, not the second: only
+    attribute calls are inspected, so this is always ``Path.open(mode)``. The
+    builtin ``open(file, mode)`` is a ``Name`` call and is never matched, which is
+    also why it needs no handling.
+    """
+    mode: object = None
+    for keyword in node.keywords:
+        if keyword.arg == "mode" and isinstance(keyword.value, ast.Constant):
+            mode = keyword.value.value
+    if mode is None and node.args and isinstance(node.args[0], ast.Constant):
+        mode = node.args[0].value
+    return isinstance(mode, str) and "b" in mode
+
+
+def _text_writes_without_encoding(tree: ast.AST) -> list[int]:
+    """Lines where text is written without naming an encoding."""
+    offenders: list[int] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        name = node.func.attr
+        if name not in {"write_text", "open"}:
+            continue
+        if any(keyword.arg == "encoding" for keyword in node.keywords):
+            continue
+        if name == "open" and _is_binary_open(node):
+            continue
+        offenders.append(node.lineno)
+    return offenders
+
+
+@pytest.mark.parametrize("path", sorted(SRC_ROOT.rglob("*.py")), ids=lambda p: p.name)
+def test_text_writes_name_their_encoding(path: Path) -> None:
+    """No text write may fall back to the *locale* encoding.
+
+    ``Path.write_text`` and text-mode ``open`` default to the locale encoding,
+    which is not UTF-8 on Windows (GBK on the development box). Every subtitle,
+    transcript and metadata file porter writes can hold CJK or an emoji, so the
+    locale default is a crash waiting for the first such character: the write
+    raises ``UnicodeEncodeError`` and kills a job whose work was already done.
+
+    This is checked mechanically because a behavioural test cannot catch it on
+    CI: Ubuntu's locale is UTF-8, so ``write_text`` without an encoding produces
+    exactly the same bytes there, and the bug only ever appears on a user's
+    Windows machine. Two such writes shipped in ``platforms/base.py`` and were
+    found by reading, not by the suite.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    offenders = _text_writes_without_encoding(tree)
+
+    assert not offenders, (
+        f"{path.relative_to(SRC_ROOT)}: text written without an encoding at line(s) "
+        f"{offenders}; pass encoding='utf-8'"
+    )

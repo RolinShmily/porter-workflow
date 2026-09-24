@@ -193,7 +193,7 @@ def _cancel(registry: JobRegistry, job_id: str) -> int:
         return render.EXIT_ERROR
 
     render.info(f"cancellation requested for {job_id}")
-    render.info("the owning process stops at the next checkpoint")
+    render.info("the owning process stops at the next cancellation check")
     return render.EXIT_OK
 
 

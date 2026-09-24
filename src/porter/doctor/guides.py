@@ -27,7 +27,6 @@ reading both is cheaper than maintaining two call sites.
 
 from __future__ import annotations
 
-import platform
 from dataclasses import dataclass
 
 __all__ = ["GUIDES", "Remediation", "guide_for", "keys"]
@@ -165,8 +164,3 @@ def keys() -> list[str]:
     a test rather than a user.
     """
     return sorted(GUIDES)
-
-
-def platform_hint() -> str:
-    """A short platform line, so rendered advice can be narrowed."""
-    return f"{platform.system()} {platform.release()}"

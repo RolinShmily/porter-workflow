@@ -24,7 +24,7 @@ import pytest
 
 from porter.config import PorterConfig
 from porter.context import RunContext
-from porter.events import ArtifactReady, JobState, Phase, collect
+from porter.events import ArtifactKind, ArtifactReady, JobState, Phase, collect
 from porter.media.burn import BILINGUAL_NAME, ZH_NAME
 from porter.media.ffmpeg import FFmpegRunner
 from porter.media.probe import probe
@@ -282,6 +282,14 @@ def test_the_burn_artifacts_are_announced(tmp_path: Path) -> None:
     ]
     assert {Path(e.path).name for e in videos} == {BILINGUAL_NAME, ZH_NAME}
     assert all(Path(e.path).is_file() for e in videos)
+
+    # Announced by *which* video, not merely as two videos. ``ArtifactKind``
+    # documents its names as the contract downstream agents match on, and both
+    # releases used to be emitted as the generic ``VIDEO``, so the bilingual
+    # release and the Chinese-only one were indistinguishable by kind.
+    by_name = {Path(e.path).name: e.kind for e in videos}
+    assert by_name[BILINGUAL_NAME] is ArtifactKind.VIDEO_BILINGUAL
+    assert by_name[ZH_NAME] is ArtifactKind.VIDEO_ZH
 
 
 # ----------------------------------------------------------------------

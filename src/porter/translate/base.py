@@ -26,7 +26,6 @@ from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 from porter.context import RunContext
-from porter.models.subtitle import SubtitleItem
 
 __all__ = [
     "MAX_ATTEMPTS",
@@ -198,15 +197,3 @@ class TranslationBackend(Protocol):
             TranslationBackendError: For expected failure.
         """
         ...
-
-
-def apply_texts_to_items(items: list[SubtitleItem], texts: list[str]) -> None:
-    """Write translated strings onto cues, positionally.
-
-    ``strict=True`` because a length mismatch here means a bug in the chain, not a
-    normal outcome. Silently zipping to the shorter list would produce a partially
-    translated file, which looks like a translation quality problem and hides the
-    real cause until someone counts the cues.
-    """
-    for item, text in zip(items, texts, strict=True):
-        item.target_text = text.strip()

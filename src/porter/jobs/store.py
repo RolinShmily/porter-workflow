@@ -278,17 +278,6 @@ class JobStore:
             record = job.to_record()
         self._registry.publish(record)
 
-    def _observe_cancel_now(self, job: Job) -> None:
-        """One immediate cancellation check.
-
-        Exists for the watchdog's own tests and for a caller that wants the check
-        to happen at a specific moment; production uses the thread.
-        """
-        if self._registry is None or job.cancel.is_set():
-            return
-        if self._registry.is_cancel_requested(job.job_id):
-            job.cancel.set()
-
     # -- access -------------------------------------------------------------
 
     def get(self, job_id: str) -> Job | None:

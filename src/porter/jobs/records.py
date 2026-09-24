@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -83,7 +84,18 @@ except ImportError:  # pragma: no cover - POSIX
 
 
 def registry_file() -> Path:
-    """Where the registry lives (``platformdirs`` cache dir)."""
+    """Where the registry lives.
+
+    ``PORTER_CACHE_DIR`` overrides the platform location. That is needed for more
+    than tidiness: ``platformdirs`` ignores ``XDG_CACHE_HOME`` on Windows -- it
+    asks the Known Folder API instead -- so there was no way to point two
+    processes at a temporary registry, which is exactly what the cross-process
+    cancellation test has to do. It is also the obvious knob for a cache directory
+    that is shared, read-only, or simply somewhere else.
+    """
+    override = os.environ.get("PORTER_CACHE_DIR")
+    if override:
+        return Path(override).expanduser() / REGISTRY_FILENAME
     return Path(platformdirs.user_cache_dir(APP_NAME, appauthor=False)) / REGISTRY_FILENAME
 
 
@@ -400,6 +412,18 @@ def record_from_request(job_id: str, request: JobRequest) -> JobRecord:
     )
 
 
+#: Serialises registry writers *within this process*.
+#:
+#: The file lock below cannot do it. ``msvcrt.locking`` refuses rather than waits
+#: when the same process already holds the byte range through another handle -- it
+#: raises ``OSError(EDEADLK, "Resource deadlock avoided")`` -- and every job thread
+#: in the MCP server publishes to this registry, so intra-process contention is
+#: the normal case there, not an exotic one. Measured before this existed: 16
+#: concurrent publishers lost up to 5 records and surfaced a bare
+#: ``PermissionError``.
+_THREAD_LOCK = threading.Lock()
+
+
 def _lock_exclusive(handle: Any) -> None:
     """Take an exclusive advisory lock on an open file, on either platform.
 
@@ -432,11 +456,18 @@ def _unlock(handle: Any) -> None:
 def _exclusive_lock(lock_path: Path) -> Iterator[None]:
     """Hold an exclusive advisory lock, creating the file if needed.
 
-    Advisory, so it only excludes other users of this module -- which is exactly
-    the set of writers there is. Where neither ``fcntl`` nor ``msvcrt`` exists the
-    lock degrades to nothing: a lost update in an exotic environment is a better
+    Two locks, for two kinds of contention: :data:`_THREAD_LOCK` between threads
+    of this process, and the file lock between processes. Advisory, so the file
+    lock only excludes other users of this module -- which is exactly the set of
+    writers there is. Where neither ``fcntl`` nor ``msvcrt`` exists it degrades to
+    the thread lock alone: a lost update in an exotic environment is a better
     outcome than refusing to record anything at all.
     """
+    with _THREAD_LOCK:
+        yield from _exclusive_file_lock(lock_path)
+
+
+def _exclusive_file_lock(lock_path: Path) -> Iterator[None]:
     try:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         handle = lock_path.open("a+b")
@@ -449,12 +480,19 @@ def _exclusive_lock(lock_path: Path) -> Iterator[None]:
         yield
         return
 
+    locked = False
     try:
         _lock_exclusive(handle)
+        locked = True
         yield
     finally:
         try:
-            _unlock(handle)
+            # Only unlock what was locked. Unlocking a handle that never took the
+            # lock raises ``PermissionError`` on Windows, which then *replaces* the
+            # error that caused the failure to lock -- so the caller saw "permission
+            # denied" and never the EDEADLK that explained it.
+            if locked:
+                _unlock(handle)
         finally:
             handle.close()
 
@@ -546,9 +584,10 @@ class JobRegistry:
     def request_cancel(self, job_id: str) -> bool:
         """Ask the owner to stop. ``False`` for unknown or already-finished jobs.
 
-        Nothing is signalled: the flag is picked up by the owner's event sink,
-        which keeps cancellation working the same way whether the request came
-        from a terminal or from an MCP client.
+        Nothing is signalled: the request is written to the shared file and the
+        owner's watchdog thread polls for it. Polling rather than an event sink,
+        because a long download emits no events at all -- observing cancellation
+        through the sink silently did nothing until the download finished.
         """
         with _exclusive_lock(self.lock_path):
             records = self._load_unlocked()

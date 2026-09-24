@@ -14,9 +14,9 @@ HTTP 200 with the *input* echoed back — because it detected a bot, because the
 language pair is unsupported, or because its quota ran out and it degraded to
 pass-through. Every cue then has non-empty ``target_text`` that is still English.
 
-Nothing downstream notices. ``SubtitleSet.has_translation`` is True (target text
-is non-empty), the BURN phase succeeds, and the operator gets a bilingual video
-with two identical English tracks. The job reports DONE.
+Nothing downstream notices. Every cue carries non-empty target text, so the
+subtitle looks translated, the BURN phase succeeds, and the operator gets a
+bilingual video with two identical English tracks. The job reports DONE.
 
 So each backend's output is checked for actual CJK before it is accepted, and a
 backend that returns English is treated exactly like one that returned an error:
@@ -75,6 +75,7 @@ from porter.subtitles.transcript import (
     save_transcript_txt,
     split_chinese_sentence_into_cues,
 )
+from porter.translate import reuse
 from porter.translate.base import (
     TranslationBackend,
     TranslationBackendError,
@@ -147,12 +148,13 @@ class TranslationChain:
             ctx.progress(Phase.TRANSLATE, 0.5, "using the platform Chinese track")
             self._carry_platform_chinese(subtitles, sentences, ctx)
         else:
-            outcome = self._run(sentences, target_lang, ctx)
+            outcome, reused = self._translate_or_reuse(sentences, target_lang, subtitles, ctx)
             subtitles.items = _cues_from_sentences(
                 sentences, outcome.texts, outcome.sources
             )
             ctx.logger.info(
-                "translated %d sentences into %d cues via %s",
+                "%s %d sentences into %d cues via %s",
+                "reused the cached translation of" if reused else "translated",
                 len(sentences),
                 len(subtitles.items),
                 outcome.origin,
@@ -163,6 +165,35 @@ class TranslationChain:
         return subtitles
 
     # -- internals ----------------------------------------------------------
+
+    def _translate_or_reuse(
+        self,
+        sentences: list[TranscriptSentence],
+        target_lang: str,
+        subtitles: SubtitleSet,
+        ctx: RunContext,
+    ) -> tuple[TranslationOutcome, bool]:
+        """The cached translation if it still applies, otherwise a fresh one.
+
+        Returns ``(outcome, reused)`` so the caller can report which happened
+        instead of claiming a translation that did not take place.
+
+        The cache holds text, never the rendered files, so a hit still re-renders
+        below -- see :mod:`porter.translate.reuse` for why that split is the whole
+        point.
+        """
+        cooked = subtitles.transcript_json_path.parent
+        expected = reuse.fingerprint(sentences, target_lang, ctx)
+
+        if not ctx.options.force:
+            cached = reuse.load(cooked, expected, len(sentences))
+            if cached is not None:
+                ctx.progress(Phase.TRANSLATE, 0.5, "reusing cached translation")
+                return cached, True
+
+        outcome = self._run(sentences, target_lang, ctx)
+        reuse.save(cooked, expected, outcome)
+        return outcome, False
 
     def _run(
         self,

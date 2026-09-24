@@ -53,6 +53,29 @@ def configure(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -
         default=None,
         help="Plan to stop after this phase.",
     )
+    # The plan prints the ASR and translation routes, so the flags that choose
+    # them belong here too. Without these, `porter plan --asr-engine bcut` was
+    # rejected as a misuse while `porter plan --cookies` was accepted -- and the
+    # route the plan reported could not be made to match the one `porter run`
+    # would take.
+    parser.add_argument(
+        "--asr-engine",
+        metavar="ENGINE",
+        default=None,
+        help="Plan with this ASR engine tried first. Defaults to the configured order.",
+    )
+    parser.add_argument(
+        "--translator",
+        metavar="NAME",
+        default=None,
+        help="Plan with this translation backend tried first.",
+    )
+    parser.add_argument(
+        "--llm-model",
+        metavar="MODEL",
+        default=None,
+        help="LLM model to plan with. Defaults to the configured model.",
+    )
     parser.add_argument(
         "--cookies",
         metavar="FILE",
@@ -91,6 +114,9 @@ def run(args: argparse.Namespace) -> int:
         burn=BurnMode(args.burn) if args.burn else BurnMode.DUAL,
         target_lang=args.target_lang or "zh-Hans",
         only_phase=args.only_phase,
+        asr_engine=args.asr_engine,
+        translator=args.translator,
+        llm_model=args.llm_model,
         # The plan inspects the source, so it needs the same credentials the run
         # would need -- otherwise it reports "blocked: authentication required"
         # for a link that is perfectly usable, and the advice to pass cookies is

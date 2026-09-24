@@ -534,9 +534,19 @@ class YtDlpExtractor:
                 if not converted:
                     _logger.warning("the %s track was JSON but held no cues", lang)
                     continue
-                dest.write_text(converted)
+                # ``encoding="utf-8"`` on both writes below, matching the reads
+                # above. Without it the file is written in the *locale* encoding,
+                # which on a GBK Windows console means any cue holding an emoji, a
+                # replacement character or anything outside GBK raises
+                # UnicodeEncodeError and kills the job -- for a subtitle that was
+                # fetched successfully. Every other subtitle writer in the package
+                # already passes utf-8; these two were the exception.
+                dest.write_text(converted, encoding="utf-8")
             elif suffix == ".vtt":
-                dest.write_text(vtt_to_srt(found.read_text(encoding="utf-8", errors="replace")))
+                dest.write_text(
+                    vtt_to_srt(found.read_text(encoding="utf-8", errors="replace")),
+                    encoding="utf-8",
+                )
             else:
                 shutil.copyfile(found, dest)
             downloaded[dest_name] = dest

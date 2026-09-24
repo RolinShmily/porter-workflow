@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -74,19 +75,52 @@ class TestSkillLayout:
         ):
             assert (SKILL_ROOT / rel).is_file(), f"missing {rel}"
 
-    def test_the_scripts_are_executable(self) -> None:
+    def test_the_scripts_are_recorded_executable(self) -> None:
+        """The executable bit lives in the git index, not on NTFS.
+
+        ``stat()`` cannot express it on Windows: this checkout reports ``0o100666``
+        for files the index records as ``100755``, because NTFS has nowhere to put
+        a POSIX mode. Asserting on ``st_mode`` therefore fails for a reason that has
+        nothing to do with the asset. The index is the meaningful source -- it is
+        what a Linux checkout materialises, and what the one-line install runs.
+        """
+        if shutil.which("git") is None:
+            pytest.skip("git is not installed")
+        listing = subprocess.run(
+            ["git", "ls-files", "-s", "--", "skills/porter-skill/scripts"],
+            capture_output=True,
+            text=True,
+            cwd=REPO_ROOT,
+        )
+        assert listing.returncode == 0, listing.stderr
+        modes = {
+            line.split("\t")[-1]: line.split()[0] for line in listing.stdout.splitlines()
+        }
         for name in ("porter.sh", "inspect.sh", "bootstrap.sh"):
-            path = SKILL_ROOT / "scripts" / name
-            assert path.stat().st_mode & 0o111, f"{name} is not executable"
+            rel = f"skills/porter-skill/scripts/{name}"
+            assert modes.get(rel) == "100755", f"{rel} is {modes.get(rel)}, not 100755"
 
     def test_the_scripts_parse_as_bash(self) -> None:
         for name in ("porter.sh", "inspect.sh", "bootstrap.sh"):
+            # Piped in rather than passed as a path. `bash` on a developer machine
+            # may be git-bash, WSL bash or a Linux bash, and each wants a different
+            # spelling of the same Windows path -- MSYS strips the backslashes and
+            # WSL wants /mnt/c/... -- so a path assertion fails for a reason that
+            # has nothing to do with the script.
+            #
+            # Bytes, not ``text=True``: on Windows the text path translates ``\n``
+            # to ``\r\n`` while writing to the child's stdin, so bash receives
+            # ``then\r`` -- which is not the ``then`` keyword -- and reports the
+            # ``if`` as unclosed. That is a property of the harness, not of the
+            # script, and it produced exactly that false failure.
             result = subprocess.run(
-                ["bash", "-n", str(SKILL_ROOT / "scripts" / name)],
+                ["bash", "-n"],
+                input=(SKILL_ROOT / "scripts" / name).read_bytes(),
                 capture_output=True,
-                text=True,
             )
-            assert result.returncode == 0, f"{name}: {result.stderr}"
+            assert result.returncode == 0, (
+                f"{name}: {result.stderr.decode('utf-8', 'replace')}"
+            )
 
 
 # ---------------------------------------------------------------------------

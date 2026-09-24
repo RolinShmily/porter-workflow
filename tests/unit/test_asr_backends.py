@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -616,12 +617,34 @@ def _write_script(tmp_path: Path, body: str, name: str = "videocaptioner") -> Pa
     return script
 
 
+def _executable(script: Path) -> str:
+    """What to hand the backend as ``binary`` for ``script``.
+
+    POSIX runs the shell script directly. Windows cannot: CreateProcess refuses a
+    shebang script with ``ERROR_BAD_EXE_FORMAT``, so all five VideoCaptioner tests
+    failed at "could not be started" instead of testing what they are about. A
+    ``.cmd`` shim that hands the body to ``sh`` is the same arrangement a real
+    install uses when its entry point is a shell script.
+
+    The shim is kept beside the script rather than replacing it, because the fakes
+    write their argv to ``"$0.args"`` and ``$0`` is the script's path.
+    """
+    if sys.platform != "win32":
+        return str(script)
+    shim = script.with_suffix(".cmd")
+    # ``%*`` forwards the arguments; the path reaches ``sh`` in the POSIX form it
+    # understands (``C:/...``), not the Windows one. The CRLF is deliberate: a
+    # ``.cmd`` is read by the command processor, which wants it.
+    shim.write_text(f'@sh "{script.as_posix()}" %*\r\n', encoding="ascii")
+    return str(shim)
+
+
 class TestVideoCaptioner:
     def test_transcribe_runs_cli_and_parses_srt(
         self, tmp_path: Path, audio: Path
     ) -> None:
         script = _write_script(tmp_path, _VC_SCRIPT)
-        backend = videocaptioner.VideoCaptionerBackend(binary=str(script))
+        backend = videocaptioner.VideoCaptionerBackend(binary=_executable(script))
 
         outcome = backend.transcribe(audio, _ctx(tmp_path))
 
@@ -637,7 +660,7 @@ class TestVideoCaptioner:
         self, tmp_path: Path, audio: Path
     ) -> None:
         script = _write_script(tmp_path, _VC_SCRIPT)
-        backend = videocaptioner.VideoCaptionerBackend(binary=str(script))
+        backend = videocaptioner.VideoCaptionerBackend(binary=_executable(script))
 
         outcome = backend.transcribe(audio, _ctx(tmp_path, engine="bijian", language="zh"))
 
@@ -648,19 +671,19 @@ class TestVideoCaptioner:
 
     def test_nonzero_exit_raises_backend_error(self, tmp_path: Path, audio: Path) -> None:
         script = _write_script(tmp_path, "#!/bin/sh\nexit 3\n")
-        backend = videocaptioner.VideoCaptionerBackend(binary=str(script))
+        backend = videocaptioner.VideoCaptionerBackend(binary=_executable(script))
         with pytest.raises(AsrBackendError, match="every videocaptioner engine failed"):
             backend.transcribe(audio, _ctx(tmp_path))
 
     def test_unparseable_output_raises_backend_error(self, tmp_path: Path, audio: Path) -> None:
         script = _write_script(tmp_path, _VC_GARBAGE_SCRIPT)
-        backend = videocaptioner.VideoCaptionerBackend(binary=str(script))
+        backend = videocaptioner.VideoCaptionerBackend(binary=_executable(script))
         with pytest.raises(AsrBackendError, match="every videocaptioner engine failed"):
             backend.transcribe(audio, _ctx(tmp_path))
 
     def test_missing_audio_raises(self, tmp_path: Path) -> None:
         script = _write_script(tmp_path, _VC_SCRIPT)
-        backend = videocaptioner.VideoCaptionerBackend(binary=str(script))
+        backend = videocaptioner.VideoCaptionerBackend(binary=_executable(script))
         with pytest.raises(AsrBackendError, match="does not exist"):
             backend.transcribe(tmp_path / "nope.wav", _ctx(tmp_path))
 
@@ -668,7 +691,7 @@ class TestVideoCaptioner:
         self, tmp_path: Path, audio: Path
     ) -> None:
         script = _write_script(tmp_path, "#!/bin/sh\nexec sleep 30\n")
-        backend = videocaptioner.VideoCaptionerBackend(binary=str(script))
+        backend = videocaptioner.VideoCaptionerBackend(binary=_executable(script))
         ctx = _ctx(tmp_path)
         timer = threading.Timer(0.3, ctx.request_cancel)
         timer.start()

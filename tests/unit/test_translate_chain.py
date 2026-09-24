@@ -617,3 +617,197 @@ class TestTranslationHappensOnSentences:
         assert len(result.items) == 1
         assert result.items[0].start_ms == 700
         assert result.items[0].end_ms == 3 * 700 + 400
+
+
+# ----------------------------------------------------------------------
+# Reuse
+# ----------------------------------------------------------------------
+
+
+class TestReuse:
+    """A re-run must not pay twice for the same translation.
+
+    TRANSLATE was the one phase with no reuse, and the reason recorded for that
+    was that its output includes the rendered subtitle files, which depend on the
+    style. Caching the *text* rather than the files is what makes both true at
+    once: no second network call, and a style edit still takes effect.
+
+    Every run builds a fresh cue set, which is what a real re-run does -- the cues
+    come from TRANSCRIBE again, not from the previous run's memory. Calling
+    ``translate`` twice on one object would take the "cues already carry Chinese"
+    path instead, and test nothing here.
+    """
+
+    def _cache(self, tmp_path: Path) -> Path:
+        return tmp_path / "out" / "vid1_A_Video" / "cooked" / ".translate.json"
+
+    def test_a_second_run_does_not_call_the_backend(self, ctx, tmp_path) -> None:
+        backend = FakeBackend("a", chinese)
+        chain = TranslationChain([backend])
+
+        first = chain.translate(_set(tmp_path), "zh-Hans", ctx)
+        second = chain.translate(_set(tmp_path), "zh-Hans", ctx)
+
+        assert len(backend.calls) == 1, "the second run must reuse"
+        assert [i.target_text for i in second.items] == [
+            i.target_text for i in first.items
+        ]
+
+    def test_the_cache_sits_beside_the_transcribe_sidecar(self, ctx, tmp_path) -> None:
+        TranslationChain([FakeBackend("a", chinese)]).translate(
+            _set(tmp_path), "zh-Hans", ctx
+        )
+
+        assert self._cache(tmp_path).is_file()
+
+    def test_a_style_change_reuses_the_translation_and_still_re_renders(
+        self, ctx, tmp_path
+    ) -> None:
+        """The whole point, and the reason the old design had no reuse at all.
+
+        Reusing the *files* would have pinned the styling; reusing the *text* is
+        what lets a re-run be both free and re-styled.
+        """
+        backend = FakeBackend("a", chinese)
+        chain = TranslationChain([backend])
+        chain.translate(_set(tmp_path), "zh-Hans", ctx)
+        ass = tmp_path / "out" / "vid1_A_Video" / "cooked" / "subtitle_zh.ass"
+        before = ass.read_text(encoding="utf-8")
+
+        restyled = PorterConfig(
+            output_dir=ctx.config.output_dir, style={"zh_font_size": 80}
+        )
+        restyled_ctx = RunContext(
+            job_id="test", options=ctx.options, config=restyled
+        )
+        chain.translate(_set(tmp_path), "zh-Hans", restyled_ctx)
+
+        assert len(backend.calls) == 1, "a style edit must not cost a translation"
+        assert ass.read_text(encoding="utf-8") != before, "but it must re-render"
+
+    def test_a_different_target_language_misses(self, ctx, tmp_path) -> None:
+        backend = FakeBackend("a", chinese)
+        chain = TranslationChain([backend])
+
+        chain.translate(_set(tmp_path), "zh-Hans", ctx)
+        chain.translate(_set(tmp_path), "zh-Hant", ctx)
+
+        assert len(backend.calls) == 2
+
+    def test_a_different_llm_model_misses(self, ctx, tmp_path) -> None:
+        """Two models are two translations; reusing across that would be wrong."""
+        backend = FakeBackend("a", chinese)
+        chain = TranslationChain([backend])
+        chain.translate(_set(tmp_path), "zh-Hans", ctx)
+
+        other = PorterConfig(
+            output_dir=ctx.config.output_dir, llm={"model": "some-other-model"}
+        )
+        chain.translate(
+            _set(tmp_path),
+            "zh-Hans",
+            RunContext(job_id="test", options=ctx.options, config=other),
+        )
+
+        assert len(backend.calls) == 2
+
+    def test_edited_cues_miss(self, ctx, tmp_path) -> None:
+        backend = FakeBackend("a", chinese)
+        chain = TranslationChain([backend])
+        chain.translate(_set(tmp_path), "zh-Hans", ctx)
+
+        edited = _set(tmp_path)
+        edited.items[0].source_text = "A completely different opening line."
+        chain.translate(edited, "zh-Hans", ctx)
+
+        assert len(backend.calls) == 2
+
+    def test_force_bypasses_the_cache(self, ctx, tmp_path) -> None:
+        backend = FakeBackend("a", chinese)
+        chain = TranslationChain([backend])
+        chain.translate(_set(tmp_path), "zh-Hans", ctx)
+
+        forced = RunContext(
+            job_id="test",
+            options=JobOptions(output_dir=ctx.config.output_dir, force=True),
+            config=ctx.config,
+        )
+        chain.translate(_set(tmp_path), "zh-Hans", forced)
+
+        assert len(backend.calls) == 2
+
+    def test_a_corrupt_cache_is_a_miss_not_a_failure(self, ctx, tmp_path) -> None:
+        backend = FakeBackend("a", chinese)
+        chain = TranslationChain([backend])
+        chain.translate(_set(tmp_path), "zh-Hans", ctx)
+        self._cache(tmp_path).write_text("{ not json", encoding="utf-8")
+
+        result = chain.translate(_set(tmp_path), "zh-Hans", ctx)
+
+        assert len(backend.calls) == 2, "it must translate again"
+        assert result.items[0].target_text == "中文1"
+
+    def test_a_wrong_length_texts_list_is_a_miss(self, ctx, tmp_path) -> None:
+        """The texts are positionally aligned, so a short list is worse than none.
+
+        Accepting it would leave the tail of the subtitle untranslated while every
+        cue that did get text looked perfectly fine.
+        """
+        backend = FakeBackend("a", chinese)
+        chain = TranslationChain([backend])
+        chain.translate(_set(tmp_path), "zh-Hans", ctx)
+
+        payload = json.loads(self._cache(tmp_path).read_text(encoding="utf-8"))
+        payload["texts"] = payload["texts"][:1]
+        self._cache(tmp_path).write_text(json.dumps(payload), encoding="utf-8")
+        result = chain.translate(_set(tmp_path), "zh-Hans", ctx)
+
+        assert len(backend.calls) == 2
+        assert all(item.target_text for item in result.items)
+
+    def test_a_failed_translation_is_not_cached(self, ctx, tmp_path) -> None:
+        """There is no outcome to record, and a stub would poison the next run."""
+        chain = TranslationChain([FakeBackend("a", PorterError("nope"))])
+
+        with pytest.raises(PorterError):
+            chain.translate(_set(tmp_path), "zh-Hans", ctx)
+
+        assert not self._cache(tmp_path).exists()
+
+    def test_a_wrong_length_sources_list_is_a_miss(self, ctx, tmp_path) -> None:
+        """Same positional invariant as ``texts``, on the input side.
+
+        A short ``sources`` would pair corrected English with the wrong moment, so
+        the bilingual track would show a sentence next to another sentence's
+        translation.
+        """
+        backend = FakeBackend("a", chinese)
+        chain = TranslationChain([backend])
+        chain.translate(_set(tmp_path), "zh-Hans", ctx)
+
+        payload = json.loads(self._cache(tmp_path).read_text(encoding="utf-8"))
+        payload["sources"] = ["Only one corrected line."]
+        self._cache(tmp_path).write_text(json.dumps(payload), encoding="utf-8")
+        chain.translate(_set(tmp_path), "zh-Hans", ctx)
+
+        assert len(backend.calls) == 2
+
+    def test_the_cached_translation_is_reported_as_reused(
+        self, ctx, tmp_path, config
+    ) -> None:
+        """The log must not claim a translation that did not happen."""
+        events: list[Event] = []
+        watched = RunContext(
+            job_id="test",
+            options=ctx.options,
+            config=config,
+            events=collect(events),
+        )
+        chain = TranslationChain([FakeBackend("a", chinese)])
+        chain.translate(_set(tmp_path), "zh-Hans", watched)
+        events.clear()
+
+        chain.translate(_set(tmp_path), "zh-Hans", watched)
+
+        messages = [e.message for e in events if isinstance(e, ProgressUpdated)]
+        assert any("reusing cached translation" in message for message in messages), messages

@@ -454,9 +454,17 @@ class FfmpegRenderer:
             selector=self._encoder().select(),
         )
 
-        for path in (result.video_bilingual, result.video_zh):
+        # The specific kinds, not the generic VIDEO twice. Both files are videos,
+        # and a consumer that matches on the kind -- which ``ArtifactKind``'s own
+        # docstring says downstream agents do -- could not tell the bilingual
+        # release from the Chinese-only one. The enum already carried the two names
+        # for exactly this, and nothing emitted them.
+        for kind, path in (
+            (ArtifactKind.VIDEO_BILINGUAL, result.video_bilingual),
+            (ArtifactKind.VIDEO_ZH, result.video_zh),
+        ):
             if path is not None:
-                ctx.emit(ArtifactReady(kind=ArtifactKind.VIDEO, path=path, phase=Phase.BURN))
+                ctx.emit(ArtifactReady(kind=kind, path=path, phase=Phase.BURN))
         ctx.emit(ProgressUpdated(phase=Phase.BURN, percent=100.0, message="release videos ready"))
         return result
 

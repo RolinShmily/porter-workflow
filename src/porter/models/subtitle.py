@@ -118,13 +118,3 @@ class SubtitleSet(BaseModel):
     transcript_txt_path: Path
     sentences: list[TranscriptSentence] = Field(default_factory=list)
     used_asr: bool = False
-
-    @property
-    def has_translation(self) -> bool:
-        """True when at least one cue carries non-empty target text.
-
-        Note that this is *not* the check that a translation happened: a backend
-        echoing its input satisfies it. :func:`porter.subtitles.phrasing.has_chinese_translation`
-        is that check.
-        """
-        return any(item.target_text.strip() for item in self.items)
