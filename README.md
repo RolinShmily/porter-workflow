@@ -39,7 +39,7 @@ Requires **Python ≥ 3.11**.
 
 ```bash
 # CLI, minimal install (pure-Python; translation works without a key, but
-# transcription does NOT -- see "Transcription needs a key" below)
+# transcription needs the [asr-local] extra or an API key -- see below)
 uvx porter-workflow "<URL>"
 
 # CLI with every optional backend
@@ -64,42 +64,70 @@ Check everything at once:
 porter doctor
 ```
 
-### Transcription needs a key (or the VideoCaptioner CLI)
+### Transcription is key-free and offline, or an API key
 
-**There is no working key-free speech-to-text path.** This is measured, not
-theoretical — as of 2026-09-22, on a real 10-minute video:
+**Local Whisper runs on your own machine: no key, no network after the first
+run.** Measured 2026-09-24 on real speech -- 18 s of audio became 3 cues in
+7.2 s on CPU with the default `small` model:
 
-| ASR backend | Status |
-| --- | --- |
-| Whisper API | Needs `OPENAI_API_KEY` (or a compatible endpoint) |
-| VideoCaptioner CLI | Needs the `videocaptioner` package installed separately |
-| Bcut | Host answers, but returns **zero utterances** |
-| Google Web (`[stt]`) | Returns the empty result `{"result":[]}` for **every** request |
+| ASR backend | Needs | Status |
+| --- | --- | --- |
+| **`whisper-local`** | the `[asr-local]` extra | **Works.** Key-free; offline once the model is cached |
+| Whisper API | `OPENAI_API_KEY` (or a compatible endpoint) | Works |
+| VideoCaptioner CLI | the `videocaptioner` package, installed separately | Works |
+| Bcut | nothing | Host answers, but returns **zero utterances** |
+| Google Web (`[stt]`) | nothing | Returns the empty result `{"result":[]}` for **every** request |
 
-Both key-free endpoints are reverse-engineered and neither transcribes any
-more. Google Web's response is also malformed at the HTTP level, so the read
-fails outright rather than merely returning nothing. Bcut's failure is the more
-ambiguous of the two -- the host answers, so it could be a quota or a changed
-field rather than a dead endpoint -- which is why it keeps an "unverified" label
-in the source.
-
-So a bare `uvx porter-workflow "<URL>"` will download and standardise the video
-and then fail at the transcription phase with
-`every speech-to-text backend failed`. To get subtitles, do one of:
+`whisper-local` is tried first, so it is what a run uses whenever it is
+installed. It sits behind an extra because `faster-whisper` and `ctranslate2`
+are heavy, and CTranslate2-backed rather than PyTorch:
 
 ```bash
-# Option A: an LLM key (also improves translation quality a lot)
+# Key-free and offline. This is the recommended install.
+uvx --from "porter-workflow[asr-local]" porter "<URL>"
+
+# Or everything at once -- [all] includes [asr-local]
+uvx --from "porter-workflow[all]" porter "<URL>"
+```
+
+The first run downloads the model from Hugging Face (464 MB for the default
+`small`); after that it is fully offline. Device and precision are chosen for
+you -- CUDA if it loads, CPU otherwise -- and can be pinned:
+
+```bash
+porter config set asr.whisper_local_model=medium
+porter config set asr.whisper_local_device=cuda
+porter config set asr.whisper_local_compute_type=float16
+```
+
+A **bare** `uvx porter-workflow "<URL>"` still cannot transcribe, because no ASR
+backend is in a minimal install: it downloads and standardises the video and
+then fails with `every speech-to-text backend failed`. The two key-free
+*endpoints* are the ones that are dead -- both are reverse-engineered, and
+Google Web's response is malformed at the HTTP level, so the read fails outright
+rather than merely returning nothing. Bcut's failure is the more ambiguous of
+the two -- the host answers, so it could be a quota or a changed field rather
+than a dead endpoint -- which is why it keeps an "unverified" label in the
+source.
+
+So to get subtitles, do one of:
+
+```bash
+# Option A (recommended): local, key-free, offline
+uvx --from "porter-workflow[asr-local]" porter "<URL>" --burn skip
+
+# Option B: an LLM key (also improves translation quality a lot)
 export OPENAI_API_KEY=sk-...
 porter "<URL>" --burn skip
 
-# Option B: install VideoCaptioner and use its engines
+# Option C: install VideoCaptioner and use its engines
 pip install videocaptioner
 porter "<URL>" --asr-engine bijian --burn skip
 ```
 
 **Translation is unaffected.** Bing, Google and MyMemory all still work without
 a key; each was probed against its live endpoint and returned real Chinese. Only
-transcription needs credentials.
+transcription ever needed credentials.
 
 `porter doctor` reports which route a job will actually take before you start it.
 
@@ -107,8 +135,9 @@ transcription needs credentials.
 
 | Extra | Adds | Enables |
 | --- | --- | --- |
+| `[asr-local]` | `faster-whisper` | **Local Whisper ASR — key-free and offline**, see above |
 | `[llm]` | `openai`, `json-repair` | LLM translation + Whisper API ASR |
-| `[stt]` | `SpeechRecognition` | Google Web STT — **measured non-functional**, see below |
+| `[stt]` | `SpeechRecognition` | Google Web STT — **measured non-functional**, see above |
 | `[images]` | `pillow` | Cover image handling |
 | `[mcp]` | `fastmcp` | The `porter-mcp` server |
 | `[all]` | all of the above | — |

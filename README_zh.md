@@ -34,7 +34,7 @@
 需要 **Python ≥ 3.11**。
 
 ```bash
-# CLI，最小安装（纯 Python；翻译无需 Key，但转录需要——见下文）
+# CLI，最小安装（纯 Python；翻译无需 Key，但转录需要 [asr-local] extra 或 API Key——见下文）
 uvx porter-workflow "<URL>"
 
 # 带全部可选后端
@@ -59,33 +59,54 @@ pipx install "porter-workflow[all]"
 porter doctor
 ```
 
-### 转录必须有 Key（或 VideoCaptioner CLI）
+### 转录免 Key 且离线，或者用 API Key
 
-**不存在可用的免 Key 语音识别路径。** 这是实测结论，不是推测——截至 2026-09-22，在真实 10 分钟视频上：
+**本地 Whisper 跑在你自己机器上：无需 Key，首次之后不再联网。** 2026-09-24 实测：18 秒真实语音，默认 `small` 模型，CPU 上 7.2 秒产出 3 条字幕：
 
-| ASR 后端 | 状态 |
-| --- | --- |
-| Whisper API | 需要 `OPENAI_API_KEY`（或兼容端点） |
-| VideoCaptioner CLI | 需要单独安装 `videocaptioner` 包 |
-| Bcut | 主机有响应，但返回**零条 utterance** |
-| Google Web（`[stt]`） | **每次请求**都返回空结果 `{"result":[]}` |
+| ASR 后端 | 需要 | 状态 |
+| --- | --- | --- |
+| **`whisper-local`** | `[asr-local]` extra | **可用。** 免 Key；模型缓存后完全离线 |
+| Whisper API | `OPENAI_API_KEY`（或兼容端点） | 可用 |
+| VideoCaptioner CLI | 单独安装 `videocaptioner` 包 | 可用 |
+| Bcut | 无 | 主机有响应，但返回**零条 utterance** |
+| Google Web（`[stt]`） | 无 | **每次请求**都返回空结果 `{"result":[]}` |
 
-两个免 Key 端点都是逆向来的，现在都不能转录。Google Web 的响应在 HTTP 层也是坏的，所以不是"返回空"而是读取直接失败。Bcut 的失败更含糊——主机有响应，可能是配额或字段变更而非端点死亡——所以源码里它保留"unverified"标签。
-
-所以裸跑 `uvx porter-workflow "<URL>"` 会完成下载与标准化，然后在转录阶段以
-`every speech-to-text backend failed` 失败。要拿到字幕，二选一：
+`whisper-local` 排在链首，所以只要装了它，任务就会用它。它放在 extra 里，是因为 `faster-whisper` 与 `ctranslate2` 体积不小，而且是 CTranslate2 而非 PyTorch：
 
 ```bash
-# 方案 A：LLM Key（同时大幅改善翻译质量）
+# 免 Key、离线。这是推荐的安装方式。
+uvx --from "porter-workflow[asr-local]" porter "<URL>"
+
+# 或者一次装全 —— [all] 包含 [asr-local]
+uvx --from "porter-workflow[all]" porter "<URL>"
+```
+
+首次运行会从 Hugging Face 下载模型（默认 `small` 为 464 MB），之后完全离线。设备与精度自动选择——能加载 CUDA 就用，否则回落 CPU——也可以固定：
+
+```bash
+porter config set asr.whisper_local_model=medium
+porter config set asr.whisper_local_device=cuda
+porter config set asr.whisper_local_compute_type=float16
+```
+
+裸跑 `uvx porter-workflow "<URL>"` 仍然不能转录，因为最小安装里没有任何 ASR 后端：它会完成下载与标准化，然后以 `every speech-to-text backend failed` 失败。真正失效的是两个免 Key *端点*——都是逆向来的，且 Google Web 的响应在 HTTP 层就是坏的，所以不是"返回空"而是读取直接失败。Bcut 的失败更含糊——主机有响应，可能是配额或字段变更而非端点死亡——所以源码里它保留 "unverified" 标签。
+
+要拿到字幕，三选一：
+
+```bash
+# 方案 A（推荐）：本地、免 Key、离线
+uvx --from "porter-workflow[asr-local]" porter "<URL>" --burn skip
+
+# 方案 B：LLM Key（同时大幅改善翻译质量）
 export OPENAI_API_KEY=sk-...
 porter "<URL>" --burn skip
 
-# 方案 B：装 VideoCaptioner 用它的引擎
+# 方案 C：装 VideoCaptioner 用它的引擎
 pip install videocaptioner
 porter "<URL>" --asr-engine bijian --burn skip
 ```
 
-**翻译不受影响**——Bing、Google、MyMemory 都无需 Key，逐个对真实端点探测均返回真中文。只有转录需要凭据。
+**翻译不受影响**——Bing、Google、MyMemory 都无需 Key，逐个对真实端点探测均返回真中文。从来只有转录需要凭据。
 
 `porter doctor` 会在开工前告诉你任务实际会走哪条路。
 
@@ -93,8 +114,9 @@ porter "<URL>" --asr-engine bijian --burn skip
 
 | Extra | 引入 | 用途 |
 | --- | --- | --- |
+| `[asr-local]` | `faster-whisper` | **本地 Whisper 语音识别 —— 免 Key、可离线**，见上文 |
 | `[llm]` | `openai`、`json-repair` | LLM 翻译 + Whisper API 语音识别 |
-| `[stt]` | `SpeechRecognition` | Google Web STT —— **实测已失效**，见下文 |
+| `[stt]` | `SpeechRecognition` | Google Web STT —— **实测已失效**，见上文 |
 | `[images]` | `pillow` | 封面图处理 |
 | `[mcp]` | `fastmcp` | `porter-mcp` 服务端 |
 | `[all]` | 以上全部 | —— |
