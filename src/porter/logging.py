@@ -1,6 +1,6 @@
 """Logging for the porter engine.
 
-Design rules (see ``docs/REFACTOR_PLAN.md`` §2.4 and §8.4):
+Design rules:
 
 1. **The engine never writes to stdout.** In an MCP stdio server stdout *is* the
    JSON-RPC channel; a single stray ``print()`` corrupts the protocol. Every

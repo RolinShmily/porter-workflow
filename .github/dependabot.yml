@@ -1,0 +1,36 @@
+# Keeps dependencies and pinned actions current.
+#
+# Porter depends on yt-dlp, which is the component that breaks when a video site
+# changes; a stale pin is a broken tool. Weekly, grouped PRs keep the noise low
+# while keeping those fixes flowing in. Every Dependabot PR must still pass the
+# same gate as any other change, and a dependency bump that adds or removes a
+# package must update THIRD_PARTY_NOTICES.md.
+version: 2
+
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "build"
+      include: scope
+    groups:
+      # Patch and minor bumps land as one PR per group. Majors are left out so a
+      # breaking change gets its own review instead of hiding in a batch.
+      python-minor:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "ci"
+    groups:
+      actions:
+        patterns: ["*"]

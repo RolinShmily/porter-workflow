@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/RolinShmily/porter-workflow/security/advisories/new
+    about: Report a vulnerability privately. Do not open a public issue.
+  - name: Documentation
+    url: https://github.com/RolinShmily/porter-workflow/tree/main/docs
+    about: Architecture, configuration, MCP contract and the v0.1 → v0.2 migration guide.
+  - name: Contributing guide
+    url: https://github.com/RolinShmily/porter-workflow/blob/main/CONTRIBUTING.md
+    about: Development setup, the gate commands, and the architecture and licence rules.

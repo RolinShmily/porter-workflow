@@ -14,8 +14,8 @@ questions, and conflating them costs an agent its retry budget.
 
 **No cookie parameters.** The CLI has ``--cookies`` /
 ``--cookies-from-browser``; over MCP those values would be written into the
-conversation transcript, and into any telemetry along with it
-(``docs/REFACTOR_PLAN.md`` §8.5). Cookies configured once through the CLI are
+conversation transcript, and into any telemetry along with it (see
+``docs/MCP.md`` §5.2). Cookies configured once through the CLI are
 picked up here from the resolved config, so an authenticated link still works --
 it just cannot be authenticated *from* a tool call.
 

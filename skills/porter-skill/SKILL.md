@@ -36,7 +36,7 @@ metadata:
 | **语音转录（ASR）** | **需要** `OPENAI_API_KEY`（或 `WHISPER_API_KEY`），或已安装 VideoCaptioner CLI |
 | 平台原生字幕轨（YouTube / Bilibili 等） | 不需要——有原生轨就不跑 ASR |
 
-**v0.1 宣称的"纯 Python 零 Key 闭环"已经失效**：所有免 Key 的语音识别端点都已停用（实测 2026-09-22，见 `docs/REFACTOR_PLAN.md` §13.21）。没有 Key 时，若视频也没有平台字幕轨，任务会在 `transcribe` 阶段以 `every speech-to-text backend failed` 结束。
+**v0.1 宣称的"纯 Python 零 Key 闭环"已经失效**：所有免 Key 的语音识别端点都已停用（实测 2026-09-22；或使用 `[asr-local]` extra 做免 Key 的本地识别）。没有 Key 时，若视频也没有平台字幕轨，任务会在 `transcribe` 阶段以 `every speech-to-text backend failed` 结束。
 
 所以：**先跑 `plan`**，它会直接告诉你这条视频走原生字幕轨还是走 ASR、以及是否可行。
 

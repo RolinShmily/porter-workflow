@@ -169,8 +169,8 @@ class LocalFileDownloader:
             cover=cover,
             # No sidecar subtitles are picked up: a `.srt` beside the video could
             # be either the source or the translation, and guessing wrong would
-            # silently skip ASR or overwrite the user's file. See
-            # docs/REFACTOR_PLAN.md 13.29.
+            # silently skip ASR or overwrite the user's file. The only way to
+            # opt in is to name one explicitly with --subtitle-file.
             subtitle_src=None,
             subtitle_zh=None,
             metadata_path=metadata_path,

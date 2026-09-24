@@ -1,0 +1,38 @@
+# Normalise line endings on checkout so the repository is identical on every OS.
+* text=auto eol=lf
+
+# Shell scripts must be LF, or they fail on Linux/macOS with a CRLF shebang
+# error. The Agent Skill ships these, so a Windows checkout must not corrupt them.
+*.sh   text eol=lf
+*.bash text eol=lf
+
+# Windows-only scripts keep CRLF.
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+# Binary: never diff, never touch.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.ico  binary
+*.pdf  binary
+*.mp4  binary
+*.mp3  binary
+*.wav  binary
+*.ttf  binary
+*.woff binary
+*.woff2 binary
+
+# A committed lockfile, if one is ever added, is generated: keep it out of
+# review noise and language statistics.
+uv.lock linguist-generated=true
+
+# Documentation and config use LF; do not let an editor flip them.
+*.md   text eol=lf
+*.toml text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf

@@ -4,8 +4,7 @@ The only ASR backend in the chain that needs **no key, no network and no third
 party service**: the model runs on this machine, so a transcription is
 reproducible, unmetered and immune to an endpoint being withdrawn. Every other
 key-free backend porter has (``bcut``, ``google_web``) is a reverse-engineered
-HTTP endpoint, and both were measured returning empty results on 2026-09-22 --
-see ``docs/REFACTOR_PLAN.md`` §13.21 and §13.48.
+HTTP endpoint, and both were measured returning empty results on 2026-09-22.
 
 ## Why not VideoCaptioner, which does the same thing
 

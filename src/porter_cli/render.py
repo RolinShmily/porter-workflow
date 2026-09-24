@@ -135,17 +135,15 @@ def emit_json(payload: Any) -> None:
     print(json.dumps(payload, indent=2, ensure_ascii=True, default=str))
 
 
-def not_implemented(command: str, planned_phase: str) -> int:
+def not_implemented(command: str) -> int:
     """Report a command that is specified but not yet built.
 
-    Used while the refactor is in flight so that a partially built CLI fails
-    loudly and honestly instead of silently doing nothing.
+    A partially built CLI must fail loudly and honestly rather than silently
+    doing nothing, and it must not hand the user a design document to go read:
+    the message has to be actionable on its own.
     """
-    warn(
-        f"'{command}' is not implemented in this build yet "
-        f"(planned: refactor phase {planned_phase})"
-    )
-    info("  see docs/REFACTOR_PLAN.md §9 for the phase breakdown")
+    warn(f"'{command}' is not implemented in this build yet")
+    info("  see https://github.com/RolinShmily/porter-workflow/issues for status")
     return EXIT_MISUSE
 
 

@@ -6,7 +6,7 @@
 2. **stdout 卫生** —— 在 stdio 传输里 stdout 就是 JSON-RPC 通道，任何杂输出都会破坏协议。
 3. **长任务作业化** —— 1080p 压制要几十分钟，远超 MCP tool call 的超时，所以长工作被拆成 start/status/result/cancel 而不是一次阻塞调用。
 
-本文描述**代码实际实现的契约**。`docs/REFACTOR_PLAN.md` §8 是最初的设计意图；两者不一致时以本文（即代码）为准，差异集中在文末「与 §8 的差异」。
+本文描述**代码实际实现的契约**。几处容易被误读为缺陷的取舍集中在文末「实现取舍」。
 
 面向 agent 的使用说明在 `skills/porter-skill/references/MCP.md`，是工具对照表与客户端配置；本文面向贡献者，讲契约、边界与设计理由。
 
@@ -81,7 +81,7 @@ porter-mcp
 
 **`porter_version`** —— 刻意平凡：给协议检查器一个不触网、不写盘、必定成功的调用，用来确认服务器接线正确。
 
-**`porter_inspect`** —— 只探测链接，不下载媒体。参数名用 `source` 而非计划里写的 `url`，与 `porter_job_start` 保持一致：学过其中一个工具的 agent 不该为同一输入再学一个名字。传本地路径会得到明确的解释（「本地文件不需要预检」），而不是误导性的 "unsupported platform"。见 §6 的 `ok` / `is_valid` 语义。
+**`porter_inspect`** —— 只探测链接，不下载媒体。参数名用 `source` 而非 `url`，与 `porter_job_start` 保持一致：学过其中一个工具的 agent 不该为同一输入再学一个名字。传本地路径会得到明确的解释（「本地文件不需要预检」），而不是误导性的 "unsupported platform"。见 §6 的 `ok` / `is_valid` 语义。
 
 **`porter_plan`** —— 回答「这条作业**会做什么、能不能成**」，与 `porter_inspect` 回答的「这条链接**是什么**」是两个问题。它自己执行一次探测（不接受调用方传入的事实，否则可能基于过期或编造的数据给出计划），并在计划里携带探测结果。不接受 `options`——它描述默认运行；要改参数就传给 `porter_job_start`。
 
@@ -123,7 +123,7 @@ porter-mcp
 
 ### `localize-video` 是 prompt，不是资源
 
-计划 §8.2 写作资源 `porter://prompts/localize-video`。实现为名为 `localize-video` 的 **MCP prompt**：prompt 才是客户端会渲染成可复用命令的原语，而「引导 agent 走闭环」正是这个意思；做成资源则需被手工拉取并重读。提示接受可选 `source`，会把链接前置进正文。内容不只是步骤清单，还写进了本轮踩过的坑：平台字幕轨是 "requested, not guaranteed"、`blocking_issues` 为真时应当停下而不是开作业、以及为什么必须轮询。
+`localize-video` 是一个 **MCP prompt**，不是资源：prompt 才是客户端会渲染成可复用命令的原语，而「引导 agent 走闭环」正是这个意思；做成资源则需被手工拉取并重读。提示接受可选 `source`，会把链接前置进正文。内容不只是步骤清单，还写进了本轮踩过的坑：平台字幕轨是 "requested, not guaranteed"、`blocking_issues` 为真时应当停下而不是开作业、以及为什么必须轮询。
 
 ### 作业日志资源
 
@@ -147,7 +147,7 @@ porter-mcp
 
    `protect` 同时支持同步与异步函数。守卫**只包 tool body，不包服务器循环**——FastMCP 必须直接访问真实的 stdout 才能写协议帧。改道的目标必须是 stderr，绝不能是被替换的那个流本身，否则守卫形同虚设。
 
-> 注意与计划 §8.4 的机制差异：计划的代码片段让 `write()` **无条件抛错**，并说「启动时把 `sys.stdout` 换成 guard」。实现更克制：生产期只改道并告警，只有测试才抛；而且守卫范围是 tool body，不是整个 stdout。
+> 这里取的是一条更克制的路线：不是让 `write()` **无条件抛错**、也不是启动时替换整个 `sys.stdout`，而是生产期只改道并告警、只有测试才抛，且守卫范围限于 tool body。无条件抛错会在生产期把日志一起弄死，静默放行又等于没有守卫。
 
 ### 4.2 并发上限
 
@@ -165,9 +165,9 @@ LIGHT = threading.Semaphore(4)   # 探测类：inspect / plan / translate
 
 HEAVY 在 `jobs._run_job` 里获取，且 `ctx.check_cancelled()` 在**信号量内部**检查——排队期间被取消的作业轮到自己时不该开始干活。`porter_burn` / `porter_transcribe` 也直接用 HEAVY；`porter_inspect` / `porter_plan` / `porter_translate` 用 LIGHT。
 
-### 4.3 信号处理（规划要求，尚未实现）
+### 4.3 信号处理（尚未实现）
 
-计划 §8.4 的第三条硬线是：捕获 `SIGINT` / `SIGTERM` → 取消所有 running job → 清理临时文件 → 退出。
+这条硬线是：捕获 `SIGINT` / `SIGTERM` → 取消所有 running job → 清理临时文件 → 退出。它**尚未实现**。
 
 **当前 `src/porter_mcp/` 里没有任何 `signal` / `atexit` / `KeyboardInterrupt` 处理。** 实际行为是：
 
@@ -187,7 +187,7 @@ HEAVY 在 `jobs._run_job` 里获取，且 `ctx.check_cancelled()` 在**信号量
 
 **没有写动作。** 通过 MCP 写 API Key 会把密钥写进对话记录以及随后的遥测。写密钥只允许走 CLI（`porter config set llm.api_key=...`），这也正是 CLI 能从环境变量读密钥的原因。
 
-有测试钉住 `porter_config` 的 `input_schema.properties == {"action", "section"}`：一旦出现 `value` / `api_key` 参数，就是 §8.5 被静默破坏——参数会开始把密钥收进对话记录。
+有测试钉住 `porter_config` 的 `input_schema.properties == {"action", "section"}`：一旦出现 `value` / `api_key` 参数，就是密钥掩码这条规则被静默破坏——参数会开始把密钥收进对话记录。
 
 ### 5.2 任何工具都没有 cookie 参数
 
@@ -215,13 +215,13 @@ MCP tool call 超时是一两分钟，而 1080p 压制要几十分钟。所以�
 | `porter_burn` | 本地视频 + 本地 `.ass` | 只有 ffmpeg |
 | `porter_transcribe` | **本地**媒体文件 | 无下载 |
 
-`porter_transcribe` 对 URL **明确拒绝**，并指向 `porter_job_start(only_phase="transcribe")`。计划 §8.1 把它的输入写成 `audio|url`；`url` 那一半移交给 job API，因为「先抓 URL」就是一次下载，而下载正是 job API 存在的意义。**拒绝并给出可执行的下一步，好过接受然后超时。**
+`porter_transcribe` 对 URL **明确拒绝**，并指向 `porter_job_start(only_phase="transcribe")`：抓 URL 就是一次下载，而下载正是 job API 存在的意义。**拒绝并给出可执行的下一步，好过接受然后超时。**
 
 一个诚实的边界：`porter_translate` 对**已经是句级切分的 SRT** 仍会合并相邻短句（合并是句子级翻译为 ASR 滚动碎片设计的）。它不掩盖这一点：返回 `input_cue_count` / `cue_count` / `cues_merged` 与一条说明。
 
 ### 计划不编造耗时
 
-§8.1 要「预估耗时」。可信的数字需要**本机 × 本分辨率 × 本编码器**的实测编码速率，唯一知道它的是试编码。所以 `porter_plan` 报告驱动成本的实测输入（时长、分辨率、跑哪些阶段），并说明其余由什么决定——一个编造的「大约 12 分钟」会被当真，然后在第一个不寻常的视频上出错。
+本模块刻意不给「预估耗时」。可信的数字需要**本机 × 本分辨率 × 本编码器**的实测编码速率，唯一知道它的是试编码。所以 `porter_plan` 报告驱动成本的实测输入（时长、分辨率、跑哪些阶段），并说明其余由什么决定——一个编造的「大约 12 分钟」会被当真，然后在第一个不寻常的视频上出错。
 
 ### `endpoint_verified` 是声明，不是实测
 
@@ -233,11 +233,11 @@ MCP tool call 超时是一两分钟，而 1080p 压制要几十分钟。所以�
 
 以「已记录的缺口」取代「暗示的完整性」：
 
-- **§8.3 sampling 未实现。** 计划提出当用户未配置 LLM Key 时，MCP 可发起 `sampling/createMessage` 用**宿主模型**完成翻译与语义纠错——即「零 Key 拿 LLM 级翻译质量」。代码里没有任何 sampling 调用。
+- **sampling 翻译未实现。** 当用户未配置 LLM Key 时，MCP 本可发起 `sampling/createMessage` 用**宿主模型**完成翻译与语义纠错——即「零 Key 拿 LLM 级翻译质量」。代码里没有任何 sampling 调用。
 
   > 附带问题：面向 agent 的 `skills/porter-skill/references/MCP.md` 与 `SKILL.md` 仍把 sampling 当作**现能力**推销（「唯一能拿到零 Key 的 LLM 级翻译」）。这与服务器实际能力不符，需要一并修正或明确标注为未发布特性。
 
-- **`porter_run`（阻塞式运行）未实现。** §8.1 末尾草拟了 `porter_run(..., max_wait_seconds)`；`jobs.py` 的 docstring 明确说明它「无论怎么写都不可能工作」，因为 tool call 超时远早于编码结束。可靠路径只有 job API。
+- **`porter_run`（阻塞式运行）未实现。** `jobs.py` 的 docstring 明确说明它「无论怎么写都不可能工作」，因为 tool call 超时远早于编码结束。可靠路径只有 job API。
 
 - **信号处理未实现。** 见 §4.3。
 
@@ -245,30 +245,29 @@ MCP tool call 超时是一两分钟，而 1080p 压制要几十分钟。所以�
 
 ---
 
-## 8. 与 §8 的差异（计划意图 vs 代码）
+## 8. 实现取舍
 
-| 项 | 计划 §8 的写法 | 代码实现 |
+几处容易被误读为缺陷、但都是刻意为之的地方：
+
+| 项 | 实现 | 为什么 |
 |---|---|---|
-| 阻塞式运行 | `porter_run(..., max_wait_seconds)` | **未实现**；docstring 说明其不可行 |
-| Sampling | §8.3 用宿主模型翻译 | **未实现** |
-| 信号处理 | §8.4 硬线：捕获 SIGINT/SIGTERM，取消作业并清理 | **未实现** |
-| 信号量类型 | `asyncio.Semaphore` | `threading.Semaphore`（同步工作阻塞 worker 线程） |
-| stdout guard | `write()` 无条件抛错，替换整个 `sys.stdout` | tool body 内改道到 stderr；仅测试抛错 |
-| `porter_inspect` 参数 | `url` | `source`（与 `porter_job_start` 统一） |
-| `porter_plan` 参数 | `url, options?` | 只有 `source`；不接受 `options` |
-| `porter_transcribe` 输入 | `audio\|url` | **只接受本地文件**，URL 被拒绝并指向 job API；另有 `max_cues` |
-| `porter_burn` 参数 | `video, ass, style?` | `video, ass, output`（无 `style`） |
-| `porter_config` 参数 | `action: get\|list` | 增加 `section`（用于收窄 `get`） |
-| `porter_version` | 未列出 | 已实现（协议自检用） |
-| 资源 | 3 个：architecture / config / jobs log | 3 个静态资源 + 1 模板：额外有 `porter://doctor/guides` |
-| `localize-video` | 资源 `porter://prompts/localize-video` | 名为 `localize-video` 的 **MCP prompt** |
-| 密钥掩码来源 | 复用 `cli.py:_mask_secret` | 引擎 `PorterConfig.masked()`（`cli.py` 已不存在） |
+| 信号量类型 | `threading.Semaphore` | 被守护的工作是同步的、会阻塞 worker 线程；`asyncio.Semaphore` 会在阻塞期间被另一个 task 释放 |
+| stdout guard | tool body 内改道到 stderr；仅测试抛错 | 生产期无条件抛错会把日志一起弄死，静默放行又等于没有守卫 |
+| `porter_inspect` 参数名 | `source` | 与 `porter_job_start` 统一，agent 不必为同一输入记两套命名 |
+| `porter_plan` 参数 | 只有 `source`，不接受 `options` | 计划自己执行探测；接受调用方传入的事实会让计划与实际执行不一致 |
+| `porter_transcribe` 输入 | 只接受本地文件 | 抓 URL 就是一次下载，那属于 job API；拒绝并给出下一步好过接受然后超时 |
+| `porter_burn` 参数 | `video, ass, output`（无 `style`） | 样式在生成 ASS 时已固化，burn 阶段再传一份会与之矛盾 |
+| `porter_config` 参数 | `action` + `section` | `section` 收窄 `get`，避免把整份配置铺满对话 |
+| 资源 | 3 个静态资源 + 1 模板 | 多出的 `porter://doctor/guides` 按失败项返回对应指引 |
+| `localize-video` | 一个 **MCP prompt**，不是资源 | prompt 才会被客户端渲染成可复用命令 |
+| 密钥掩码来源 | 引擎 `PorterConfig.masked()` | 掩码只有一处实现，两个前端共用 |
+
+尚未实现的部分（阻塞式运行、sampling 翻译、信号处理）在 §7 单独列出。
 
 ---
 
 ## 9. 参考
 
-- `docs/REFACTOR_PLAN.md` §8（契约意图）、§13.33 / §13.35 / §13.38 / §13.41 / §13.42（实现记录与发现的缺陷）
 - `docs/ARCHITECTURE.md`（四阶段、分层、后端链）
 - `docs/CONFIG.md`（配置键与解析顺序）
 - `skills/porter-skill/references/MCP.md`（面向 agent 的工具对照表）

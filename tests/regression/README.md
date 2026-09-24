@@ -1,30 +1,30 @@
 # Regression tests
 
-Behaviour-equivalence guard for the refactor.
-
-These are the ported versions of the 90 tests that lived at the repository root
-in `v0.1` (`tests/test_*.py` on the `main` branch). Their purpose is not to test
-new behaviour but to prove that the restructured engine still behaves
-identically.
+Behaviour pins: the assertions the engine must not lose. They are the v0.1 test
+suite carried across the v0.2 restructure, so that the rewrite could change
+structure without changing results.
 
 ## The rule
 
 **Only import paths and patch targets may change. Assertions may not.**
 
-If an assertion has to change, the behaviour changed — which is a legitimate
+If an assertion has to change, the behaviour changed. That is a legitimate
 outcome, but it must be called out explicitly **in the file that changed it**,
 with a reason. Silent assertion edits are how a refactor loses its safety net.
 
-## Getting the originals
+## Getting the v0.1 originals
+
+`b5fd577` is the last commit of the v0.1 line (`porter-skill`). Its tests live at
+the repository root under `tests/`:
 
 ```bash
-git show main:tests/test_subtitle.py
-git show main:tests/test_bilibili_extractor.py
+git show b5fd577:tests/test_subtitle.py
+git show b5fd577:tests/test_bilibili_extractor.py
 ```
 
-## Migration map
+## Where the v0.1 tests went
 
-| v0.1 path | v0.2 path | status |
+| v0.1 path | v0.2 path | notes |
 | --- | --- | --- |
 | `tests/test_subtitle.py` | `tests/regression/test_subtitle_conversion.py` | ported |
 | `tests/test_x_extractor.py` | `tests/regression/test_titles_port.py`, `test_inspector_port.py` | ported |
@@ -33,10 +33,10 @@ git show main:tests/test_bilibili_extractor.py
 | `tests/test_bilibili_extractor.py` | `tests/regression/test_subtitle_conversion.py`, `test_titles_port.py`, `test_url_cleaning_port.py` | ported |
 | `tests/test_extractors.py` | split — see the table below | ported |
 | `tests/test_inspector.py` | `tests/regression/test_inspector_port.py` | ported |
+| `tests/test_synthesizer.py` | `tests/regression/test_synthesizer_port.py` | ported |
 | `tests/test_config.py` | `tests/unit/test_config.py` | rewritten: new search order |
-| `tests/test_env_check.py` | `tests/unit/test_doctor.py` | rewritten: structured report |
-| `tests/test_pipeline.py` | *(pending)* | needs P3/P4 — see below |
-| `tests/test_synthesizer.py` | *(pending)* | needs P4 (burn) — see below |
+| `tests/test_env_check.py` | `tests/unit/test_doctor_probes.py` | rewritten: structured report |
+| `tests/test_pipeline.py` | superseded — see below | not a translation |
 
 `test_extractors.py` held eight tests that scattered across four destinations,
 because v0.1 had one extractor-shaped module per platform and v0.2 has one shared
@@ -64,7 +64,7 @@ recorded in the test file that implements it, with the reasoning.
 | 2 | `pytest.raises(ValueError, match="Unsupported URL platform")` | `UnsupportedPlatformError` | A well-formed URL with no handler is not a malformed argument. The new type carries `code`/`exit_code` and lists the supported platforms. |
 | 3 | `get_video_dimensions(missing) == (1920, 1080)` | `dimensions(...) is None` | The v0.1 assertion **asserts a bug**: a fabricated resolution made the pipeline style vertical videos with horizontal margins. |
 | 4 | `enhance_audio_for_asr(...) is True` | `enhance_for_asr(...) is not None` | Returns the output path instead of a boolean, so the caller does not have to reconstruct it. |
-| 5 | `require_subtitles` shape for `burn_hardsub` | *(not yet ported)* | P4. |
+| 5 | `require_subtitles` shape for `burn_hardsub` | the burn options model | The burn call now takes a typed options object rather than a loose mapping. |
 | 6 | CLI printed `PORTER-SKILL DOCTOR` to stdout; no-args exit code `1` | structured report on stderr; exit `2` | stdout is reserved for results; `2` is the conventional "misuse" code and is what the `run`/`inspect`/`config` commands already use. |
 | 7 | `reconstruct_sentences_from_fragments` merged two unpunctuated short sentences | splits them (sixth condition) | **Output change, not a signature change.** See below. |
 
@@ -152,11 +152,11 @@ translation of the file. Each test needs a different answer:
 **`test_pipeline_orchestration`** — mocks the extractor and the subtitle
 generator, runs the real burn, and asserts the two release videos exist. This is
 exactly what `tests/integration/test_burn_pipeline.py` and
-`tests/integration/test_local_pipeline.py` do, and they do it more strictly: they
-drive the whole `Pipeline.run`, use a real local file as well as a synthetic one,
-and verify the subtitles are **visible in the pixels** instead of only that a file
-exists. A burn that silently did nothing still produces a valid, playable video of
-the right length, so the v0.1 assertion passes on that failure.
+`tests/unit/test_local_video.py` do, and they do it more strictly: they drive the
+whole `Pipeline.run`, use a real local file as well as a synthetic one, and verify
+the subtitles are **visible in the pixels** instead of only that a file exists. A
+burn that silently did nothing still produces a valid, playable video of the right
+length, so the v0.1 assertion passes on that failure.
 
 **`test_cli_doctor`**, **`test_cli_no_args`**, **`test_cli_inspect`** — these
 assert v0.1's CLI *text and exit codes*, which v0.2 changed deliberately:
@@ -170,56 +170,10 @@ assert v0.1's CLI *text and exit codes*, which v0.2 changed deliberately:
 Porting those three would mean asserting behaviour v0.2 removed. Their
 replacements are in `tests/unit/test_cli.py`, which tests the *new* contract.
 
-## Populated across refactor phases
-
-Started in **P2** and extended in **P2.5**; see
-[`docs/REFACTOR_PLAN.md`](../../docs/REFACTOR_PLAN.md) §9, §10 and §13.
-
----
-
-## P3 additions (2026-09-22)
-
-The regression suite grew beyond the P2 port because P3 exposed three gaps that
-the P2 "complete" claim had covered up.
-
-### Ported in P3
-
-| v0.1 test | destination | status |
-|---|---|---|
-| `test_subtitle.py::test_time_conversions` | `test_subtitle_conversion.py::TestTimeConversions` | ported verbatim |
-| `test_subtitle.py::test_parse_and_generate_srt` | `TestParseAndGenerateSrt` | ported verbatim |
-| `test_subtitle.py::test_parse_srt_monolingual_multiline` | `TestParseMonolingualMultiline` | ported verbatim |
-| `test_subtitle.py::test_align_bilingual_items` | `TestAlignBilingualItems` | ported verbatim |
-| `test_subtitle.py::test_has_chinese_translation` | `TestHasChineseTranslation` | ported verbatim |
-| `test_subtitle.py::test_generate_ass_styling` | `test_ass_port.py` | ported verbatim |
-| `test_subtitle.py::test_generate_asynchronous_bilingual_ass` | `test_ass_port.py` | ported verbatim |
-| `test_subtitle.py::test_compute_adaptive_subtitle_style` | `test_ass_port.py` | ported verbatim |
-| `test_subtitle.py::test_save_transcript_files` | `test_ass_port.py` | ported verbatim |
-
-**No assertion was edited in any of these.**
-
-### The gap this exposed
-
-`subtitles/__init__.py` documented `parse_srt`, `normalize_subtitle_items`,
-`align_bilingual_items` and `generate_*_srt` as ported. They were not — P2.1 had
-moved only the three VTT/Bilibili converters. Documentation claiming coverage
-that does not exist is worse than silence: it made "P2.1 complete" look
-evidenced.
-
-Also found: `compute_adaptive_subtitle_style` lives in v0.1 `controller.py`, not
-`formatter.py` as the plan's §4.5 table said. The plan has been corrected.
-
-### One v0.1 defect fixed while porting
+## One v0.1 defect fixed while porting
 
 `normalize_subtitle_items` repaired overlaps with `for i in range(len - 1)`,
 which **never examines the final cue**. A degenerate zero-length last cue
 survived and rendered a single frame of unreadable text. v0.2 adds the missing
 final check, and `TestOverlapRepair::test_a_zero_length_last_cue_is_widened`
 pins it.
-
-### Still pending
-
-| v0.1 test | blocked on |
-|---|---|
-| `test_pipeline.py` | `porter run` CLI wiring (`Pipeline.default()` now exists) |
-| `test_synthesizer.py` | P4 BURN renderer; `escape_ffmpeg_filter_path` contract is recorded below |

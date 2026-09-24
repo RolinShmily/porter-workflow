@@ -5,14 +5,14 @@ The pipeline owns *sequencing*, nothing else. Each phase is delegated to a port
 production and against fakes in tests.
 
 Compared with v0.1's ``run_pipeline()``, this changes four behaviours the MCP
-frontend requires (see ``docs/REFACTOR_PLAN.md`` §5.4):
+frontend requires (see ``docs/ARCHITECTURE.md``):
 
 ==========================  ==========================  ==============================
 v0.1                        v0.2                        why
 ==========================  ==========================  ==============================
 ``on_progress(str, int)``   typed ``Event`` stream      CLI and MCP both need structure
 blocking, no cancel         ``ctx.check_cancelled()``   an MCP client may disconnect
-no checkpoints              ``ctx.stage_cached()``      resume after a timeout
+no reuse of finished work   per-stage reuse checks      a re-run must not repay for done work
 unconditional ``doctor``    per-phase capability check  ``--burn skip`` needs no libass
 ==========================  ==========================  ==============================
 """
@@ -217,10 +217,12 @@ class Pipeline:
         still run. It originally meant "run exactly this phase", which was
         structurally impossible for anything but PREPARE: each phase consumes the
         previous one's in-memory output, so TRANSCRIBE with ``only_phase`` set
-        failed with "requires output from PREPARE" every time. Resuming a single
-        phase from disk is a separate feature (that is what ``force`` is for) and
-        is not implemented; until it is, running the prerequisites is the only
-        behaviour that can work.
+        failed with "requires output from PREPARE" every time. Skipping the
+        prerequisites outright -- jumping into one phase using artifacts already
+        on disk -- is a separate feature and is not implemented; until it is,
+        running the prerequisites is the only behaviour that can work. (``force``
+        is the opposite knob: it *disables* the per-stage reuse of finished
+        work, it does not enable resume.)
 
         ``burn`` is applied first, so ``--only-phase burn --burn skip`` runs
         PREPARE, TRANSCRIBE and TRANSLATE and then stops -- which is what someone

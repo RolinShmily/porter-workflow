@@ -10,8 +10,11 @@ long before that. So long work is modelled as a *job*:
     porter_job_cancel(id)   -> flips RunContext.cancel
 
 The store is deliberately in-memory and process-local. Jobs do not survive a
-restart — that is acceptable because ``RunContext.checkpoint_dir`` lets a
-restarted job resume from the last completed stage instead.
+restart. That is acceptable, because the *expensive* per-stage artifacts do
+survive -- on disk, in the task directory -- and a re-run reuses them rather
+than paying for them again (see ``porter.platforms.base``,
+``porter.asr.chain`` and ``porter.media.burn``). What a restart loses is the
+job's recorded status, not its work.
 """
 
 from __future__ import annotations

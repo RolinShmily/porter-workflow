@@ -1,25 +1,25 @@
 """MCP tools for porter.
 
-Tool modules and their planned contents (``docs/REFACTOR_PLAN.md`` §8.1):
+Tool modules:
 
 ``meta.py``
-    ``porter_version`` — implementation detail, always available. *(built)*
+    ``porter_version`` — implementation detail, always available.
 ``inspect.py``
-    ``porter_inspect`` — pre-flight probe, no side effects. *(built)*
+    ``porter_inspect`` — pre-flight probe, no side effects.
 ``plan.py``
     ``porter_plan`` — the resolved execution plan (which extractor, native
     subtitle or ASR, which translator, what is broken) so an agent can confirm
-    before committing compute. *(built)*
+    before committing compute.
 ``jobs.py``
     ``porter_job_start`` / ``_status`` / ``_result`` / ``_cancel`` / ``_list``,
-    plus the ``porter://jobs/{id}/log`` resource. *(built)* Long work is
-    job-based because encoding a 1080p video takes tens of minutes while MCP tool
-    calls time out far sooner.
+    plus the ``porter://jobs/{id}/log`` resource. Long work is job-based because
+    encoding a 1080p video takes tens of minutes while MCP tool calls time out
+    far sooner.
 ``stages.py``
     ``porter_transcribe`` / ``_translate`` / ``_burn`` — one phase at a time.
 ``doctor.py``
     ``porter_doctor`` — the structured capability report, plus the
-    ``porter://doctor/guides`` resource. *(built)*
+    ``porter://doctor/guides`` resource.
 
 Every tool body is wrapped in :func:`porter_mcp.stdout_guard.protect` so a
 stray write to stdout becomes a logged warning instead of a protocol failure.

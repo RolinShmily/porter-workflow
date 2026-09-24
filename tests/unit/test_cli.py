@@ -71,7 +71,9 @@ class TestDispatch:
         assert main(["config", "import-videocaptioner"]) == render.EXIT_MISUSE
         err = capsys.readouterr().err
         assert "not implemented" in err
-        assert "P3" in err
+        # The message must be actionable on its own: it used to point the user at
+        # an internal refactor section number, which is meaningless to them.
+        assert "github.com/RolinShmily/porter-workflow/issues" in err
 
     def test_jobs_is_no_longer_a_stub(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Regression guard: `porter jobs` must read the registry, not a stub."""

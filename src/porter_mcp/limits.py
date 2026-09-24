@@ -1,6 +1,6 @@
 """Concurrency limits.
 
-``docs/REFACTOR_PLAN.md`` §8.4's second hard line, made into one artifact instead
+The concurrency caps (see ``docs/MCP.md`` §4.2), made into one artifact instead
 of a semaphore per tool. Two caps, for two different reasons:
 
 ``HEAVY`` -- one at a time. A single encode already saturates the machine, and

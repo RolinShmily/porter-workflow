@@ -1,8 +1,8 @@
 """Timestamp conversion shared by the SRT and ASS serialisers.
 
 Ported verbatim from the v0.1 ``subtitle/formatter.py`` so that byte-for-byte
-output compatibility is preserved (see ``docs/REFACTOR_PLAN.md`` §10.2:
-regression assertions may not change).
+output compatibility is preserved. The regression assertions in
+``tests/regression/`` pin that compatibility and may not change.
 """
 
 from __future__ import annotations

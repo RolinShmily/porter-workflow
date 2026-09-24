@@ -47,10 +47,8 @@ jobs:
           sudo apt-get install -y -qq ffmpeg
           ffmpeg -version | head -1
 
-      - name: Install the package
-        run: |
-          uv venv
-          uv pip install -e ".[all,dev]"
+      - name: Install the locked environment
+        run: uv sync --extra all --extra dev --locked
 
       - name: ruff
         run: uv run ruff check src tests
@@ -62,10 +60,11 @@ jobs:
         run: uv run lint-imports
 
       # A tag is the one moment the artifact becomes permanent, so the release
-      # path runs the full suite rather than the fast loop. Nothing is published
-      # if this fails.
+      # path runs the whole offline suite, `slow` included, rather than the fast
+      # loop. `network` stays out so a third-party outage cannot block a release.
+      # Nothing is published if this fails.
       - name: pytest
-        run: uv run pytest -m "not slow"
+        run: uv run pytest -m "not network"
 
       - name: The tag must match the version in pyproject.toml
         run: |

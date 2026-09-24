@@ -109,6 +109,9 @@ api_key = _first_env("OPENAI_API_KEY") or llm_raw.get("api_key")
 | `WHISPER_API_KEY` | `asr.whisper_api_key` | 优先于 `llm.api_key` 兜底 |
 | `WHISPER_API_BASE` | `asr.whisper_api_base` | |
 | `WHISPER_MODEL` | `asr.whisper_model` | |
+| `PORTER_ASR_LOCAL_MODEL` | `asr.whisper_local_model` | 本地 Whisper（`[asr-local]`）模型 |
+| `PORTER_ASR_LOCAL_DEVICE` | `asr.whisper_local_device` | |
+| `PORTER_ASR_LOCAL_COMPUTE_TYPE` | `asr.whisper_local_compute_type` | |
 | `PORTER_OUTPUT_DIR` | `output_dir` | |
 
 不经过 `_first_env`、但代码确实会读的环境变量：
@@ -148,9 +151,14 @@ api_key = _first_env("OPENAI_API_KEY") or llm_raw.get("api_key")
 | `whisper_api_key` | `str \| None` | `None` | 未设时回落 `llm.api_key` |
 | `whisper_api_base` | `str \| None` | `None` | 未设时回落 `llm.api_base` |
 | `whisper_model` | `str` | `whisper-1` | |
+| `whisper_local_model` | `str` | `small` | 本地 Whisper（`[asr-local]`）：faster-whisper 尺寸（`base` / `small` / `medium` / `large-v3`）或微调的 Hugging Face 仓库 id |
+| `whisper_local_device` | `str` | `auto` | 本地推理设备。`auto` 先试 CUDA、再回落 CPU；**显式点名设备则只试它一次**，不做静默替换 |
+| `whisper_local_compute_type` | `str` | `auto` | 量化类型。`auto` 在 CUDA 上用 `float16`、在 CPU 上用 `int8` |
 | `audio_denoise` | `bool` | `True` | **当前不生效，见 §4.6** |
 
 `engine` 的取值不会在配置层被校验（没有 enum），实际判定发生在 `_default_transcriber()`：只有 `bijian` / `jianying` / `whisper-cpp` 这三个名字会被当作"点名要 VideoCaptioner"，把它们放到链首；其他任何值都不影响链序。详见 `docs/ARCHITECTURE.md` 的转录链小节。
+
+`whisper_local_*` 三个键只在装了 `[asr-local]` extra 时有意义。没装时该后端在链里探测失败并让位给下一个，不会让整个 ASR 包不可导入——`faster_whisper` 是惰性导入的。另外 `auto` 值得强调：CUDA 到底能不能用只有**构造模型**才知道（cuDNN/cuBLAS 缺失时设备探测看不出来），所以它是真的"试一次再回落"，而不是按设备名猜。
 
 ### 4.3 `ffmpeg`
 
@@ -270,15 +278,15 @@ whisper_api_base = WHISPER_API_BASE or asr.whisper_api_base or llm.api_base
 > | `translator` | **只能**来自命令行 / MCP | 同上，把该翻译后端提到链首 |
 > | `llm_model` | 命令行 / MCP **覆盖** `config.llm.model` | 只影响**本次作业**的 LLM 模型 |
 >
-> 三者在 §13.48 之前**都是死字段**：两个前端的入口都接受它们，却没有任何引擎代码读取——`_default_transcriber()` 只读 `ctx.config.asr.engine`，`_default_translator()` 无条件装配整条链，LLM 模型只取自 `ctx.config.llm.model`。现已全部接通。
+> 这三个键曾经**都是死字段**：两个前端的入口都接受它们，却没有任何引擎代码读取——`_default_transcriber()` 只读 `ctx.config.asr.engine`，`_default_translator()` 无条件装配整条链，LLM 模型只取自 `ctx.config.llm.model`。现已全部接通。
 >
 > `translator` 没有对应的配置键（`PorterConfig` 根本没有 `translate` 段，且 `extra="ignore"` 会默默丢弃它），所以它**只能**由 `porter run --translator` / MCP `porter_job_start(translator=...)` 给出。`asr_engine` 和 `llm_model` 则是"命令行覆盖配置"。
 >
-> **"提到链首"不等于"只用它"**：点名一个后端是要求**先试它**，其余后端仍作为回退。这是刻意的——若 `--translator bing` 变成"只准用 bing"，在 bing 被限流时（§13.48 实测过）作业会直接失败，而链的意义正是这个时候救场。
+> **"提到链首"不等于"只用它"**：点名一个后端是要求**先试它**，其余后端仍作为回退。这是刻意的——若 `--translator bing` 变成"只准用 bing"，在 bing 被限流时（实测过）作业会直接失败，而链的意义正是这个时候救场。
 >
 > **`subtitle_file`（`--subtitle-file FILE`）是另一个类别**：它不是选后端，而是**直接给出源字幕**。设了它，TRANSCRIBE 阶段既不读平台字幕轨也不跑语音识别。支持 `.srt` 与 `.vtt`。
 >
-> 为什么需要它：本地视频旁边同名的 `.srt` **不会**被自动接管（§13.29）——它可能是源字幕也可能是译文字幕，猜错会静默跳过 ASR 或覆盖用户文件。**点名文件是移除歧义，而不是靠猜解决歧义。** 它同时也是"视频没有字幕轨、又没有可用 ASR"时的出口（失败信息会指向它）。
+> 为什么需要它：本地视频旁边同名的 `.srt` **不会**被自动接管——它可能是源字幕也可能是译文字幕，猜错会静默跳过 ASR 或覆盖用户文件。**点名文件是移除歧义，而不是靠猜解决歧义。** 它同时也是"视频没有字幕轨、又没有可用 ASR"时的出口（失败信息会指向它）。
 >
 > 与平台字幕轨不同，这个文件**不可用就报错**，不会静默退回语音识别：文件不存在、后缀不是 `.srt`/`.vtt`、内容没有 cue，三种情况各自给出明确错误。用户点名了一个文件，静默忽略它比报错更糟。
 

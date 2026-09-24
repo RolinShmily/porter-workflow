@@ -1,8 +1,7 @@
 """Per-run execution context.
 
 Everything a pipeline stage needs that is *not* part of the request: where to
-emit events, whether the caller wants to abort, where to cache stage results,
-and which logger to use.
+emit events, whether the caller wants to abort, and which logger to use.
 
 v0.1 threaded ``on_progress: Callable[[str, int], None]`` and a bare
 ``PorterConfig`` through every function, and had no cancellation mechanism at
@@ -46,9 +45,6 @@ class RunContext:
     #: halfway through a run.
     config: PorterConfig = field(default_factory=PorterConfig)
 
-    #: Where stage results are cached so an interrupted run can resume.
-    checkpoint_dir: Path | None = None
-
     def __post_init__(self) -> None:
         if self.logger is None:
             self.logger = get_logger("pipeline")
@@ -88,7 +84,10 @@ class RunContext:
     # -- cancellation -------------------------------------------------------
 
     def request_cancel(self) -> None:
-        """Ask the pipeline to stop at the next checkpoint. Safe from any thread."""
+        """Ask the pipeline to stop at the next cancellation check.
+
+        Safe from any thread.
+        """
         self.cancel.set()
 
     @property
@@ -104,26 +103,3 @@ class RunContext:
         """
         if self.cancel.is_set():
             raise JobCancelled(f"job {self.job_id} was cancelled")
-
-    # -- checkpoints --------------------------------------------------------
-
-    def stage_dir(self, phase: Phase) -> Path | None:
-        """Return (and create) the checkpoint directory for ``phase``."""
-        if self.checkpoint_dir is None:
-            return None
-        directory = Path(self.checkpoint_dir) / phase.value
-        directory.mkdir(parents=True, exist_ok=True)
-        return directory
-
-    def stage_cached(self, phase: Phase, name: str) -> Path | None:
-        """Return a cached artifact path, or ``None`` when it must be recomputed.
-
-        Honours ``options.force``: forcing a re-run ignores existing checkpoints.
-        """
-        if self.options.force:
-            return None
-        directory = self.stage_dir(phase)
-        if directory is None:
-            return None
-        candidate = directory / name
-        return candidate if candidate.exists() else None

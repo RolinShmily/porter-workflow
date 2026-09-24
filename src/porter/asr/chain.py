@@ -109,10 +109,10 @@ class AsrChain:
         """Each backend's name and whether its probe succeeds, in chain order.
 
         Exists so a caller can *report* the chain without re-deriving it. The
-        planned execution path (``docs/REFACTOR_PLAN.md`` §8.1's
-        ``porter_plan``) has to say which engine would run; reimplementing the
-        ordering and the availability rule there would let the two drift, and a
-        plan that describes a pipeline nobody runs is worse than no plan.
+        execution plan (``porter_plan``) has to say which engine would run;
+        reimplementing the ordering and the availability rule there would let the
+        two drift, and a plan that describes a pipeline nobody runs is worse than
+        no plan.
 
         Uses :func:`_probe`, so a backend that breaks the never-raises contract
         is reported unavailable rather than taking the whole chain down.

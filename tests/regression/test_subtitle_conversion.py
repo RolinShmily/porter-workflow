@@ -225,9 +225,9 @@ class TestBilibiliJsonConversion:
 # because they assert the same layer this module already covers: the pure
 # subtitle format functions.
 #
-# The functions themselves were ported in P3, having been missed by P2.1 —
-# ``docs/REFACTOR_PLAN.md`` §4.5 had assigned them to ``subtitles/srt.py`` and
-# ``subtitles/phrasing.py``, but only the VTT/Bilibili converters were moved.
+# The functions themselves live in ``subtitles/srt.py`` and
+# ``subtitles/phrasing.py``. Only the VTT/Bilibili converters were moved first;
+# these assertions came with the rest.
 
 
 class TestTimeConversions:

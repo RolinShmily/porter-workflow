@@ -1,12 +1,15 @@
 name: test
 
-# The gate from docs/REFACTOR_PLAN.md §7.1. All four commands are run
-# individually rather than as one script so that a failure names itself in the
-# GitHub UI without the reader having to open the log.
+# All four gate commands run individually rather than as one script, so that a
+# failure names itself in the GitHub UI without the reader opening the log.
 #
-# `slow` tests are excluded: they shell out to ffmpeg and hit the network, which
-# makes them both flaky and slow in CI. They still run locally, and the
-# non-slow suite covers the same code through stubs and fakes.
+# The `slow` tier runs here: CI installs ffmpeg below, and the reason that tier
+# exists is that mocks cannot see a wrong pixel format, a lost audio stream or a
+# mis-set sample rate. Excluding it is how those tests rot.
+#
+# Only `network` is excluded. It reaches public translation endpoints, which
+# would turn the gate into a bet on someone else's uptime. Run it deliberately
+# with `pytest -m network`; those tests skip themselves when offline.
 
 on:
   push:
@@ -60,14 +63,18 @@ jobs:
           ffmpeg -version | head -1
           ffprobe -version | head -1
 
+      # The environment comes from `uv.lock`, which is the whole point of
+      # committing a lock: `--locked` asserts the lock matches `pyproject.toml`
+      # and fails if it does not, so a dependency edit without a re-lock cannot
+      # land. (`--frozen` would only skip *updating* the lock, and would happily
+      # install a stale one.)
+      #
       # `[all]` because the MCP tools, the LLM backends and the transcript
       # readers are all importable surfaces that must be linted and type-checked
       # -- importing only the core would let `openai`/`fastmcp` typing drift.
       # `[dev]` carries the four gate commands themselves.
-      - name: Install the package
-        run: |
-          uv venv --python ${{ matrix.python-version }}
-          uv pip install -e ".[all,dev]"
+      - name: Install the locked environment
+        run: uv sync --python ${{ matrix.python-version }} --extra all --extra dev --locked
 
       - name: ruff
         run: uv run ruff check src tests
@@ -79,7 +86,7 @@ jobs:
         run: uv run lint-imports
 
       - name: pytest
-        run: uv run pytest -m "not slow"
+        run: uv run pytest -m "not network"
 
   hermetic:
     # The gate job above runs the suite *with* ffmpeg. This job runs it without
@@ -109,10 +116,8 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq ffmpeg
 
-      - name: Install the package
-        run: |
-          uv venv
-          uv pip install -e ".[all,dev]"
+      - name: Install the locked environment
+        run: uv sync --extra all --extra dev --locked
 
       - name: Hide ffmpeg and re-run the suite
         run: |
@@ -171,3 +176,14 @@ jobs:
         with:
           name: dist
           path: dist/
+
+      # Tests are a development and CI artifact; users never run them. The
+      # sdist must therefore not carry them, and a one-line include edit is the
+      # kind of thing that silently regresses.
+      - name: Verify the sdist does not ship the test suite
+        run: >
+          python -c "import glob, tarfile, sys;
+          s = glob.glob('dist/*.tar.gz')[0];
+          names = tarfile.open(s).getnames();
+          leaked = sorted({n for n in names if 'tests' in n.split('/')});
+          sys.exit(f'{s} ships test files: {leaked[:5]}') if leaked else print(f'{s}: no tests shipped')"

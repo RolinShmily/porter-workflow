@@ -157,7 +157,9 @@ elif phase is Phase.TRANSLATE:
   which did not run or did not complete
 ```
 
-现在是"**跑到这个阶段为止**"（`phases_for()` 用切片实现）。`--only-phase burn --burn skip` 会得到一个空集并如实什么都不做，而不是偷偷跑另外三个阶段。想从磁盘恢复单个阶段是另一件事（正是 `force` 为之准备的方向），尚未实现。
+现在是"**跑到这个阶段为止**"（`phases_for()` 用切片实现）。`--only-phase burn --burn skip` 会得到一个空集并如实什么都不做，而不是偷偷跑另外三个阶段。
+
+**跳过前置阶段是另一件事，且尚未实现**：即直接利用磁盘上已有的产物跳进某一个阶段。`--force` 是相反方向的旋钮——它**关闭**下面说的阶段产物复用，而不是开启恢复。
 
 ### request 的 options 是唯一权威
 
@@ -378,7 +380,7 @@ def _tail(text, limit=_STDERR_TAIL):
 capture_output=True, text=True, encoding="utf-8", errors="replace"
 ```
 
-这一条来自一类真实 bug（`REFACTOR_PLAN.md` §13.17）：subprocess 的文本解码默认走 **locale 编码**，在 `POSIX`/`C` locale 下是 ASCII，于是任何非 ASCII 路径、标题或 ffmpeg 输出都会让解码抛 `UnicodeDecodeError`——而异常发生在读结果的时候，看起来像是"命令失败"。`errors="replace"` 是第二道：即便字节真的不是合法 UTF-8，也应该降级为替换字符，而不是让整个作业死在读取一行日志上。
+这一条来自一类真实 bug：subprocess 的文本解码默认走 **locale 编码**，在 `POSIX`/`C` locale 下是 ASCII，于是任何非 ASCII 路径、标题或 ffmpeg 输出都会让解码抛 `UnicodeDecodeError`——而异常发生在读结果的时候，看起来像是"命令失败"。`errors="replace"` 是第二道：即便字节真的不是合法 UTF-8，也应该降级为替换字符，而不是让整个作业死在读取一行日志上。
 
 同一个理由出现在所有 `Path.read_text()` / `write_text()` 上：引擎里没有一处省略 `encoding=`。
 
@@ -541,10 +543,10 @@ URL 解析按插入顺序遍历 `handler.can_handle(url)`。每个平台不再�
 
 ## 10. 已知缺口
 
-- **单阶段从磁盘恢复已实现**（§13.51）：`--only-phase X` 的前置阶段照跑，但 PREPARE（母版）、TRANSCRIBE（源 cue）、BURN（成片）各有复用判定，所以昂贵的工作会被跳过（实测：第二次运行 `reusing 19 cached source cues`，ASR 归零）。**TRANSLATE 没有缓存**：它的 `.ass` 产物与字幕样式耦合，需要一套指纹方案才能安全复用，因此重复运行会重新翻译。`--force` 关闭全部复用。
-- **免 Key 的 ASR 端点已实测失效**（`bcut` / `google-web`）；但 **`[asr-local]` 提供了免 Key 的本地识别**（§13.48），所以"没有 Key 就必然失败"已不成立——除非本地后端也没装。
-- **无字幕轨的视频有明确出口**：既无平台轨又无可用 ASR 时作业在 TRANSCRIBE 失败，失败信息会指向 `--subtitle-file` 或 `[asr-local]`（§13.51）。
+- **昂贵阶段的产物会被复用**：PREPARE（母版）、TRANSCRIBE（源 cue）、BURN（成片）各自判断磁盘上已有的产物是否可用，可用就跳过（实测：第二次运行 `reusing 19 cached source cues`，ASR 归零）。三处实现在 `platforms/base.py` 与 `platforms/local.py`（母版）、`asr/chain.py`（源 cue）、`media/burn.py::_is_reusable`（成片），判断方式各有不同但都由 `--force` 一并关闭——`--force` 是"全部重做"，不是"只重做一个阶段"。**TRANSLATE 不复用**：它的 `.ass` 产物与字幕样式耦合，需要一套指纹方案才能安全复用，因此重复运行会重新翻译。
+- **免 Key 的 ASR 端点已实测失效**（`bcut` / `google-web`）；但 **`[asr-local]` 提供了免 Key 的本地识别**，所以"没有 Key 就必然失败"已不成立——除非本地后端也没装。
+- **无字幕轨的视频有明确出口**：既无平台轨又无可用 ASR 时作业在 TRANSCRIBE 失败，失败信息会指向 `--subtitle-file` 或 `[asr-local]`。
 - **MCP sampling 翻译未实现**：用宿主模型做零 Key 的 LLM 级翻译。
-- **本地视频的 sidecar `.srt` 不被接管**（刻意，§13.29）：一份 `.srt` 可能是源字幕也可能是译文字幕，猜错会静默跳过 ASR 或覆盖用户文件。**要接管就显式点名：`--subtitle-file`。**
+- **本地视频的 sidecar `.srt` 不被接管**（刻意）：一份 `.srt` 可能是源字幕也可能是译文字幕，猜错会静默跳过 ASR 或覆盖用户文件。**要接管就显式点名：`--subtitle-file`。**
 - `asr.audio_denoise`、`ffmpeg.auto_tune` 两个配置键没有任何消费者（只有 `JobOptions.audio_denoise` 生效）；`cookies_file` / `cookies_browser` 的**配置值只对 MCP 的 `porter_inspect` 路径生效**（`porter_mcp/tools/inspect.py`），`porter run` 只认命令行旗标。细节见 `docs/CONFIG.md` §4.6 与 §6。
 - 若加了 cookie 之后 yt-dlp 是否真能拿到 bilibili 的 CC 轨，**未经验证**。当前修复的作用是"把路打开"。

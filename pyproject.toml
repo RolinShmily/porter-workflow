@@ -1,13 +1,22 @@
+# The floor is 1.27.0: that is the first hatchling release with PEP 639 support,
+# which the `license` expression and `license-files` below depend on (core
+# metadata 2.4+). Older backends would silently ignore the expression.
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
 name = "porter-workflow"
-version = "0.2.0"
+# Single source of truth: `porter.__version__`. pyproject is the only other
+# place a version could live, so it does not live here. The release workflow
+# still asserts the git tag equals `porter.__version__` before publishing.
+dynamic = ["version"]
 description = "Automated video localization, multi-engine ASR, subtitle translation, and dual-version FFmpeg hardsub pipeline for AI agents, CLI, and MCP hosts."
 readme = "README.md"
-license = { text = "MIT" }
+# PEP 639 license expression. The legacy `License ::` classifier is deliberately
+# absent: it is deprecated by the same PEP, and shipping both is contradictory.
+license = "MIT"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 requires-python = ">=3.10"
 authors = [{ name = "RoL1n_SrP" }]
 keywords = [
@@ -25,7 +34,6 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -69,14 +77,35 @@ porter-mcp = "porter_mcp.server:main"
 
 [project.urls]
 Homepage = "https://github.com/RolinShmily/porter-workflow"
+Repository = "https://github.com/RolinShmily/porter-workflow"
+Issues = "https://github.com/RolinShmily/porter-workflow/issues"
 Documentation = "https://github.com/RolinShmily/porter-workflow/tree/main/docs"
-Changelog = "https://github.com/RolinShmily/porter-workflow/releases"
+Changelog = "https://github.com/RolinShmily/porter-workflow/blob/main/CHANGELOG.md"
+
+[tool.hatch.version]
+# Keep `porter.__version__` authoritative; see `dynamic` above.
+path = "src/porter/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/porter", "src/porter_cli", "src/porter_mcp"]
 
+# The sdist is the source of record, so it carries the license and the
+# third-party notices that `license-files` already puts into the wheel.
+#
+# `/tests` is deliberately absent: tests are a development and CI artifact, and
+# nobody who installs the package runs them. Shipping them only widens the
+# sdist and invites confusion about what is supported. They remain in the git
+# repository, which is where CI and contributors get them from.
 [tool.hatch.build.targets.sdist]
-include = ["/src", "/tests", "/docs", "/skills", "/README.md", "/LICENSE"]
+include = [
+    "/src",
+    "/docs",
+    "/skills",
+    "/README.md",
+    "/LICENSE",
+    "/THIRD_PARTY_NOTICES.md",
+    "/CHANGELOG.md",
+]
 
 # ---------------------------------------------------------------------------
 # Lint — T20 is a hard requirement: the engine must never print(), because
@@ -197,5 +226,6 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 addopts = "-q --strict-markers"
 markers = [
-    "slow: end-to-end tests that shell out to ffmpeg or hit the network",
+    "slow: end-to-end tests that shell out to real ffmpeg; deterministic, no network",
+    "network: tests that reach the public internet; opt-in, and they skip when offline",
 ]

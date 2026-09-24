@@ -1,0 +1,144 @@
+name: Bug report
+description: Something does not work as documented
+title: "[bug] "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Two things before you start:
+
+        * **Never paste API keys, cookies or session tokens.** Use placeholders.
+          `porter config list` masks secrets; its output is safe to share.
+        * Run `porter doctor` — it captures most of the environment in one shot
+          and is the single most useful thing you can attach.
+
+        For a **security** issue, do not use this form — see
+        [SECURITY.md](https://github.com/RolinShmily/porter-workflow/blob/main/SECURITY.md).
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Command
+      description: The exact command you ran. Redact URLs and secrets.
+      render: shell
+      placeholder: porter "https://youtu.be/REDACTED" -o ./out
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected to happen
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What actually happened
+      description: Quote the error verbatim if there is one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `porter doctor`
+      description: Run the command and paste the whole output.
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: porter-version
+    attributes:
+      label: Porter version
+      description: Output of `porter --version`.
+      placeholder: "0.2.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you install it?
+      options:
+        - uvx (no install)
+        - pipx
+        - pip / uv into a virtualenv
+        - Launcher binary from GitHub Releases
+        - From a source checkout
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Windows
+        - Other / container
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      description: Output of `python --version` (or `uv run python --version`).
+      placeholder: "3.12.4"
+    validations:
+      required: true
+
+  - type: input
+    id: ffmpeg
+    attributes:
+      label: FFmpeg version
+      description: First line of `ffmpeg -version`.
+      placeholder: "ffmpeg version 7.0.2"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Which stage failed?
+      description: The pipeline is fetch → transcribe → translate → burn.
+      options:
+        - Fetch (download / standardise)
+        - Transcribe (ASR)
+        - Translate
+        - Burn (encode / hardsub)
+        - Not stage-specific (CLI, config, doctor, MCP)
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Verbose logs
+      description: >
+        Re-run with debug logging if you can, and paste anything above what you
+        already gave. Redact secrets.
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: I have redacted all secrets, URLs and personal data.
+          required: true
+        - label: This is not a security vulnerability (those go through SECURITY.md).
+          required: true
+        - label: I am on the latest version, or I cannot upgrade and have said why.
+          required: false

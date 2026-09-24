@@ -1,6 +1,6 @@
 """Cue-level cleanup: overlap repair and bilingual alignment.
 
-Split out of v0.1 ``formatter.py`` per ``docs/REFACTOR_PLAN.md`` §4.5. Both
+Split out of v0.1's monolithic ``formatter.py``. Both
 functions mutate the items they are given (v0.1 did too, and the pipeline relies
 on that: it aligns the same list objects it later writes out), so they are
 documented as mutating rather than quietly returning copies.

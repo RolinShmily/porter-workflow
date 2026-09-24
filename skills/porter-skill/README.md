@@ -60,16 +60,11 @@ knowledge neither frontend carries.
 
 ## Status
 
-P5 assets are written. Remaining for a release: the four `docs/` documents, the
-GitHub workflows, and `docs/MIGRATION.md`.
-
 **When editing `SKILL.md`, do not reintroduce v0.1's "pure-Python, zero-key"
 claim.** It is false: every key-free speech-to-text endpoint has stopped working
-(measured 2026-09-22, see `docs/REFACTOR_PLAN.md` §13.21). Transcription needs
-`OPENAI_API_KEY` or the VideoCaptioner CLI, or the job fails at the transcribe
-phase with `every speech-to-text backend failed`. Translation still needs no key.
-This belongs in the skill's `description` as well as its body, because an agent
+(measured 2026-09-22). Transcription needs `OPENAI_API_KEY`, the VideoCaptioner
+CLI, or the `[asr-local]` extra, or the job fails at the transcribe phase with
+`every speech-to-text backend failed`. Translation still needs no key. This
+belongs in the skill's `description` as well as its body, because an agent
 decides whether to invoke the skill from the description alone.
 `tests/unit/test_skill_assets.py` enforces both.
-
-See [`docs/REFACTOR_PLAN.md`](../../docs/REFACTOR_PLAN.md) §9 P5.

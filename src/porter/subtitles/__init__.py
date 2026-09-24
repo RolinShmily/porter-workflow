@@ -1,6 +1,6 @@
 """Subtitle parsing, phrasing and rendering.
 
-Contents (``docs/REFACTOR_PLAN.md`` §4.5). In v0.1 all of this lived in one
+Contents. In v0.1 all of this lived in one
 1184-line ``formatter.py``; the split is **purely physical** — the algorithms do
 not change, and ``tests/regression/`` asserts the v0.1 behaviour verbatim.
 

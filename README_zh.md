@@ -4,6 +4,13 @@
   <a href="README.md">English</a> | <b>简体中文</b>
 </p>
 
+<p align="center">
+  <a href="https://github.com/RolinShmily/porter-workflow/actions/workflows/test.yml"><img alt="CI" src="https://github.com/RolinShmily/porter-workflow/actions/workflows/test.yml/badge.svg"></a>
+  <a href="https://pypi.org/project/porter-workflow/"><img alt="PyPI" src="https://img.shields.io/pypi/v/porter-workflow"></a>
+  <img alt="Python 3.10 - 3.13" src="https://img.shields.io/badge/python-3.10%20%E2%80%93%203.13-blue">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green"></a>
+</p>
+
 **Porter Workflow** 是一条全自动视频本地化流水线：给它一个视频链接，拿回一套标准化素材，以及烧好硬字幕的双语版与纯中文版成片。
 
 它以**一个引擎 + 三个前端**的形态发布：
@@ -16,9 +23,11 @@
 
 三者调用同一个 `porter` 库。引擎内不含任何参数解析，且**绝不向 stdout 写入**——因为 MCP 的 stdio 传输里 stdout 就是 JSON-RPC 通道。
 
-> **状态：`v0.2.0` 正在重构中。**
-> 完整设计与分阶段迁移手册见 [`docs/REFACTOR_PLAN.md`](docs/REFACTOR_PLAN.md)。
-> `v0.1.x` 的原实现保留在 `main` 分支。
+> **状态：`v0.2.0` 是 `main` 上的当前开发线。**
+> v0.2 重构（一个引擎 + 三个前端）已落地。架构说明见
+> [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)，从 v0.1 升级见
+> [`docs/MIGRATION.md`](docs/MIGRATION.md)。v0.1 的原实现保留在 git 历史中，
+> 最后一个 v0.1 提交为 `b5fd577`。
 
 ---
 
@@ -173,13 +182,16 @@ porter config list
 ## 开发
 
 ```bash
-uv venv && uv pip install -e ".[dev,all]"
+uv sync --extra all --extra dev      # 严格按 uv.lock 安装
 
 ruff check src          # 含 T20：引擎禁止 print()
 mypy src
 lint-imports            # 守卫 引擎/前端 的依赖方向
 pytest
 ```
+
+[`CONTRIBUTING.md`](CONTRIBUTING.md) 记录了完整门禁、这些工具强制的架构规则，
+以及新增依赖时的许可证规则。
 
 仓库结构：
 
@@ -198,4 +210,31 @@ docs/
 
 MIT，见 [LICENSE](LICENSE)。
 
-第三方致谢（含 VideoCaptioner，GPL-3.0，启发了 ASR 编排的部分设计）将在 `v0.2.0` 的最终 README 中完整迁移。
+---
+
+## 致谢
+
+Porter 站在他人的工作之上，这份亏欠值得写清楚：
+
+* **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** —— 跨五个平台的下载能成为已解决
+  的问题而非五个爬虫，靠的就是它。
+* **[VideoCaptioner](https://github.com/WEIFENG2333/VideoCaptioner)**（GPL-3.0）
+  —— 其断句、对齐与字幕处理设计影响了 `porter.subtitles` 与 ASR 链的思路。
+  仅借鉴思路：未复制任何代码，也从不 import——只作为外部进程调用，这正是
+  porter 能保持 MIT 的原因。
+* **[FFmpeg](https://ffmpeg.org/) 与
+  [libass](https://github.com/libass/libass)** —— 整个媒体层：标准化、降噪与专业
+  ASS 渲染。
+
+每个组件、其许可证，以及 porter 是依赖它、可选安装它、还是仅以子进程方式调用它，
+都记录在 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
+
+---
+
+## 参与贡献
+
+欢迎贡献。[`CONTRIBUTING.md`](CONTRIBUTING.md) 说明开发环境与每次改动必须通过的
+门禁；[`SECURITY.md`](SECURITY.md) 说明如何私下报告安全漏洞；版本历史见
+[`CHANGELOG.md`](CHANGELOG.md)。
+
+本项目遵循 [Contributor Covenant](CODE_OF_CONDUCT.md)。

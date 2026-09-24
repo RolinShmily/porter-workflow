@@ -20,8 +20,8 @@ because an agent will act on it.
 
 ## Why there is no time estimate
 
-``docs/REFACTOR_PLAN.md`` §8.1 asks for "estimated cost", and the honest answer
-is that this module cannot produce one. A defensible number needs a measured
+A time estimate is deliberately absent, and the honest answer is that this module
+cannot produce one. A defensible number needs a measured
 encode rate for *this* machine at *this* resolution with *this* encoder, and the
 only thing that knows it is a trial encode (``porter doctor`` runs those). So the
 plan reports the measured inputs that drive the cost -- duration, resolution,

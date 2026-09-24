@@ -5,7 +5,7 @@ carried both machine-readable status **and** multi-paragraph Chinese
 installation instructions. That works for a terminal, but the MCP frontend needs
 structured data and cannot show a wall of text.
 
-The split (``docs/REFACTOR_PLAN.md`` §5.6):
+The split:
 
 ``probes.py``
     :class:`~porter.doctor.probes.CapabilityReport` — pure facts. Each finding

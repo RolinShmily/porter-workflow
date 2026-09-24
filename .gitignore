@@ -72,6 +72,26 @@ downloads/
 tmp/
 *.tmp
 
+# Documentation and skill assets are the one place media is source, not output:
+# a README screenshot or a subtitle sample must be committable. Pipeline output
+# dropped anywhere else is still ignored by the rules above.
+!docs/**/*.png
+!docs/**/*.jpg
+!docs/**/*.jpeg
+!docs/**/*.webp
+!docs/**/*.gif
+!docs/**/*.svg
+!docs/**/*.srt
+!docs/**/*.ass
+!skills/**/*.png
+!skills/**/*.jpg
+!skills/**/*.jpeg
+!skills/**/*.webp
+!skills/**/*.gif
+!skills/**/*.svg
+!skills/**/*.srt
+!skills/**/*.ass
+
 # ---------------------------------------------------------------------------
 # Agent / editor / OS
 # ---------------------------------------------------------------------------

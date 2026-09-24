@@ -125,7 +125,7 @@ def run(args: argparse.Namespace) -> int:
         return render.EXIT_OK
 
     if action == "import-videocaptioner":
-        return render.not_implemented("config import-videocaptioner", "P3")
+        return render.not_implemented("config import-videocaptioner")
 
     render.warn(f"unknown config action: {action}")
     return render.EXIT_MISUSE

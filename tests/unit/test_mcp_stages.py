@@ -705,6 +705,7 @@ class TestStageToolsIntegration:
     cannot disagree about whether the output path is the one ffmpeg wrote.
     """
 
+    @pytest.mark.network
     async def test_a_real_translation_writes_a_chinese_track(self, tmp_path: Path) -> None:
         source = tmp_path / "input.srt"
         source.write_text(SAMPLE_SRT, encoding="utf-8")

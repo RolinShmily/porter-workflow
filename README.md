@@ -4,6 +4,13 @@
   <b>English</b> | <a href="README_zh.md">简体中文</a>
 </p>
 
+<p align="center">
+  <a href="https://github.com/RolinShmily/porter-workflow/actions/workflows/test.yml"><img alt="CI" src="https://github.com/RolinShmily/porter-workflow/actions/workflows/test.yml/badge.svg"></a>
+  <a href="https://pypi.org/project/porter-workflow/"><img alt="PyPI" src="https://img.shields.io/pypi/v/porter-workflow"></a>
+  <img alt="Python 3.10 - 3.13" src="https://img.shields.io/badge/python-3.10%20%E2%80%93%203.13-blue">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green"></a>
+</p>
+
 **Porter Workflow** is an automated video localization pipeline: give it a video
 URL, get back a standardised asset bundle plus hard-subbed release videos with
 bilingual and Chinese-only subtitles.
@@ -20,10 +27,11 @@ All three call the same `porter` library. The engine contains no argument
 parsing and never writes to stdout — a requirement, because in an MCP stdio
 server stdout *is* the JSON-RPC channel.
 
-> **Status: `v0.2.0` is under active refactoring.**
-> The design and the step-by-step migration plan live in
-> [`docs/REFACTOR_PLAN.md`](docs/REFACTOR_PLAN.md). The `v0.1.x` implementation
-> remains available on the `main` branch.
+> **Status: `v0.2.0` is the current development line on `main`.**
+> The v0.2 rewrite — one engine, three frontends — has landed. Architecture is
+> documented in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and upgrading
+> from v0.1 is covered by [`docs/MIGRATION.md`](docs/MIGRATION.md). The v0.1
+> implementation is preserved in git history at commit `b5fd577`.
 
 ---
 
@@ -193,13 +201,16 @@ blocking call, because encoding a 1080p video can take tens of minutes. See
 ## Development
 
 ```bash
-uv venv && uv pip install -e ".[dev,all]"
+uv sync --extra all --extra dev      # installs exactly what uv.lock pins
 
 ruff check src          # includes T20: the engine must not print()
 mypy src
 lint-imports            # enforces the engine/frontend boundary
 pytest
 ```
+
+[`CONTRIBUTING.md`](CONTRIBUTING.md) documents the full gate, the architecture
+rules those tools enforce, and the licence rules for new dependencies.
 
 Repository layout:
 
@@ -218,7 +229,34 @@ docs/
 
 MIT. See [LICENSE](LICENSE).
 
-Third-party acknowledgements, including VideoCaptioner (GPL-3.0) which inspired
-parts of the ASR orchestration design, are listed in the acknowledgements
-section of the previous release notes and will be carried over in the final
-`v0.2.0` README.
+---
+
+## Acknowledgements
+
+Porter is built on other people's work, and the debt is worth stating plainly:
+
+* **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** — downloading from five
+  platforms is a solved problem rather than five scrapers, because of this.
+* **[VideoCaptioner](https://github.com/WEIFENG2333/VideoCaptioner)** (GPL-3.0) —
+  its sentence segmentation, alignment and subtitle-processing design shaped the
+  approach in `porter.subtitles` and the ASR chain. Ideas only: no code was
+  copied, and it is never imported — only run as an external process, which is
+  why porter can stay MIT.
+* **[FFmpeg](https://ffmpeg.org/) and
+  [libass](https://github.com/libass/libass)** — the entire media layer:
+  standardisation, denoising and professional ASS rendering.
+
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) records every component,
+its licence, and whether porter depends on it, optionally installs it, or only
+spawns it as a subprocess.
+
+---
+
+## Contributing
+
+Contributions are welcome. [`CONTRIBUTING.md`](CONTRIBUTING.md) covers the
+development setup and the gate every change must pass; [`SECURITY.md`](SECURITY.md)
+explains how to report a vulnerability privately; release history lives in
+[`CHANGELOG.md`](CHANGELOG.md).
+
+This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md).

@@ -5,8 +5,7 @@ actually produces two playable release videos when driven through
 ``Pipeline.run()``, which is the only thing an operator cares about.
 
 The downloader and transcriber are stubs because the real ones need the network
-and a working ASR endpoint (none is working -- see
-``docs/REFACTOR_PLAN.md`` §13.21). Everything from TRANSLATE onward is real: the
+and a working ASR endpoint. Everything from TRANSLATE onward is real: the
 translation chain's file writing, the ASS generation, and the ffmpeg burn.
 
 The video is generated with an **apostrophe in its title**, because that is the
@@ -334,8 +333,8 @@ def test_a_local_video_runs_the_whole_pipeline(local_ctx: RunContext, tmp_path: 
     """A file on disk, through PREPARE and BURN, with real ffmpeg at both ends.
 
     The transcriber and translator are stubs because the network steps need a
-    working ASR endpoint and none exists (docs/REFACTOR_PLAN.md 13.21). Everything
-    that touches the file does run for real.
+    working ASR endpoint and no key-free one exists. Everything that touches the
+    file does run for real.
     """
     source = _local_source(tmp_path)
 

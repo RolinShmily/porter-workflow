@@ -1,6 +1,6 @@
 # v0.1 → v0.2 迁移指南
 
-本指南面向已经在用 v0.1（`main` 分支，发行名 `porter-skill`）的用户，说明升级到 v0.2（`refactor/porter-workflow`，发行名 `porter-workflow`）后**哪些东西变了、哪些会坏、怎么改**。
+本指南面向已经在用 v0.1（已归档，发行名 `porter-skill`，最后一个提交为 `b5fd577`）的用户，说明升级到 v0.2（当前 `main`，发行名 `porter-workflow`）后**哪些东西变了、哪些会坏、怎么改**。
 
 v0.2 是一次结构性重构：一个 `porter` 引擎 + 三个前端（CLI / MCP / Agent Skill）。绝大多数心智模型和工作流步骤不变，但有**一条前置条件的变化会让现有用法直接失败**，先看它。
 
@@ -23,7 +23,7 @@ v0.2 是一次结构性重构：一个 `porter` 引擎 + 三个前端（CLI / MC
 
 ## 1. 最重要：转录不再有免 Key 路径
 
-v0.1 的 `SKILL.md` 宣称「**纯 Python 零 Key 闭环**」，并列出一条免 Key 的 ASR 回退链。**这句话现在是错的。** 所有免 Key 的语音识别端点都已停用——这是实测结论，不是推测，证据记录在 `docs/REFACTOR_PLAN.md` §13.21（测量时间 2026-09-22，10 分钟真实视频）。
+v0.1 的 `SKILL.md` 宣称「**纯 Python 零 Key 闭环**」，并列出一条免 Key 的 ASR 回退链。**这句话现在是错的。** 所有免 Key 的语音识别端点都已停用——这是实测结论，不是推测（测量时间 2026-09-22，10 分钟真实视频）。
 
 | ASR 后端 | v0.1 的说法 | v0.2 实测 |
 |---|---|---|
@@ -32,7 +32,7 @@ v0.1 的 `SKILL.md` 宣称「**纯 Python 零 Key 闭环**」，并列出一条�
 | Bcut（必剪） | 免 Key 免费 | 主机有响应，但**返回零条 utterance** |
 | Google Web（`[stt]`） | 免 Key 兜底 | **每次请求都返回 14 字节 `{"result":[]}`** |
 
-Google Web 的后端还会在截断的 chunked 响应上抛 `http.client.IncompleteRead`；v0.2 已把它映射为 `AsrBackendError`（§13.22），但这只改变报错方式，不改变「它不再转录」的事实。
+Google Web 的后端还会在截断的 chunked 响应上抛 `http.client.IncompleteRead`；v0.2 已把它映射为 `AsrBackendError`，但这只改变报错方式，不改变「它不再转录」的事实。
 
 ### 实际后果
 
@@ -58,7 +58,7 @@ porter "<URL>" --asr-engine bijian --burn skip
 
 ### 不受影响的部分
 
-**翻译不需要 Key。** Bing、Google、MyMemory 三个免 Key 后端在 v0.2 中逐个实测可用（§13.21），仍会作为回退链。**平台原生字幕轨也不需要 Key**——YouTube / Bilibili 等有原生轨时根本不跑 ASR。
+**翻译不需要 Key。** Bing、Google、MyMemory 三个免 Key 后端在 v0.2 中逐个实测可用，仍会作为回退链。**平台原生字幕轨也不需要 Key**——YouTube / Bilibili 等有原生轨时根本不跑 ASR。
 
 ### 新工具帮你提前发现
 
@@ -288,7 +288,7 @@ v0.1 是一个大包 `porter_skill`；v0.2 把引擎与前端拆成三个顶层�
 - **`--force` 的单阶段从磁盘恢复** —— `force` 对 PREPARE / BURN 的复用判定生效，但「只跑一个阶段」仍需从磁盘恢复中间产物。
 - **无字幕视频** —— 未处理。
 - **sidecar 字幕** —— 本地视频旁的 `.srt` 不被接管（§6）。
-- **MCP sampling** —— 计划中「用宿主模型零 Key 翻译」未实现。
+- **MCP sampling** —— 原设计中「用宿主模型零 Key 翻译」未实现。
 - **MCP 信号处理** —— SIGINT/SIGTERM 的协作取消与临时文件清理未实现（详见 `docs/MCP.md` §4.3）。
 
 ---
@@ -299,5 +299,4 @@ v0.1 是一个大包 `porter_skill`；v0.2 把引擎与前端拆成三个顶层�
 - `docs/MCP.md` —— MCP 契约、工具清单、安全规则、未实现项
 - `docs/ARCHITECTURE.md` —— 四阶段、分层、平台与后端链
 - `docs/CONFIG.md` —— 全部配置键、环境变量、搜索顺序
-- `docs/REFACTOR_PLAN.md` —— 重构计划与逐项实现记录（§13.x 记录了真实缺陷与实测结论）
 - `skills/porter-skill/SKILL.md` —— 面向 agent 的工作流闭环与质检步骤

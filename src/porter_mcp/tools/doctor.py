@@ -1,7 +1,7 @@
 """Tool: the structured capability report.
 
-This is the payoff of splitting facts from prose (``docs/REFACTOR_PLAN.md``
-§13.13). v0.1's ``CheckResult`` carried a boolean *and* a multi-paragraph Chinese
+This is the payoff of splitting facts from prose: v0.1's ``CheckResult`` carried
+a boolean *and* a multi-paragraph Chinese
 installation guide, which is fine in a terminal and useless over MCP — an agent
 cannot act on a wall of text, and a protocol has no terminal to render it in.
 
@@ -48,7 +48,7 @@ def register(server: FastMCP) -> None:
             "ffmpeg and libass, a JavaScript runtime for yt-dlp, the Chinese "
             "subtitle font, and which video encoder will be used. Returns "
             "structured findings plus step-by-step remediation for anything "
-            "that failed. Call this before porter_run on an unfamiliar host."
+            "that failed. Call this before starting a job on an unfamiliar host."
         ),
     )
     @protect
