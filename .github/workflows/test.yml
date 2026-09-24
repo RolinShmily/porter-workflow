@@ -38,14 +38,14 @@ jobs:
         # and 3.13 is the newest interpreter the project claims.
         python-version: ["3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
 
       # The runner image has no ffmpeg, but ffmpeg is the one system dependency
       # porter cannot work without. Two groups of tests need the real binary:
@@ -100,14 +100,14 @@ jobs:
     name: the suite must not need ffmpeg on PATH
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
 
       # Installed only so that hiding it below is a real experiment. If it were
       # absent to begin with, this job would pass without proving anything.
@@ -148,14 +148,14 @@ jobs:
     name: build sdist + wheel
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
 
       # A packaging break (a moved package dir, a missing py.typed) is invisible
       # to the test suite, which imports from the source tree. Building here is
@@ -172,7 +172,7 @@ jobs:
           missing = sorted({'porter', 'porter_cli', 'porter_mcp'} - tops);
           sys.exit(f'{w} is missing: {missing}') if missing else print(f'{w}: all three packages present')"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/
