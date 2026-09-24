@@ -45,13 +45,26 @@ Environment variables
 
 from __future__ import annotations
 
+import contextlib
 import os
+import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 __all__ = ["main"]
+
+#: Set in the environment of every process this launcher spawns.
+#:
+#: The launcher is a Python program that is *also* an executable, so anything that
+#: runs it in order to identify an interpreter re-enters this file. That is not
+#: hypothetical: ``uv venv --python <launcher>`` probes the given path by
+#: executing it, the probe re-ran the install, the install called ``uv`` again,
+#: and a single `porter.exe --version` on a clean machine became 970 nested
+#: retries taking 219 seconds before it died. Re-entry is now an immediate,
+#: legible failure instead.
+REENTRY_MARKER = "PORTER_LAUNCHER_IN_PROGRESS"
 
 #: Release requirement. Overridable so an offline install can point at a wheel.
 DEFAULT_SPEC = "porter-workflow[all]"
@@ -89,14 +102,24 @@ def _log(message: str) -> None:
     CLI whose stdout may be piped into ``--json`` consumers, and an MCP host
     reads stdout as JSON-RPC frames. Setup chatter on stdout would corrupt both.
     """
-    print(f"porter: {message}", file=sys.stderr, flush=True)
+    # T201 is the project-wide "never print" rule, and stdout *is* forbidden here
+    # for the reason above -- but this writes to stderr, which is the only channel
+    # a bootstrap shim has.
+    print(f"porter: {message}", file=sys.stderr, flush=True)  # noqa: T201
+
+
+def _child_env() -> dict[str, str]:
+    """The environment for a child process, marked as launcher-spawned."""
+    env = dict(os.environ)
+    env[REENTRY_MARKER] = "1"
+    return env
 
 
 def _run(argv: list[str]) -> None:
     """Run a setup command, surfacing its output on failure."""
-    # noqa justification: argv is built here from a fixed command plus paths we
-    # derived ourselves; no shell is involved and no user string is interpreted.
-    result = subprocess.run(argv, check=False)  # noqa: S603
+    # argv is a fixed command plus paths we derived ourselves: no shell, and no
+    # user string is interpreted.
+    result = subprocess.run(argv, check=False, env=_child_env())  # noqa: S603
     if result.returncode != 0:
         raise RuntimeError(f"command failed ({result.returncode}): {' '.join(argv)}")
 
@@ -110,6 +133,7 @@ def _find_uv() -> str | None:
                 check=False,
                 capture_output=True,
                 text=True,
+                env=_child_env(),
             )
         except FileNotFoundError:
             continue
@@ -118,17 +142,49 @@ def _find_uv() -> str | None:
     return None
 
 
+def _interpreter_for_venv() -> str | None:
+    """An interpreter to build the venv with, or ``None`` to let ``uv`` choose.
+
+    ``sys.executable`` is a Python only when this file is run as a script. Frozen
+    by PyInstaller it is the launcher binary itself, and handing that to
+    ``uv venv --python`` does not merely fail -- ``uv`` inspects the path by
+    running it, so the launcher re-entered itself (see :data:`REENTRY_MARKER`).
+
+    Returning ``None`` frozen is deliberate rather than guessing from ``PATH``:
+    ``uv`` resolves (or fetches) an interpreter that actually satisfies
+    ``requires-python``, whereas a stale ``python3`` would turn into a confusing
+    pip failure several steps later.
+    """
+    if getattr(sys, "frozen", False):
+        return None
+    return sys.executable
+
+
 def _create_venv(venv: Path, uv: str | None) -> None:
     """Create the venv, preferring uv and falling back to the stdlib."""
     _log(f"creating {venv}")
     venv.parent.mkdir(parents=True, exist_ok=True)
+    interpreter = _interpreter_for_venv()
+
     if uv is not None:
-        _run([uv, "venv", "--python", sys.executable, str(venv)])
-    else:
-        # `python -m venv` seeds pip via ensurepip, which the fallback install
-        # below relies on. `uv venv` does not install pip at all, which is why
-        # the two branches keep their own install command.
-        _run([sys.executable, "-m", "venv", str(venv)])
+        argv = [uv, "venv"]
+        if interpreter is not None:
+            argv += ["--python", interpreter]
+        _run([*argv, str(venv)])
+        return
+
+    # No uv: the venv has to be built by a Python we can find. The binary cannot
+    # be that Python, so look on PATH -- and say so plainly if there is nothing.
+    fallback = interpreter or shutil.which("python3") or shutil.which("python")
+    if fallback is None:
+        raise RuntimeError(
+            "no Python interpreter available to build the environment with; "
+            "install uv (recommended) or Python 3.11+, then run this again"
+        )
+    # `python -m venv` seeds pip via ensurepip, which the fallback install below
+    # relies on. `uv venv` does not install pip at all, which is why the two
+    # branches keep their own install command.
+    _run([fallback, "-m", "venv", str(venv)])
 
 
 def _install_into_venv(venv: Path, spec: str, uv: str | None, upgrade: bool) -> None:
@@ -173,10 +229,8 @@ def _refresh_ytdlp(venv: Path, uv: str | None) -> None:
     except RuntimeError as exc:
         _log(f"warning: yt-dlp refresh failed, continuing with the installed copy ({exc})")
     finally:
-        try:
+        with contextlib.suppress(OSError):
             _refresh_stamp(venv).touch()
-        except OSError:
-            pass
 
 
 def _hand_over(script: Path, argv: list[str]) -> None:
@@ -191,15 +245,25 @@ def _hand_over(script: Path, argv: list[str]) -> None:
     instead, then propagate the exit code immediately.
     """
     if os.name == "nt":
-        completed = subprocess.run([str(script), *argv], check=False)  # noqa: S603
+        completed = subprocess.run(  # noqa: S603
+            [str(script), *argv], check=False, env=_child_env()
+        )
         raise SystemExit(completed.returncode)
 
-    # argv[0] is conventionally the program name.
-    os.execv(str(script), [str(script), *argv])
+    # argv[0] is conventionally the program name. execv involves no shell, which
+    # is precisely why it is used.
+    os.execv(str(script), [str(script), *argv])  # noqa: S606
 
 
 def main() -> int:
     """Ensure an installation exists, then hand over to it."""
+    if os.environ.get(REENTRY_MARKER):
+        _log(
+            "this executable is the porter launcher, not a Python interpreter, "
+            "and it was invoked again while already running"
+        )
+        return 1
+
     venv = _porter_home() / "venv"
     script = _venv_script(venv, "porter")
     spec = os.environ.get("PORTER_LAUNCHER_SPEC", "").strip() or DEFAULT_SPEC

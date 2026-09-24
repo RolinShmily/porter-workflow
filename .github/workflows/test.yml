@@ -77,10 +77,10 @@ jobs:
         run: uv sync --python ${{ matrix.python-version }} --extra all --extra dev --locked
 
       - name: ruff
-        run: uv run ruff check src tests
+        run: uv run ruff check src tests packaging
 
       - name: mypy
-        run: uv run mypy src
+        run: uv run mypy src packaging
 
       - name: import-linter
         run: uv run lint-imports

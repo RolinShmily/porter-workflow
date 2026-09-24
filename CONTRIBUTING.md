@@ -50,8 +50,8 @@ Every change must pass the same four checks CI runs. Run them from the
 repository root:
 
 ```bash
-ruff check src tests     # style + lint (includes T20, see "Architecture rules")
-mypy src                 # strict type checking
+ruff check src tests packaging     # style + lint (includes T20, see "Architecture rules")
+mypy src packaging                 # strict type checking
 lint-imports             # enforces the engine/frontend boundary
 pytest -m "not slow"     # the fast suite
 ```

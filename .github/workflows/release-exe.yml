@@ -71,7 +71,10 @@ jobs:
         run: |
           set -euo pipefail
           # A pre-made fake venv: the launcher should find it, skip installing,
-          # and hand the arguments to the script we placed there.
+          # and hand the arguments to the script we placed there. This covers
+          # hand-over only -- because the venv already exists, the launcher never
+          # reaches the code that shipped broken. The step below is the one that
+          # would have caught it.
           export PORTER_HOME="$RUNNER_TEMP/porter-smoke"
           mkdir -p "$PORTER_HOME/venv/bin"
           printf '#!/bin/sh\necho SMOKE-OK:"$@"\n' > "$PORTER_HOME/venv/bin/porter"
@@ -80,6 +83,27 @@ jobs:
           out="$(./dist/porter smoke-test arg)"
           echo "$out"
           test "$out" = 'SMOKE-OK:smoke-test arg'
+
+      # The real first run, from an empty PORTER_HOME: create a venv, install,
+      # hand over. v0.2.0 and v0.2.1 shipped binaries that could not do this at
+      # all, because the launcher offered *itself* as the interpreter for
+      # `uv venv --python`; uv probes that path by executing it, so every launch
+      # re-entered the launcher and recursed. Nothing above touched that code.
+      #
+      # The requirement is this checkout rather than the published package, so the
+      # test is about the commit being released. One platform is enough: the
+      # interpreter bug is in shared code, not in a platform branch.
+      - name: The first run really creates a venv and installs
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          set -euo pipefail
+          export PORTER_HOME="$RUNNER_TEMP/porter-fresh"
+          export PORTER_LAUNCHER_SPEC="$GITHUB_WORKSPACE"
+          export PORTER_LAUNCHER_NO_UPDATE=1
+          rm -rf "$PORTER_HOME"
+          ./dist/porter --version
+          # Hand-over only happens once the install produced a real console script.
+          test -x "$PORTER_HOME/venv/bin/porter"
 
       - uses: actions/upload-artifact@v4
         with:

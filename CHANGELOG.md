@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-09-24
+
+The launcher binaries were broken. This fixes them.
+
+### Fixed
+
+- **The launcher executables can set themselves up again.** v0.2.0 and v0.2.1
+  shipped binaries that could not install on a clean machine. The launcher
+  passed `sys.executable` to `uv venv --python`, and `sys.executable` is a Python
+  only when the file runs as a script: frozen by PyInstaller it is the launcher
+  binary itself. `uv` inspects a `--python` path by *executing* it, so the probe
+  re-entered the launcher, which called `uv` again — one `porter.exe --version`
+  became 970 nested retries and 219 seconds before it died. Frozen, the
+  interpreter is now left to `uv`, which resolves (or fetches) one that satisfies
+  `requires-python`; guessing from `PATH` would only turn an old `python3` into a
+  confusing pip error later.
+- **Re-entry now fails immediately instead of recursing.** The launcher marks
+  every child process it spawns, and a marked process refuses with one line and
+  exit 1. This is what kept a single wrong argument from becoming a fork bomb —
+  the same bug is one clear error rather than 219 seconds of nested output.
+
+### Added
+
+- **Tests for `packaging/launcher.py`, which had none.** That is why a broken
+  binary could ship at all: nothing exercised venv creation, and the workflow's
+  smoke test pre-created the venv, so it only ever proved argument hand-over.
+  The new suite pins the interpreter choice frozen and unfrozen, both no-`uv`
+  fallbacks, and the re-entry guard.
+- **`packaging/` is now linted and type-checked.** It was outside both scopes and
+  carried four latent lint errors, including a `# noqa justification:` comment
+  that ruff reads as a noqa directive. CI now runs
+  `ruff check src tests packaging` and `mypy src packaging`.
+- The `release-exe` workflow walks the real first-run path — empty `PORTER_HOME`,
+  create a venv, install this checkout, hand over — which is the path no existing
+  test covered.
+
 ## [0.2.1] - 2026-09-24
 
 A patch release. v0.2.0 reached PyPI without its downloadable binaries, and its
@@ -257,7 +293,8 @@ Skill of the same name).
   assets and a standardised `raw/` + `cooked/` output layout.
 - Agent Skill packaging (`SKILL.md`, scripts, references, example config).
 
-[Unreleased]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/RolinShmily/porter-workflow/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/RolinShmily/porter-workflow/commit/c2e4286

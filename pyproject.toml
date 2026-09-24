@@ -110,7 +110,7 @@ line-length = 100
 # and which `UP` rewrites apply. Left at py310 it classified `tomllib` as
 # third-party and flagged the sorted import block as unsorted.
 target-version = "py311"
-src = ["src", "tests"]
+src = ["src", "tests", "packaging"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "BLE", "A", "C4", "SIM", "T20", "RUF", "S"]
@@ -143,7 +143,7 @@ ignore_missing_imports = true
 # ones, so `ctypes.WinDLL` (Windows-only in typeshed) passed locally while the
 # gate went red. Pinning the platform makes `uv run mypy src` mean what CI means.
 platform = "linux"
-files = ["src"]
+files = ["src", "packaging"]
 mypy_path = "src"
 explicit_package_bases = true
 namespace_packages = true
