@@ -503,7 +503,11 @@ class TestRecordFromRequest:
     def test_a_local_file_is_recorded_as_its_path(self) -> None:
         request = JobRequest.from_source("/videos/a.mp4", JobOptions())
 
-        assert record_from_request("j1", request).source == "/videos/a.mp4"
+        # ``str(Path(...))`` rather than the literal: on Windows a leading slash is
+        # a root-relative path, so the same input is ``\videos\a.mp4``. The
+        # invariant under test is "recorded as its path", not "recorded with
+        # POSIX separators".
+        assert record_from_request("j1", request).source == str(Path("/videos/a.mp4"))
 
 
 class TestRecordFromResult:

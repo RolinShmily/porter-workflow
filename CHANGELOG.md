@@ -13,6 +13,17 @@ tag has been cut yet, so the section stays under `Unreleased` until one is.
 
 ### Added
 
+- **The MCP server shuts down gracefully on a signal.** `SIGINT`/`SIGTERM` (and
+  `SIGBREAK` on Windows) now ask every running job to stop and wait briefly for
+  them to unwind, instead of killing them mid-write. A job that unwinds records
+  `cancelled` itself, so the registry does not have to infer an interruption from
+  a dead PID later. An in-flight FFmpeg encode cannot be interrupted -- it has no
+  cancellation point inside it -- so a burn finishes its current step; the wait is
+  bounded for that reason, and a second signal skips it.
+- **Interrupting `porter run` reports what happened.** Ctrl+C records the job as
+  cancelled, prints one line, and exits `130`. Previously the `KeyboardInterrupt`
+  unwound to the top level and the user was shown the frame stack of whichever
+  library call was running -- ssl, socket, FFmpeg's pipe.
 - **Engine/frontend split.** Business logic now lives only in the `porter`
   library. `porter_cli` and `porter_mcp` are thin consumers, and the boundary is
   enforced by `import-linter`.
@@ -58,6 +69,35 @@ tag has been cut yet, so the section stays under `Unreleased` until one is.
 
 ### Fixed
 
+- **`porter jobs list` no longer crashes on Windows.** `os.kill(pid, 0)` reports a
+  dead PID as `OSError(ERROR_INVALID_PARAMETER)` there rather than
+  `ProcessLookupError`, and it escaped unhandled -- so a single stale record, which
+  is exactly what a killed job leaves behind, aborted the whole registry read.
+  The command that tells you about interrupted jobs was the one they broke.
+- **The recycled-PID guard now works on Windows.** `process_marker` reads the
+  process creation time via `GetProcessTimes` instead of falling back to a bare
+  PID, and checks the exit code first: `OpenProcess` keeps succeeding for a
+  terminated process for a moment after it dies, so the creation time alone would
+  have reported a dead owner as identifiable. Liveness is answered per platform
+  rather than through `os.kill(pid, 0)`, which has the same blind spot.
+- **`ffmpeg.auto_tune` and `asr.audio_denoise` are honoured.** Both were parsed,
+  documented, and read by nothing. `auto_tune=false` now skips the hardware-tier
+  trial encode and uses `ffmpeg.preset`/`ffmpeg.crf` as configured, in BURN,
+  `porter_burn` and `porter doctor` alike; `audio_denoise` is the default for
+  `JobOptions.audio_denoise`, which the CLI and MCP override only when asked to.
+- **`porter plan` no longer drops `--config`.** `plan_for` re-resolved the
+  configuration whenever it was given neither a context nor options, so the plan
+  described a different run from the one the same command line would perform --
+  every setting that comes from configuration (`asr.engine`, `translator`, ffmpeg,
+  subtitle style) was read from defaults. The CLI and the MCP tool now pass a
+  context built from the configuration they already resolved.
+- **Naming an unavailable ASR backend is no longer silent.** Naming a backend
+  promotes it and keeps the rest as fallbacks, so a missing one is not fatal --
+  which is exactly why it needs saying: asking for VideoCaptioner's `bijian` and
+  quietly getting Bcut's output is indistinguishable from success. It is now
+  reported at assembly time, before the expensive work.
+- **`porter_doctor` no longer tells agents to call a tool that does not exist.**
+  Its description referred to `porter_run`.
 - **Truncated encodes are no longer published as finished videos.** Release
   output is written to a temporary path and renamed only after `ffprobe`
   confirms it is readable. In v0.1 the rename was unconditional, so a failed

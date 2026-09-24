@@ -23,12 +23,13 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import platformdirs
 
@@ -49,6 +50,18 @@ _logger = get_logger(__name__)
 APP_NAME = "porter"
 REGISTRY_FILENAME = "jobs.json"
 LOCK_FILENAME = "jobs.lock"
+
+#: ``ERROR_INVALID_PARAMETER``: what ``OpenProcess`` returns for a PID that does
+#: not exist. ``ERROR_ACCESS_DENIED`` is the other failure and means the opposite
+#: -- the process is there, and is not ours to inspect.
+_ERROR_INVALID_PARAMETER = 87
+
+#: ``STILL_ACTIVE``: what ``GetExitCodeProcess`` reports while a process runs.
+_STILL_ACTIVE = 259
+
+#: ``PROCESS_QUERY_LIMITED_INFORMATION``: granted for processes the caller does not
+#: own, and all ``GetProcessTimes`` needs.
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 
 #: Bumped when the record shape changes incompatibly. A file with any other
 #: version is ignored rather than migrated: this is a cache, and the cost of
@@ -74,6 +87,118 @@ def registry_file() -> Path:
     return Path(platformdirs.user_cache_dir(APP_NAME, appauthor=False)) / REGISTRY_FILENAME
 
 
+def _kernel32() -> Any:
+    """``kernel32`` with the argtypes these process queries need.
+
+    The ``argtypes`` are not decoration. Without them ctypes passes a HANDLE as a
+    C ``int``, which truncates it to 32 bits on a 64-bit process and silently
+    asks about a different handle.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    lib = ctypes.WinDLL("kernel32", use_last_error=True)
+    lib.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    lib.OpenProcess.restype = wintypes.HANDLE
+    lib.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    lib.GetExitCodeProcess.restype = wintypes.BOOL
+    lib.GetProcessTimes.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+    ]
+    lib.GetProcessTimes.restype = wintypes.BOOL
+    lib.CloseHandle.argtypes = [wintypes.HANDLE]
+    lib.CloseHandle.restype = wintypes.BOOL
+    return lib
+
+
+def _windows_pid_is_alive(pid: int) -> bool:
+    """Whether ``pid`` is a running process -- Windows' answer to ``os.kill(pid, 0)``.
+
+    ``os.kill(pid, 0)`` is not usable for this. Windows keeps a terminated process
+    openable for a moment after it exits -- measured 8 times out of 8 on a process
+    reaped by ``wait()`` -- so the POSIX-style liveness check reports a just-dead
+    owner as alive and its record sits at ``running`` forever. That is exactly the
+    failure the reaper exists to prevent, so liveness is asked directly.
+
+    A process that exists but cannot be opened (access denied) counts as **alive**:
+    "does it exist" is the question, and reaping another user's running job
+    because it was not ours to inspect would be the worst available answer.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = _kernel32()
+    handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        # ERROR_INVALID_PARAMETER is "no such process"; anything else -- access
+        # denied, most importantly -- means it is there.
+        return ctypes.get_last_error() != _ERROR_INVALID_PARAMETER
+    try:
+        exit_code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+            return True
+        return exit_code.value == _STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _windows_start_time(pid: int) -> float | None:
+    """Creation time of ``pid``, or ``None`` if it has no identity to give.
+
+    Windows has no ``/proc``, so the identity marker comes from
+    ``GetProcessTimes``: a ``FILETIME`` of 100-nanosecond ticks since 1601-01-01.
+    Only *equality* matters, so the epoch is irrelevant -- but the value must be
+    stable across calls, and it is.
+
+    ``None`` is returned for a process that has already exited, and that check is
+    not optional. ``OpenProcess`` keeps succeeding for a terminated process for a
+    moment after it dies -- measured 8 times out of 8 on a process reaped by
+    ``wait()`` -- so the creation time alone would report a dead owner as
+    identifiable. The caller would then treat the record as owned by a live
+    process, which is precisely the "polling a job that will never finish" bug
+    the marker exists to prevent. ``GetExitCodeProcess`` settles it.
+
+    Liveness is :func:`_windows_pid_is_alive`'s question; this function answers
+    only "what is its identity". They are separate because the fallback in
+    :func:`_owner_is_alive` needs the liveness answer on its own.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    if not _windows_pid_is_alive(pid):
+        # A terminated process has no identity to give, and ``OpenProcess`` keeps
+        # succeeding for one for a moment after it dies, so the creation time
+        # alone would report a dead owner as identifiable.
+        return None
+
+    kernel32 = _kernel32()
+    handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:  # pragma: no cover - lost the race with the process exiting
+        return None
+    try:
+        created = wintypes.FILETIME()
+        exited = wintypes.FILETIME()
+        kernel = wintypes.FILETIME()
+        user = wintypes.FILETIME()
+        ok = kernel32.GetProcessTimes(
+            handle,
+            ctypes.byref(created),
+            ctypes.byref(exited),
+            ctypes.byref(kernel),
+            ctypes.byref(user),
+        )
+        if not ok:
+            return None
+        ticks = (created.dwHighDateTime << 32) | created.dwLowDateTime
+        return ticks / 10_000_000.0
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def process_marker(pid: int | None = None) -> tuple[int, float | None]:
     """Identify this process as ``(pid, start time)``.
 
@@ -81,13 +206,17 @@ def process_marker(pid: int | None = None) -> tuple[int, float | None]:
     "owned by PID 4321" can silently come to mean an unrelated process that
     happens to have inherited the number. The start time disambiguates.
 
-    The start time is field 22 of ``/proc/<pid>/stat`` (clock ticks since boot).
+    On POSIX it is field 22 of ``/proc/<pid>/stat`` (clock ticks since boot).
     Field 2 is the command name and may itself contain spaces and parentheses, so
-    the fields are split after the final ``)``. Returns ``None`` for the start
-    time where ``/proc`` is unavailable, and callers then fall back to a plain
-    liveness check.
+    the fields are split after the final ``)``. On Windows, where there is no
+    ``/proc``, it is the creation time from ``GetProcessTimes``. Returns ``None``
+    where neither is available, and callers then fall back to a plain liveness
+    check -- which cannot detect recycling, so this returning ``None`` is a real
+    loss of protection, not a detail.
     """
     target = os.getpid() if pid is None else pid
+    if sys.platform == "win32":
+        return target, _windows_start_time(target)
     try:
         stat = Path(f"/proc/{target}/stat").read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -116,12 +245,26 @@ def _owner_is_alive(pid: int | None, pid_start: float | None) -> bool:
     if current_start is not None and pid_start is not None:
         return current_start == pid_start
 
+    if sys.platform == "win32":
+        # Windows needs its own answer. A terminated process stays openable for a
+        # moment, so ``os.kill(pid, 0)`` reports a just-dead owner as alive and
+        # its record sits at ``running`` forever -- and it raises a bare
+        # ``OSError`` rather than ``ProcessLookupError`` for a gone one, which
+        # aborted the whole registry read. One stale record, exactly what a killed
+        # job leaves behind, made ``porter jobs list`` die with a traceback.
+        return _windows_pid_is_alive(pid)
+
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
     except PermissionError:
         # Exists, owned by someone else. Alive, and not ours to reap.
+        return True
+    except OSError as exc:
+        # Unknown, and "dead" is the wrong guess: reaping a job that is still
+        # running is a lie, while keeping a stale record is merely untidy.
+        _logger.warning("could not tell whether pid %s is alive: %s", pid, exc)
         return True
     return True
 
@@ -257,6 +400,34 @@ def record_from_request(job_id: str, request: JobRequest) -> JobRecord:
     )
 
 
+def _lock_exclusive(handle: Any) -> None:
+    """Take an exclusive advisory lock on an open file, on either platform.
+
+    ``cast(Any, ...)`` rather than a per-line ``type: ignore``: ``fcntl`` and
+    ``msvcrt`` are each declared only for their own platform, so under ``strict``
+    the ignore would be reported as *unused* on the platform that does have the
+    module. The runtime branch below is what makes this safe, not the type system.
+    """
+    if fcntl is not None:
+        module = cast(Any, fcntl)
+        module.flock(handle.fileno(), module.LOCK_EX)
+    elif msvcrt is not None:  # pragma: no cover - Windows
+        handle.seek(0)
+        module = cast(Any, msvcrt)
+        module.locking(handle.fileno(), module.LK_LOCK, 1)
+
+
+def _unlock(handle: Any) -> None:
+    """Release the lock taken by :func:`_lock_exclusive`."""
+    if fcntl is not None:
+        module = cast(Any, fcntl)
+        module.flock(handle.fileno(), module.LOCK_UN)
+    elif msvcrt is not None:  # pragma: no cover - Windows
+        handle.seek(0)
+        module = cast(Any, msvcrt)
+        module.locking(handle.fileno(), module.LK_UNLCK, 1)
+
+
 @contextmanager
 def _exclusive_lock(lock_path: Path) -> Iterator[None]:
     """Hold an exclusive advisory lock, creating the file if needed.
@@ -279,19 +450,11 @@ def _exclusive_lock(lock_path: Path) -> Iterator[None]:
         return
 
     try:
-        if fcntl is not None:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        elif msvcrt is not None:  # pragma: no cover - Windows
-            handle.seek(0)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+        _lock_exclusive(handle)
         yield
     finally:
         try:
-            if fcntl is not None:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-            elif msvcrt is not None:  # pragma: no cover - Windows
-                handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            _unlock(handle)
         finally:
             handle.close()
 

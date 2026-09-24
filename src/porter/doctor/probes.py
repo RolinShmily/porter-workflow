@@ -608,7 +608,9 @@ def probe_all(
         else:
             findings.append(probe_ffmpeg_version(runner))
             findings.append(probe_libass(runner))
-            selector = ctx.selector or EncoderSelector(runner, cpu_count=ctx.cpu_count)
+            selector = ctx.selector or EncoderSelector.for_config(
+                runner, config.ffmpeg, cpu_count=ctx.cpu_count
+            )
             findings.append(probe_encoder(selector))
 
     findings.append(probe_js_runtime(which=ctx.which))

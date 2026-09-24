@@ -10,6 +10,8 @@ deliberately does not:
 3. **Job orchestration** — long work is exposed as start/status/result/cancel
    rather than one blocking call, because MCP clients time out long before a
    1080p encode finishes.
+4. **Graceful shutdown** — see :mod:`porter_mcp.shutdown`. A signal asks the
+   running jobs to stop rather than killing them mid-write.
 
 Every `@server.tool` body must be decorated with
 :func:`~porter_mcp.stdout_guard.protect`.
@@ -68,6 +70,15 @@ def main() -> int:
     from porter_mcp.stdout_guard import protect  # noqa: F401  (re-export contract)
 
     server = create_server()
+
+    # Before the transport starts. A signal that arrives while a job is running
+    # must ask the job to stop, not kill it: the pipeline notices a flag between
+    # steps, and a job that unwinds records its own outcome. See
+    # porter_mcp.shutdown for what this can and cannot interrupt.
+    from porter_mcp.shutdown import install as install_shutdown_handlers
+
+    install_shutdown_handlers()
+
     server.run(transport="stdio")
     return 0
 

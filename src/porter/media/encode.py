@@ -55,10 +55,14 @@ import os
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from porter.errors import CapabilityMissingError, MediaError
 from porter.logging import get_logger
 from porter.media.ffmpeg import FFmpegRunner
+
+if TYPE_CHECKING:  # pragma: no cover - annotation only, keeps media import-light
+    from porter.config import FFmpegConfig
 
 __all__ = [
     "HARDWARE_PROFILES",
@@ -68,6 +72,7 @@ __all__ = [
     "EncoderSelector",
     "HardwareTier",
     "detect_encoder",
+    "profile_from_config",
     "software_profile_for",
 ]
 
@@ -249,6 +254,33 @@ def software_profile_for(cpu_count: int | None = None) -> EncoderProfile:
 SOFTWARE_PROFILE = software_profile_for()
 
 
+def profile_from_config(config: FFmpegConfig) -> EncoderProfile:
+    """The software profile a user gets when ``ffmpeg.auto_tune`` is off.
+
+    Auto-tune exists because the right preset depends on the machine, and the
+    trial encode is how that is discovered rather than guessed. Turning it off
+    means "I know my settings": the probe is skipped entirely and
+    ``ffmpeg.preset`` / ``ffmpeg.crf`` are used verbatim.
+
+    No trial encode, for the same reason :func:`software_profile_for` has none:
+    a user who named a preset wants that preset, not a verdict about it.
+    """
+    return EncoderProfile(
+        name="configured",
+        label=f"libx264 ({config.preset}, crf {config.crf}) -- ffmpeg.auto_tune is off",
+        tier=HardwareTier.SOFTWARE_FAST,
+        quality_args=(
+            "-preset",
+            config.preset,
+            "-crf",
+            str(config.crf),
+            "-pix_fmt",
+            config.pixel_format,
+        ),
+        needs_trial=False,
+    )
+
+
 class EncoderSelector:
     """Probes encoders once per run and remembers the answers.
 
@@ -271,6 +303,26 @@ class EncoderSelector:
         self.cpu_count = cpu_count
         self.candidates = candidates
         self._cache: dict[str, tuple[bool, str]] = cache if cache is not None else {}
+
+    @classmethod
+    def for_config(
+        cls,
+        runner: FFmpegRunner,
+        config: FFmpegConfig | None = None,
+        *,
+        cpu_count: int | None = None,
+    ) -> EncoderSelector:
+        """A selector that honours ``ffmpeg.auto_tune``.
+
+        The default (auto-tune on, or no config at all) probes the hardware tier
+        by trial encode. With auto-tune off there is nothing to discover, so the
+        candidate list is the one profile built from the configured preset and
+        CRF -- which also means ``doctor`` reports the encoder the job will
+        actually use instead of one it will not.
+        """
+        if config is None or config.auto_tune:
+            return cls(runner, cpu_count=cpu_count)
+        return cls(runner, cpu_count=cpu_count, candidates=(profile_from_config(config),))
 
     # ------------------------------------------------------------------
     # Probing

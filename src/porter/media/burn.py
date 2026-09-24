@@ -461,7 +461,11 @@ class FfmpegRenderer:
         return result
 
     def _encoder(self) -> EncoderSelector:
-        """The process-wide encoder selector, created on first use."""
+        """The process-wide encoder selector, created on first use.
+
+        Built through ``for_config`` so ``ffmpeg.auto_tune`` is honoured: with it
+        off the trial encode is skipped and the configured preset/CRF are used.
+        """
         if self._selector is None:
-            self._selector = EncoderSelector(self.runner)
+            self._selector = EncoderSelector.for_config(self.runner, self.config)
         return self._selector

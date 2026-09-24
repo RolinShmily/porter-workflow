@@ -113,9 +113,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     # aborted the command -- see render.make_stdout_safe.
     render.make_stdout_safe()
 
-    raw = list(sys.argv[1:] if argv is None else argv)
-    parser = build_parser()
-    args = parser.parse_args(_inject_run(raw))
+    try:
+        raw = list(sys.argv[1:] if argv is None else argv)
+        parser = build_parser()
+        args = parser.parse_args(_inject_run(raw))
 
-    configure_logging(args.log_level)
-    return dispatch(args)
+        configure_logging(args.log_level)
+        return dispatch(args)
+    except KeyboardInterrupt:
+        # Ctrl+C. Without this the user gets a raw traceback ending in whatever
+        # library call happened to be running -- socket, ssl, ffmpeg's pipe --
+        # which tells them nothing and reads as a crash. Commands that own a job
+        # record it themselves (see commands/run.py); this is the net for the rest
+        # (inspect, plan, doctor, config, jobs) and for an interrupt during
+        # argument parsing.
+        render.warn("interrupted")
+        return render.EXIT_CANCELLED

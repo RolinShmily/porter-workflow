@@ -134,6 +134,42 @@ class TestSelectionOrder:
         assert profile.name == "libx264"
 
 
+class TestAutoTune:
+    """``ffmpeg.auto_tune`` decides whether the hardware tier is probed at all.
+
+    It used to be declared, documented as "tune preset/CRF to the detected
+    hardware tier", and read by nothing. The behaviour it described is delivered
+    unconditionally by the trial encode, so the key's only real job is to turn
+    that probing *off* and use the configured preset/CRF verbatim.
+    """
+
+    def test_off_uses_the_configured_preset_and_skips_the_probe(self) -> None:
+        from porter.config import FFmpegConfig
+
+        runner = FakeRunner()
+        selector = EncoderSelector.for_config(
+            runner, FFmpegConfig(auto_tune=False, preset="slow", crf=23)
+        )
+
+        profile = selector.select()
+
+        assert runner.commands == [], "no trial encode when auto-tune is off"
+        assert profile.needs_trial is False
+        assert "slow" in profile.quality_args
+        assert "23" in profile.quality_args
+
+    def test_on_keeps_the_hardware_candidates(self) -> None:
+        from porter.config import FFmpegConfig
+
+        selector = EncoderSelector.for_config(FakeRunner(), FFmpegConfig())
+
+        assert selector.candidates == HARDWARE_PROFILES
+
+    def test_no_config_at_all_keeps_the_default(self) -> None:
+        """Callers that have no config must not accidentally disable probing."""
+        assert EncoderSelector.for_config(FakeRunner(), None).candidates == HARDWARE_PROFILES
+
+
 class TestCaching:
     def test_each_encoder_is_probed_once(self) -> None:
         runner = FakeRunner({"h264_nvenc": (1, "nope"), "h264_qsv": (1, "nope")})

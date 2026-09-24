@@ -49,6 +49,16 @@ _OWNED: set[str] = set()
 _OWNED_LOCK = threading.Lock()
 
 
+def job_store() -> JobStore:
+    """The process-global job store.
+
+    Public so the shutdown handler can reach it: stopping jobs on a signal is the
+    same operation as ``porter_job_cancel``, and it needs the same store. See
+    :mod:`porter_mcp.shutdown`.
+    """
+    return _STORE
+
+
 def register(server: FastMCP) -> None:
     """Attach the job tools and the log resource to ``server``."""
 
@@ -73,7 +83,7 @@ def register(server: FastMCP) -> None:
         llm_model: str | None = None,
         only_phase: str | None = None,
         force: bool = False,
-        audio_denoise: bool = True,
+        audio_denoise: bool | None = None,
         subtitle_file: str | None = None,
     ) -> dict[str, Any]:
         """Accept a job, start it in the background, return its id.
@@ -81,6 +91,10 @@ def register(server: FastMCP) -> None:
         ``source`` is a URL or a path to a local file; the same rule the CLI uses
         applies (``JobRequest.from_source``), so ``file://`` and bare paths both
         work and a local file needs no separate tool.
+
+        ``audio_denoise`` is tri-state on purpose: omitted, ``asr.audio_denoise``
+        from the configuration decides, so that key is a real setting rather than
+        a dead one.
         """
         from pathlib import Path
 
@@ -89,8 +103,9 @@ def register(server: FastMCP) -> None:
         from porter.models.request import BurnMode, JobOptions, JobRequest
 
         try:
+            config = resolve(None)
             options = JobOptions(
-                output_dir=_output_dir(output_dir, resolve(None)),
+                output_dir=_output_dir(output_dir, config),
                 burn=BurnMode(burn) if burn else BurnMode.DUAL,
                 target_lang=target_lang or "zh-Hans",
                 translator=translator,
@@ -98,7 +113,9 @@ def register(server: FastMCP) -> None:
                 llm_model=llm_model,
                 only_phase=_phase(only_phase),
                 force=force,
-                audio_denoise=audio_denoise,
+                audio_denoise=(
+                    config.asr.audio_denoise if audio_denoise is None else audio_denoise
+                ),
                 subtitle_file=Path(subtitle_file) if subtitle_file else None,
             )
             request = JobRequest.from_source(source, options)

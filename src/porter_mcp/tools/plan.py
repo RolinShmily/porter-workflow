@@ -66,6 +66,8 @@ def register(server: FastMCP) -> None:
 def _plan(source: str) -> dict[str, Any]:
     """Resolve config, build the plan, and shape the result for an agent."""
     from porter.config import resolve
+    from porter.context import RunContext
+    from porter.models.request import JobOptions
     from porter.plan import plan_for
 
     try:
@@ -76,9 +78,19 @@ def _plan(source: str) -> dict[str, Any]:
             "error": f"configuration could not be resolved: {exc.message}",
         }
 
+    # Hand the resolved config over instead of letting ``plan_for`` resolve its
+    # own: otherwise ``payload["output_dir"]`` below and the plan's view of the
+    # config are two independent reads of the same files, and the comment further
+    # down would be a claim rather than a fact.
+    ctx = RunContext(
+        job_id="plan",
+        options=JobOptions(output_dir=config.output_dir),
+        config=config,
+    )
+
     with LIGHT:
         try:
-            plan = plan_for(source)
+            plan = plan_for(source, ctx=ctx)
         except PorterError as exc:
             # A genuine fault -- a missing dependency, a cancelled job. An
             # unusable *source* does not come through here; plan_for reports it as

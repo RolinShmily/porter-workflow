@@ -242,8 +242,12 @@ def register(server: FastMCP) -> None:
 
         runner = FFmpegRunner()
         # The same selector the burn phase uses, so a stage burn and a full run
-        # cannot disagree about the hardware verdict.
-        profile = EncoderSelector(runner).select()
+        # cannot disagree about the hardware verdict -- including `auto_tune`.
+        try:
+            ffmpeg_config = resolve(None).ffmpeg
+        except PorterError:
+            ffmpeg_config = None
+        profile = EncoderSelector.for_config(runner, ffmpeg_config).select()
 
         with HEAVY:
             try:

@@ -98,7 +98,11 @@ def configure(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -
     parser.add_argument(
         "--no-denoise",
         action="store_true",
-        help="Skip the ASR vocal-enhancement pass.",
+        default=None,
+        help=(
+            "Skip the ASR vocal-enhancement pass. Left unset, asr.audio_denoise "
+            "from the configuration decides."
+        ),
     )
     parser.add_argument(
         "--only-phase",
@@ -148,7 +152,7 @@ def run(args: argparse.Namespace) -> int:
         cookies_file=args.cookies,
         cookies_browser=args.cookies_from_browser,
         subtitle_file=args.subtitle_file,
-        audio_denoise=not args.no_denoise,
+        audio_denoise=config.asr.audio_denoise if args.no_denoise is None else False,
         only_phase=Phase(args.only_phase) if args.only_phase else None,
         force=args.force,
     )
@@ -201,6 +205,14 @@ def run(args: argparse.Namespace) -> int:
         )
         render.warn("cancelled" if cancelled else str(exc))
         return render.EXIT_CANCELLED if cancelled else render.EXIT_ERROR
+
+    except KeyboardInterrupt:
+        # Ctrl+C. Recorded here rather than left to the reaper: this process is
+        # still alive and knows exactly what happened, and making another terminal
+        # infer an interruption from a dead PID is strictly worse information.
+        store.finish(job, JobResult(job_id=ctx.job_id, state=JobState.CANCELLED))
+        render.warn("interrupted; partial output is left in the task directory")
+        return render.EXIT_CANCELLED
 
     store.finish(job, result)
 

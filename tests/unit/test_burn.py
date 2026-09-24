@@ -591,8 +591,12 @@ class TestReuse:
         out.write_bytes(b"x")
         source = tmp_path / "src.mp4"
         source.write_bytes(b"x")
-        # `out` is written after `source`, so it is the newer of the two.
-        os.utime(out, None)
+        # Explicit mtimes rather than write ordering. On Windows two writes a
+        # moment apart land in the same filesystem timestamp tick, so "written
+        # second" does not imply "newer" -- and the assertions below then fail
+        # for a reason that has nothing to do with the code under test.
+        os.utime(source, (1_000_000, 1_000_000))
+        os.utime(out, (1_000_001, 1_000_001))
 
         assert _is_reusable(fake, out, (source,)) is True  # type: ignore[arg-type]
 
@@ -602,8 +606,9 @@ class TestReuse:
         out.write_bytes(b"x")
         sub = tmp_path / "sub.ass"
         sub.write_bytes(b"x")
-        # `sub` is written after `out`, so the release is stale.
-        os.utime(sub, None)
+        # One second newer, stated explicitly -- see the note above.
+        os.utime(out, (1_000_000, 1_000_000))
+        os.utime(sub, (1_000_001, 1_000_001))
 
         assert _is_reusable(fake, out, (sub,)) is False  # type: ignore[arg-type]
 

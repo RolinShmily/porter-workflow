@@ -81,6 +81,7 @@ def run(args: argparse.Namespace) -> int:
     infeasible plan exits non-zero.
     """
     from porter.config import resolve
+    from porter.context import RunContext
     from porter.models.request import BurnMode, JobOptions
     from porter.plan import plan_for
 
@@ -97,9 +98,16 @@ def run(args: argparse.Namespace) -> int:
         cookies_file=args.cookies,
         cookies_browser=args.cookies_from_browser,
     )
+    # Build the context here and hand it over, rather than passing only the
+    # options: ``plan_for`` resolves the configuration itself when given neither,
+    # which silently dropped ``--config`` for everything the plan reads from
+    # configuration (``asr.engine``, ``translator``, ffmpeg, subtitle style). The
+    # plan then described a different run from the one the same command line
+    # would actually perform.
+    ctx = RunContext(job_id="plan", options=options, config=config)
 
     try:
-        plan = plan_for(args.source, options=options)
+        plan = plan_for(args.source, ctx=ctx)
     except PorterError as exc:
         render.warn(str(exc))
         return render.EXIT_ERROR

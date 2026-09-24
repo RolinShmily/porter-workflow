@@ -397,6 +397,27 @@ def _default_transcriber(ctx: RunContext) -> Transcriber:
                 configured,
                 ", ".join(getattr(backend, "name", "?") for backend in ordered),
             )
+        elif not ordered[0].available(ctx):
+            # Naming a backend promotes it and keeps the rest as fallbacks, so an
+            # absent one is not fatal -- the job quietly runs on a *different*
+            # engine. The silence is the problem: someone who asked for `bijian`
+            # and got Bcut's output has no way to tell. The probe is a PATH
+            # lookup, and this runs at assembly -- before the expensive work,
+            # which is where a fixable misconfiguration belongs.
+            if isinstance(ordered[0], VideoCaptionerBackend):
+                _logger.warning(
+                    "asr.engine=%r needs the external VideoCaptioner CLI, which is not on "
+                    "PATH or in ~/.local/bin; the chain will fall back to another engine. "
+                    "Install it (pip install videocaptioner) or drop the setting.",
+                    configured,
+                )
+            else:
+                _logger.warning(
+                    "asr.engine=%r names %s, which is unavailable on this machine; the "
+                    "chain will fall back to another engine.",
+                    configured,
+                    ordered[0].name,
+                )
 
     chain = AsrChain()
     for backend in ordered:

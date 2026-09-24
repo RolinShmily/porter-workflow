@@ -494,6 +494,27 @@ class TestRunOptionsReachThePipeline:
         request = captured["request"]
         assert request.options.burn is BurnMode.ZH_ONLY  # type: ignore[attr-defined]
 
+    def test_denoise_falls_back_to_the_config_key(self, captured, tmp_path, capsys) -> None:
+        """``asr.audio_denoise`` used to be parsed and read by nobody.
+
+        The flag is tri-state on purpose: ``--no-denoise`` is an explicit no, and
+        leaving it out defers to the config instead of hard-coding ``True``.
+        """
+        cfg = tmp_path / "porter.json"
+        cfg.write_text('{"asr": {"audio_denoise": false}}', encoding="utf-8")
+
+        main(["--config", str(cfg), "run", URL, "-o", str(tmp_path)])
+
+        assert captured["request"].options.audio_denoise is False  # type: ignore[attr-defined]
+
+    def test_no_denoise_flag_wins_over_the_config(self, captured, tmp_path, capsys) -> None:
+        cfg = tmp_path / "porter.json"
+        cfg.write_text('{"asr": {"audio_denoise": true}}', encoding="utf-8")
+
+        main(["--config", str(cfg), "run", URL, "-o", str(tmp_path), "--no-denoise"])
+
+        assert captured["request"].options.audio_denoise is False  # type: ignore[attr-defined]
+
     def test_target_lang_and_force_land_on_the_request(self, captured, tmp_path, capsys) -> None:
         main(["run", URL, "-o", str(tmp_path), "--target-lang", "zh-Hant", "--force"])
 
@@ -546,6 +567,67 @@ def registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     path = tmp_path / "jobs.json"
     monkeypatch.setattr(records_module, "registry_file", lambda: path)
     return JobRegistry(path)
+
+
+class TestAnInterruptIsReportedNotRaised:
+    """Ctrl+C must produce a sentence, not a traceback ending in socket internals.
+
+    Measured before this existed: ``KeyboardInterrupt`` unwound out of the
+    pipeline and the user was shown the frame stack of whichever library call was
+    running -- ssl, socket, ffmpeg's pipe -- and the process exited with the
+    Windows control-exit code rather than 130.
+    """
+
+    @pytest.fixture
+    def interrupted(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A pipeline that raises ``KeyboardInterrupt`` where the real one would."""
+        import porter.pipeline as pipeline_module
+        import porter_cli.commands.run as run_module
+
+        class InterruptedPipeline:
+            @staticmethod
+            def default(ctx: object) -> InterruptedPipeline:
+                return InterruptedPipeline()
+
+            def run(self, request: object, ctx: object) -> object:
+                raise KeyboardInterrupt
+
+        monkeypatch.setattr(run_module, "Pipeline", InterruptedPipeline, raising=False)
+        monkeypatch.setattr(pipeline_module, "Pipeline", InterruptedPipeline)
+
+    def test_an_interrupt_in_a_run_exits_cancelled(
+        self, interrupted, tmp_path, capsys
+    ) -> None:
+        assert main(["run", URL, "-o", str(tmp_path)]) == render.EXIT_CANCELLED
+        assert "interrupted" in capsys.readouterr().err
+
+    def test_the_job_records_its_own_obituary(
+        self, interrupted, tmp_path, capsys
+    ) -> None:
+        """The process is alive and knows what happened, so it should say so.
+
+        Left to the reaper, the record sits at ``running`` until another porter
+        process notices the PID is gone -- inferring an interruption from a dead
+        process when this one could simply have written it down.
+        """
+        from porter.jobs import JobRegistry
+
+        main(["run", URL, "-o", str(tmp_path)])
+
+        assert [r.state for r in JobRegistry().read(reap=False)] == [
+            JobState.CANCELLED.value
+        ]
+
+    def test_an_interrupt_outside_a_job_is_reported(self, monkeypatch, capsys) -> None:
+        import porter_cli.app as app_module
+
+        def interrupt(args: object) -> int:
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(app_module, "dispatch", interrupt)
+
+        assert main(["doctor"]) == render.EXIT_CANCELLED
+        assert "interrupted" in capsys.readouterr().err
 
 
 class TestJobsCommand:
@@ -724,7 +806,7 @@ class TestPlanAcceptsCookies:
         assert args.cookies_from_browser == "firefox"
         assert args.cookies == "c.txt"
 
-    def test_the_flags_reach_the_job_options(self, monkeypatch) -> None:
+    def test_the_flags_reach_the_job_options(self, monkeypatch, tmp_path) -> None:
         from porter.errors import ExtractionError
         from porter_cli.app import build_parser
         from porter_cli.commands import plan as plan_cmd
@@ -732,22 +814,40 @@ class TestPlanAcceptsCookies:
         captured: dict[str, object] = {}
 
         def fake_plan_for(source, options=None, ctx=None):
-            captured["options"] = options
+            captured["ctx"] = ctx
             # A ``PorterError`` is caught by ``run`` and returned as a status,
             # which ends the test before it needs a fully-formed plan.
             raise ExtractionError("stop here")
 
         monkeypatch.setattr("porter.plan.plan_for", fake_plan_for)
 
+        cfg = tmp_path / "porter.json"
+        cfg.write_text('{"asr": {"engine": "whisper-api"}}', encoding="utf-8")
         args = build_parser().parse_args(
-            ["plan", URL, "--cookies-from-browser", "firefox", "--cookies", "c.txt"]
+            [
+                "--config",
+                str(cfg),
+                "plan",
+                URL,
+                "--cookies-from-browser",
+                "firefox",
+                "--cookies",
+                "c.txt",
+            ]
         )
 
         assert plan_cmd.run(args) == render.EXIT_ERROR
-        options = captured["options"]
-        assert options.cookies_browser == "firefox"
+
+        ctx = captured["ctx"]
+        assert ctx is not None, "the CLI must pass a context, not just the options"
+        assert ctx.options.cookies_browser == "firefox"
         # ``cookies_file`` is a ``Path`` on the model, not a ``str``.
-        assert options.cookies_file == Path("c.txt")
+        assert ctx.options.cookies_file == Path("c.txt")
+        # And the resolved config must reach the plan. Passing only ``options``
+        # made ``plan_for`` re-resolve the config itself, which silently dropped
+        # ``--config`` -- so the plan described a different run from the one the
+        # same command line would perform.
+        assert ctx.config.asr.engine == "whisper-api"
 
 
 class TestSymbolDegradesOnANonUtf8Console:

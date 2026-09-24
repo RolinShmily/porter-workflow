@@ -209,6 +209,63 @@ class TestAsrChainOrder:
         names = [b.name for b in Pipeline.default(_ctx(tmp_path)).transcriber.backends]
         assert names.index("whisper-api") < names.index("bcut") < names.index("videocaptioner")
 
+    def test_a_named_backend_that_is_missing_is_reported(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """Naming a backend keeps the rest as fallbacks, so a missing one is not
+        fatal -- which is exactly why silence is wrong: someone who asked for
+        `bijian` and got Bcut's output has no way to tell.
+
+        The absence is forced rather than assumed, so the test does not depend on
+        whether the machine happens to have the VideoCaptioner CLI installed.
+        """
+        import porter.pipeline as pipeline_module
+
+        monkeypatch.setattr("porter.asr.videocaptioner._resolve_binary", lambda: None)
+
+        messages: list[str] = []
+
+        class _Recorder:
+            def warning(self, message: str, *args: object) -> None:
+                messages.append(message % args if args else message)
+
+            def __getattr__(self, _name: str):
+                return lambda *args, **kwargs: None
+
+        monkeypatch.setattr(pipeline_module, "_logger", _Recorder())
+        # `bijian` is one of VideoCaptioner's engine names.
+        ctx = _ctx(tmp_path, PorterConfig(asr={"engine": "bijian"}))
+
+        names = [backend.name for backend in Pipeline.default(ctx).transcriber.backends]
+
+        assert names[0] == "videocaptioner", "naming still promotes"
+        assert any("VideoCaptioner" in message for message in messages), messages
+
+    def test_an_available_named_backend_is_not_reported_as_missing(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """The warning must track reality, not fire on every named backend."""
+        import porter.pipeline as pipeline_module
+
+        monkeypatch.setattr(
+            "porter.asr.videocaptioner._resolve_binary", lambda: "/usr/bin/videocaptioner"
+        )
+        messages: list[str] = []
+
+        class _Recorder:
+            def warning(self, message: str, *args: object) -> None:
+                messages.append(message % args if args else message)
+
+            def __getattr__(self, _name: str):
+                return lambda *args, **kwargs: None
+
+        monkeypatch.setattr(pipeline_module, "_logger", _Recorder())
+        ctx = _ctx(tmp_path, PorterConfig(asr={"engine": "bijian"}))
+
+        Pipeline.default(ctx)
+
+        assert not any("not on PATH" in message for message in messages), messages
+
 
 # ----------------------------------------------------------------------
 # Translation chain order
