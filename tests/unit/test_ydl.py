@@ -15,7 +15,15 @@ import pytest
 
 from porter.events import Phase, ProgressUpdated, collect
 from porter.logging import configure
-from porter.platforms.ydl import YdlLogRouter, YdlPolicy, build_ydl, download_progress_hook
+from porter.platforms import ydl
+from porter.platforms.ydl import (
+    JS_RUNTIME_PRIORITY,
+    YdlLogRouter,
+    YdlPolicy,
+    available_js_runtimes,
+    build_ydl,
+    download_progress_hook,
+)
 
 
 def _opts(ydl) -> dict:
@@ -123,7 +131,10 @@ class TestPolicyOptions:
             assert not _opts(ydl).get("remote_components")
 
     def test_js_runtimes_left_to_yt_dlp_by_default(self) -> None:
-        """yt-dlp enables Deno by itself; pinning it would only lose runtimes."""
+        """The *policy* default stays ``None``; the resolved options do not.
+
+        See :class:`TestJsRuntimeHandover` for what actually reaches yt-dlp.
+        """
         assert YdlPolicy().js_runtimes is None
 
     def test_js_runtimes_can_be_pinned(self) -> None:
@@ -281,3 +292,77 @@ class TestNothingReachesStdout:
             sys.stdout = original
 
         assert out.getvalue() == "", f"yt-dlp wrote to stdout: {out.getvalue()!r}"
+
+
+class TestJsRuntimeHandover:
+    """A runtime on the machine has to be a runtime yt-dlp can actually use.
+
+    yt-dlp's default is ``{'deno': {}}`` -- Deno *only*, hard coded in
+    ``YoutubeDL.__init__`` -- and it detects nothing else. This class exists
+    because of one measured case: the machine this repository is developed on has
+    Node installed and no Deno, so yt-dlp had **no usable runtime at all** while
+    ``porter doctor`` reported "JavaScript runtime: OK, node at ... (fully
+    supported by yt-dlp)". The claim was true of yt-dlp and false of porter,
+    because nothing here ever handed Node over.
+    """
+
+    def _resolved(self, monkeypatch: pytest.MonkeyPatch, installed: set[str]) -> dict:
+        """The options yt-dlp receives, for a machine with ``installed`` present."""
+        monkeypatch.setattr(
+            ydl,
+            "available_js_runtimes",
+            lambda *_a, **_k: {name: {} for name in JS_RUNTIME_PRIORITY if name in installed},
+        )
+        with build_ydl(YdlPolicy()) as model:
+            return _opts(model)
+
+    def test_a_node_only_machine_hands_node_over(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The regression: this used to resolve to nothing usable at all.
+        assert self._resolved(monkeypatch, {"node"})["js_runtimes"] == {"node": {}}
+
+    def test_deno_wins_when_it_is_present(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Upstream's preference survives: handing over a superset does not demote
+        # Deno, because yt-dlp selects by its own priority among what it is given.
+        resolved = self._resolved(monkeypatch, {"deno", "node"})["js_runtimes"]
+        assert list(resolved) == ["deno", "node"]
+
+    def test_finding_nothing_changes_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A machine with no runtime behaves exactly as it did before this existed.
+
+        The assertion is against yt-dlp's *own* fallback rather than the absence of
+        the key, because the key is never absent: ``YoutubeDL.__init__`` runs
+        ``params['js_runtimes'] = params.get('js_runtimes', {'deno': {}})`` and so
+        injects ``{'deno': {}}`` whenever nameless. What matters is that porter
+        contributed nothing to it.
+        """
+        assert self._resolved(monkeypatch, set())["js_runtimes"] == {"deno": {}}
+
+    def test_an_explicit_policy_still_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(ydl, "available_js_runtimes", lambda *_a, **_k: {"node": {}})
+        with build_ydl(YdlPolicy(js_runtimes={"bun": {}})) as model:
+            assert _opts(model)["js_runtimes"] == {"bun": {}}
+
+    def test_the_priority_order_is_yt_dlps_own(self) -> None:
+        # Pinned to yt-dlp's documented order. ``bun`` last, below ``quickjs``, is
+        # the part intuition about speed gets backwards.
+        assert JS_RUNTIME_PRIORITY == ("deno", "node", "quickjs", "bun")
+
+    @pytest.mark.parametrize(
+        ("installed", "expected"),
+        [
+            ({"deno"}, {"deno": {}}),
+            ({"node"}, {"node": {}}),
+            ({"quickjs"}, {"quickjs": {}}),
+            ({"bun"}, {"bun": {}}),
+            ({"deno", "bun"}, {"deno": {}, "bun": {}}),
+            ({"node", "quickjs"}, {"node": {}, "quickjs": {}}),
+            (set(), {}),
+        ],
+    )
+    def test_only_what_is_on_path_is_listed(
+        self, installed: set[str], expected: dict
+    ) -> None:
+        found = available_js_runtimes(
+            which=lambda name: f"/usr/bin/{name}" if name in installed else None
+        )
+        assert found == expected

@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-09-24
+
+### Fixed
+
+- **A JavaScript runtime you already have is now actually used.** yt-dlp's
+  default for ``js_runtimes`` is a hard-coded ``{'deno': {}}`` -- Deno only -- and
+  it detects nothing else, so a machine with Node installed and no Deno had **no
+  usable runtime at all** while ``porter doctor`` reported "JavaScript runtime:
+  OK, node at ... (fully supported by yt-dlp)". The finding was true of yt-dlp
+  and false of porter, because nothing ever handed Node over. porter now passes
+  every runtime it finds on ``PATH`` (deno, node, quickjs, bun) and lets yt-dlp
+  pick by its own priority, so Deno still wins where it exists and Node takes
+  over where it does not. Measured on the machine that exposed this: zero usable
+  runtimes before, ``['node']`` after.
+- The runtime order in ``porter doctor`` was ``deno, node, bun, quickjs``, which
+  contradicts yt-dlp's actual priority -- ``bun`` ranks *last*, below
+  ``quickjs``. The probe and the download path now share one list
+  (``porter.platforms.ydl.JS_RUNTIME_PRIORITY``) instead of keeping two that can
+  disagree, which is exactly how the above went unnoticed.
+
 ## [0.2.3] - 2026-09-24
 
 ### Added
@@ -322,7 +342,8 @@ Skill of the same name).
   assets and a standardised `raw/` + `cooked/` output layout.
 - Agent Skill packaging (`SKILL.md`, scripts, references, example config).
 
-[Unreleased]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.0...v0.2.1

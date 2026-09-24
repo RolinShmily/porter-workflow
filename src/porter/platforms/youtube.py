@@ -41,7 +41,8 @@ SPEC = PlatformSpec(
     # `t=15s` is a start offset here, not share tracking.
     keep_query_params=frozenset({"t"}),
     notes=(
-        "Requires an external JavaScript runtime (Deno recommended, Node >= 20 "
-        "also works) so yt-dlp can solve YouTube's JS challenges."
+        "Requires an external JavaScript runtime so yt-dlp can solve YouTube's JS "
+        "challenges. Deno, Node >= 20, QuickJS and Bun are all supported; porter "
+        "passes yt-dlp every one it finds on PATH."
     ),
 )

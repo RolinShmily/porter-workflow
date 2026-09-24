@@ -33,6 +33,7 @@ Defence in depth, in the order it takes effect:
 
 from __future__ import annotations
 
+import shutil
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -61,8 +62,10 @@ NON_VIDEO_EXTENSIONS: frozenset[str] = VIDEO_EXTENSIONS.union(
 )
 
 __all__ = [
+    "JS_RUNTIME_PRIORITY",
     "VIDEO_EXTENSIONS",
     "YdlPolicy",
+    "available_js_runtimes",
     "build_ydl",
     "download_progress_hook",
     "has_video_stream",
@@ -78,6 +81,12 @@ _DEFAULT_RETRIES = 3
 #: Package-private alias for the EJS source yt-dlp-pypi users must name
 #: explicitly. The official standalone builds bundle the same scripts.
 _EJS_GITHUB = "ejs:github"
+
+#: JS runtimes yt-dlp can drive, highest priority first. Quoted from its own
+#: ``--js-runtimes`` help -- not a preference invented here. Two consequences
+#: worth knowing: only ``deno`` is enabled without being named, and ``bun`` is
+#: *last*, below ``quickjs``, despite being the fastest of the four.
+JS_RUNTIME_PRIORITY: tuple[str, ...] = ("deno", "node", "quickjs", "bun")
 
 #: Player clients tried in order for YouTube. Ordered by observed reliability:
 #: the embedded client is least likely to hit a bot check, and the mobile
@@ -231,6 +240,27 @@ def has_video_stream(info: Mapping[str, Any]) -> bool:
     return False
 
 
+def available_js_runtimes(which: Callable[[str], str | None] | None = None) -> dict[str, Any]:
+    """Every JS runtime on ``PATH``, keyed the way yt-dlp's ``js_runtimes`` expects.
+
+    This exists because yt-dlp's default is ``{'deno': {}}`` -- Deno *only*, hard
+    coded in ``YoutubeDL.__init__`` -- and it detects nothing else. So a machine
+    with Node installed and no Deno ends up with **no usable runtime at all**,
+    while ``porter doctor`` happily reported "JavaScript runtime: OK, node ...
+    fully supported by yt-dlp". The advice was true of yt-dlp and false of
+    porter, because nothing here ever handed Node over.
+
+    Handing over everything present is safe: yt-dlp selects among the enabled and
+    *available* runtimes by its own priority, so Deno still wins wherever it
+    exists and Node only takes over in its absence.
+
+    Shared with ``porter.doctor`` rather than duplicated, because the failure
+    above was precisely two lists of runtimes that disagreed.
+    """
+    lookup = which or shutil.which
+    return {name: {} for name in JS_RUNTIME_PRIORITY if lookup(name)}
+
+
 def build_ydl(
     policy: YdlPolicy | None = None,
     *,
@@ -293,6 +323,13 @@ def build_ydl(
         opts["remote_components"] = list(policy.remote_components)
     if policy.js_runtimes is not None:
         opts["js_runtimes"] = dict(policy.js_runtimes)
+    else:
+        # Rather than leaving yt-dlp's Deno-only default in place, name whatever
+        # is actually installed. An empty result leaves the key unset, so a
+        # machine with no runtime behaves exactly as it did before.
+        discovered = available_js_runtimes()
+        if discovered:
+            opts["js_runtimes"] = discovered
     if policy.cookies_file:
         opts["cookiefile"] = policy.cookies_file
     if policy.cookies_browser:

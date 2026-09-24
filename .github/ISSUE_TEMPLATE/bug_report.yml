@@ -55,7 +55,7 @@ body:
     attributes:
       label: Porter version
       description: Output of `porter --version`.
-      placeholder: "0.2.3"
+      placeholder: "0.2.4"
     validations:
       required: true
 

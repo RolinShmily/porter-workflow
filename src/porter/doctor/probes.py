@@ -61,6 +61,7 @@ from porter.errors import PorterError
 from porter.logging import get_logger
 from porter.media.encode import EncoderSelector, HardwareTier
 from porter.media.ffmpeg import FFmpegRunner, FFmpegTools
+from porter.platforms.ydl import JS_RUNTIME_PRIORITY
 
 __all__ = [
     "CapabilityReport",
@@ -88,17 +89,17 @@ _logger = get_logger(__name__)
 #: something is already wrong.
 _PROBE_TIMEOUT = 10.0
 
-#: JS runtimes yt-dlp can drive, best first. Deno is upstream's recommendation
-#: and is the only one yt-dlp enables by default.
-_JS_RUNTIMES = ("deno", "node", "bun", "quickjs")
-
 #: Runtimes yt-dlp will accept are not all equally capable. Recorded so the
-#: finding can say which one was found rather than only that one exists.
+#: finding can say which one was found rather than only that one exists. The
+#: *order* lives in :data:`porter.platforms.ydl.JS_RUNTIME_PRIORITY`, which is
+#: also what decides the runtime the pipeline hands to yt-dlp -- one list, since
+#: two of them previously disagreed and this probe advertised a runtime the
+#: download path never enabled.
 _JS_RUNTIME_NOTES = {
     "deno": "yt-dlp's recommended runtime",
     "node": "fully supported by yt-dlp",
-    "bun": "supported by yt-dlp",
     "quickjs": "supported, but slower and incomplete for some challenges",
+    "bun": "supported by yt-dlp, though upstream ranks it last",
 }
 
 
@@ -369,7 +370,7 @@ def probe_js_runtime(*, which: Any = None) -> Finding:
     invisible until a download is refused.
     """
     lookup = which or shutil.which
-    for name in _JS_RUNTIMES:
+    for name in JS_RUNTIME_PRIORITY:
         path = lookup(name)
         if path:
             note = _JS_RUNTIME_NOTES.get(name, "supported by yt-dlp")
@@ -378,8 +379,8 @@ def probe_js_runtime(*, which: Any = None) -> Finding:
     return Finding.degraded(
         "js_runtime",
         "JavaScript runtime",
-        "none of deno/node/bun/quickjs found; YouTube extraction will silently "
-        "yield fewer formats",
+        f"none of {'/'.join(JS_RUNTIME_PRIORITY)} found; YouTube extraction will "
+        "silently yield fewer formats",
         "js_runtime",
     )
 

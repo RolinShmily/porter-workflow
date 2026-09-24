@@ -32,7 +32,7 @@ def configure(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -
         description=(
             "Diagnose the environment and print installation guidance for anything "
             "missing. Required capabilities: FFmpeg with libass, and for YouTube an "
-            "external JavaScript runtime (Deno recommended)."
+            "external JavaScript runtime (any of Deno, Node >= 20, QuickJS or Bun)."
         ),
     )
     parser.add_argument(

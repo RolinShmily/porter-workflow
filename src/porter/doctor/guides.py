@@ -99,13 +99,17 @@ GUIDES: dict[str, Remediation] = {
     "js_runtime": Remediation(
         summary="yt-dlp needs an external JavaScript runtime for full YouTube extraction.",
         steps=(
-            "Deno (recommended):  curl -fsSL https://deno.land/install.sh | sh",
-            "Node (alternative):  sudo apt install nodejs   # must be >= 20",
-            "Verify:              deno --version",
+            "Deno (yt-dlp's own preference):  curl -fsSL https://deno.land/install.sh | sh",
+            "Node (what you may already have): sudo apt install nodejs   # must be >= 20",
+            "Verify:                          <runtime> --version",
         ),
         note=(
-            "Without one, extraction does not fail: it returns fewer formats, so "
-            "the problem only shows up as an unexplained 'format not available'."
+            "Any one of deno/node/quickjs/bun is enough, and porter hands over "
+            "every one it finds on PATH, so a runtime you already have is used "
+            "without configuring anything. Deno is only *ranked* first by "
+            "yt-dlp's priority order, not required. Without any of them, "
+            "extraction does not fail: it returns fewer formats, so the problem "
+            "only shows up as an unexplained 'format not available'."
         ),
         url="https://github.com/yt-dlp/yt-dlp/wiki/EJS",
     ),
