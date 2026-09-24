@@ -30,7 +30,6 @@ These are declared in `[project.dependencies]` and installed with every copy of
 | [requests](https://github.com/psf/requests) | Apache-2.0 | HTTP for platform inspection, link resolution and the key-free translation backends. |
 | [pydantic](https://github.com/pydantic/pydantic) | MIT | Configuration schema and the typed pipeline models. |
 | [platformdirs](https://github.com/platformdirs/platformdirs) | MIT | Locating the per-user configuration directory. |
-| [tomli](https://github.com/hukkin/tomli) | MIT | TOML parsing on Python 3.10 only (3.11+ uses `tomllib`). |
 
 ### 1.1 What `yt-dlp[default]` pulls in
 
@@ -47,7 +46,7 @@ selection, and it transitively installs:
 | [urllib3](https://github.com/urllib3/urllib3) | MIT | Transport for `requests`. |
 | [websockets](https://github.com/python-websockets/websockets) | BSD-3-Clause | WebSocket-based extractors. |
 | [yt-dlp-ejs](https://github.com/yt-dlp/yt-dlp-ejs) | Unlicense AND MIT AND ISC | JavaScript challenge solver used by recent YouTube support. |
-| [typing-extensions](https://github.com/python/typing_extensions) | PSF-2.0 | Backports for Python 3.10. |
+| [typing-extensions](https://github.com/python/typing_extensions) | PSF-2.0 | Typing backports used by transitive dependencies. |
 
 ---
 

@@ -105,7 +105,9 @@ _JS_RUNTIME_NOTES = {
 class Severity(str, Enum):
     """Impact of a finding that did **not** pass.
 
-    ``(str, Enum)`` rather than :class:`enum.StrEnum`` for Python 3.10 support.
+    ``(str, Enum)`` rather than :class:`enum.StrEnum`: the floor is 3.11 now, so
+    ``StrEnum`` exists, but the two differ in what ``str()`` and f-strings produce
+    and changing that is a separate, user-visible decision.
     """
 
     INFO = "info"
@@ -258,10 +260,10 @@ class ProbeContext:
 
 
 def probe_python(*, version_info: tuple[int, ...] | None = None) -> Finding:
-    """Python 3.10+, which is what ``requires-python`` promises."""
+    """Python 3.11+, which is what ``requires-python`` promises."""
     info = version_info or sys.version_info[:3]
     version = ".".join(str(part) for part in info)
-    if info[:2] < (3, 10):
+    if info[:2] < (3, 11):
         return Finding.blocked(
             "python",
             "Python interpreter",

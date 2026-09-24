@@ -7,7 +7,7 @@
 <p align="center">
   <a href="https://github.com/RolinShmily/porter-workflow/actions/workflows/test.yml"><img alt="CI" src="https://github.com/RolinShmily/porter-workflow/actions/workflows/test.yml/badge.svg"></a>
   <a href="https://pypi.org/project/porter-workflow/"><img alt="PyPI" src="https://img.shields.io/pypi/v/porter-workflow"></a>
-  <img alt="Python 3.10 - 3.13" src="https://img.shields.io/badge/python-3.10%20%E2%80%93%203.13-blue">
+  <img alt="Python 3.11 - 3.13" src="https://img.shields.io/badge/python-3.11%20%E2%80%93%203.13-blue">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green"></a>
 </p>
 
@@ -31,7 +31,7 @@
 
 ## 安装
 
-需要 **Python ≥ 3.10**。
+需要 **Python ≥ 3.11**。
 
 ```bash
 # CLI，最小安装（纯 Python；翻译无需 Key，但转录需要——见下文）

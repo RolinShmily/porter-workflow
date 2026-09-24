@@ -25,7 +25,7 @@ agreed before you spend time on it.
 
 | Requirement | Why |
 | --- | --- |
-| Python ≥ 3.10 | The floor declared in `pyproject.toml`. CI tests 3.10–3.13. |
+| Python ≥ 3.11 | The floor declared in `pyproject.toml`. CI tests 3.11–3.13. |
 | [uv](https://docs.astral.sh/uv/) | Environment and dependency management used throughout. |
 | FFmpeg + ffprobe, built with `libass` | The whole media layer. The test suite runs real encodes. |
 | Deno or Node ≥ 20 | Only needed for live YouTube downloads, not for the test suite. |

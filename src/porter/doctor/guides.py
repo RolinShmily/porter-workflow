@@ -64,7 +64,7 @@ _FFMPEG_COMMON_NOTE = (
 
 GUIDES: dict[str, Remediation] = {
     "python_version": Remediation(
-        summary="porter requires Python 3.10 or newer.",
+        summary="porter requires Python 3.11 or newer.",
         steps=(
             "python3 --version",
             "Use pyenv, uv, or your distribution's python3.12 package to get a newer interpreter.",

@@ -64,6 +64,13 @@ commit, never a tag or an upload, so this is the first version anyone can instal
 
 ### Changed
 
+- **Python 3.11 is now the floor**, up from 3.10. The declared `>=3.10` was not
+  true: the recommended `[asr-local]` extra could not install there at all,
+  because `faster-whisper` pulls in `onnxruntime`, which stopped publishing
+  `cp310` wheels after 1.23.2 — so `pip install porter-workflow[asr-local]`
+  failed outright on 3.10 while `requires-python` claimed it worked. Python 3.10
+  reaches end of life on 2026-10-31. The `tomli` dependency and its conditional
+  import are gone with it, since `tomllib` is standard from 3.11.
 - **Dependencies are locked.** `uv.lock` is committed and CI installs from it
   with `uv sync --locked`, so the environment that is tested is the environment
   that is described. Changing a dependency requires re-locking in the same

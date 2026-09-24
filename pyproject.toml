@@ -17,7 +17,7 @@ readme = "README.md"
 # absent: it is deprecated by the same PEP, and shipping both is contradictory.
 license = "MIT"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 authors = [{ name = "RoL1n_SrP" }]
 keywords = [
     "youtube",
@@ -34,7 +34,6 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -46,11 +45,6 @@ dependencies = [
     "requests>=2.31",
     "pydantic>=2.0",
     "platformdirs>=4.0",
-    # `tomllib` is stdlib only from 3.11. `tomli` is the reference implementation
-    # that was upstreamed into it, so this keeps the declared >=3.10 floor
-    # honest rather than silently broken -- `import porter` reads TOML config, so
-    # without it the whole package fails to import on 3.10.
-    "tomli>=2.0; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
@@ -112,12 +106,23 @@ include = [
 # ---------------------------------------------------------------------------
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+# Must track `requires-python`: ruff uses this to decide which imports are stdlib
+# and which `UP` rewrites apply. Left at py310 it classified `tomllib` as
+# third-party and flagged the sorted import block as unsorted.
+target-version = "py311"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "BLE", "A", "C4", "SIM", "T20", "RUF", "S"]
-ignore = ["E501"]
+# E501 is the formatter's business.
+#
+# UP042 wants the six ``(str, Enum)`` classes to become ``StrEnum``, which the 3.11
+# floor makes available. Not done here on purpose: the two differ in what ``str()``,
+# f-strings and ``format()`` produce -- ``"Severity.BLOCKER"`` against ``"blocker"``,
+# measured -- so it is a user-visible change, not a modernisation. Nothing needs it
+# today: every read site uses ``.value`` (JSON is identical either way). Worth doing
+# as its own change, with the output compared before and after.
+ignore = ["E501", "UP042"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/porter_cli/**" = ["T20"]
@@ -130,7 +135,7 @@ ignore = ["E501"]
 "src/porter_mcp/stdout_guard.py" = ["N818"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 strict = true
 ignore_missing_imports = true
 # CI type-checks on Linux, and mypy evaluates one platform at a time: without this
@@ -146,7 +151,7 @@ namespace_packages = true
 # ---------------------------------------------------------------------------
 # Dependencies whose *stubs* require a newer Python than we support.
 #
-# ``python_version = "3.10"`` is the floor we promise, so mypy parses with 3.10
+# ``python_version = "3.11"`` is the floor we promise, so mypy parses with 3.11
 # syntax rules. ``numpy``'s ``__init__.pyi`` uses PEP 695 ``type`` statements
 # (3.12+), and mypy aborts the entire run on it rather than reporting one module:
 #

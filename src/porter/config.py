@@ -25,26 +25,12 @@ from __future__ import annotations
 
 import json
 import os
-import sys
+import tomllib
 from pathlib import Path
 from typing import Any
 
 import platformdirs
 from pydantic import BaseModel, ConfigDict, Field
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    # ``tomllib`` only entered the standard library in 3.11, while
-    # ``requires-python`` is >=3.10 and the rest of the codebase deliberately
-    # stays 3.10-compatible (see the ``(str, Enum)`` notes in
-    # ``media/encode.py`` and ``doctor/probes.py``). ``tomli`` is the reference
-    # implementation that was upstreamed into 3.11's ``tomllib``, so this is the
-    # same parser under a different name. Imported unconditionally rather than
-    # lazily inside ``load_config_file``: it is a stdlib module, so there is no
-    # start-up cost to defer, and a module-level import fails loudly and early
-    # if the conditional dependency is ever missing.
-    import tomli as tomllib
 
 from porter.errors import ConfigError
 from porter.utils.text import sanitize_filename

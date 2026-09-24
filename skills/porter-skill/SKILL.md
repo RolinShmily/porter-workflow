@@ -6,12 +6,12 @@ description: >
   subtitles, and burns a ready-to-publish release video. Use whenever the user
   asks to download a video, generate or translate subtitles, transcribe audio,
   make a Chinese-subtitled (熟肉) version, or localize streaming media.
-  Requires Python >=3.10 and FFmpeg with libass. Transcription needs an
+  Requires Python >=3.11 and FFmpeg with libass. Transcription needs an
   OpenAI-compatible Whisper API key or the VideoCaptioner CLI; translation needs
   no key.
 license: MIT
 compatibility: >
-  Python >=3.10 plus FFmpeg (with libass) on PATH. YouTube downloads also need
+  Python >=3.11 plus FFmpeg (with libass) on PATH. YouTube downloads also need
   an external JavaScript runtime (Deno recommended). Transcription requires
   OPENAI_API_KEY or WHISPER_API_KEY, or the videocaptioner CLI; translation works
   without any key. Optional: pip install videocaptioner for extra local engines.

@@ -185,10 +185,21 @@ class TestCapabilityReport:
 
 class TestPythonProbe:
     def test_a_supported_version_passes(self) -> None:
-        assert probe_python(version_info=(3, 10, 0)).ok is True
+        assert probe_python(version_info=(3, 11, 0)).ok is True
         assert probe_python(version_info=(3, 14, 0)).ok is True
 
     def test_an_old_version_blocks(self) -> None:
+        # 3.10 is below the floor now, not merely old: the recommended
+        # ``[asr-local]`` extra cannot install there at all (onnxruntime ships no
+        # cp310 wheel), so passing it would tell a user their setup is fine when
+        # the documented install command fails.
+        finding = probe_python(version_info=(3, 10, 0))
+        assert finding.ok is False
+        assert finding.severity is Severity.BLOCKER
+        assert "3.10.0" in finding.detail
+        assert guide_for(finding.remediation_key) is not None
+
+    def test_an_ancient_version_blocks(self) -> None:
         finding = probe_python(version_info=(3, 9, 18))
         assert finding.ok is False
         assert finding.severity is Severity.BLOCKER

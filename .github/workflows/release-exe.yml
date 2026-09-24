@@ -53,9 +53,9 @@ jobs:
       - name: Install PyInstaller
         run: python -m pip install --disable-pip-version-check pyinstaller
 
-      # The launcher must parse on the oldest interpreter we ship to, because a
-      # user with only 3.10 on PATH may run `python launcher.py` directly when
-      # the binary is unavailable.
+      # The launcher must parse on the oldest interpreter we ship to, which is
+      # 3.11: a user with only 3.11 on PATH may run `python launcher.py` directly
+      # when the binary is unavailable. Compiling under 3.12 catches 3.13+ syntax.
       - name: The launcher must not use 3.13+ syntax
         run: python -m py_compile packaging/launcher.py
         if: matrix.os == 'ubuntu-latest'

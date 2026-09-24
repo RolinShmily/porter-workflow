@@ -92,10 +92,11 @@ class HardwareTier(str, Enum):
     """How the encode will be performed. Kept from v0.1 because the names are
     already in configuration files and operator vocabulary.
 
-    ``(str, Enum)`` rather than :class:`enum.StrEnum`, which is 3.11+ while this
-    package supports 3.10. The two behave identically for the things that matter
-    here — ``HardwareTier.HARDWARE == "hardware"``, JSON serialisation as a plain
-    string — so this is a compatibility cost of nothing.
+    ``(str, Enum)`` rather than :class:`enum.StrEnum`. The floor is 3.11, so
+    ``StrEnum`` is available, but the two differ in what ``str()`` and f-strings
+    produce, and changing that is a separate user-visible decision rather than part
+    of a support-floor bump. For what matters here they agree —
+    ``HardwareTier.HARDWARE == "hardware"``, JSON serialisation as a plain string.
 
     ``HARDWARE`` ⇄ old Tier A, ``SOFTWARE_FAST`` ⇄ Tier B, ``SOFTWARE_SLOW`` ⇄
     Tier C. The names now describe what was *measured* rather than assumed from

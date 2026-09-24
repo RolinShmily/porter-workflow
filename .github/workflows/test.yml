@@ -34,9 +34,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # requires-python is >=3.10, so 3.10 is the floor that must keep working
+        # requires-python is >=3.11, so 3.11 is the floor that must keep working
         # and 3.13 is the newest interpreter the project claims.
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
 
