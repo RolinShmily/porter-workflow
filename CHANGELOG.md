@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-09-24
+
+### Fixed
+
+- **Bilingual cues no longer pair a Chinese line with the English of a different
+  clause.** Cutting a translated sentence back into cues splits the Chinese by
+  phrasing and then cuts the English to match, but the English breakpoint search
+  ranged over the whole remaining sentence. A terminal-punctuation bonus of +15
+  is worth about 7.5 words of the distance penalty (-2/word), so a break a whole
+  clause from its target beat the correct one. On a real 59-sentence transcript,
+  9 of the 45 split sentences put more than 20% of one language against 20% of
+  the other -- a viewer reading "…on the cash map" beside "…you're completely
+  safe." The search is now bounded to a window around the Chinese-driven target
+  (15% of the sentence's words), so punctuation chooses among *nearby* breaks
+  instead of dragging the cut away. Measured on that transcript: 9 of 45 -> 1.
+
 ## [0.2.4] - 2026-09-24
 
 ### Fixed
@@ -342,7 +358,8 @@ Skill of the same name).
   assets and a standardised `raw/` + `cooked/` output layout.
 - Agent Skill packaging (`SKILL.md`, scripts, references, example config).
 
-[Unreleased]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.4...HEAD
+[Unreleased]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.5...HEAD
+[0.2.5]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.1...v0.2.2

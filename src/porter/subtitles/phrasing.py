@@ -239,6 +239,15 @@ HANGING_CONJUNCTIONS = {
     "when", "where", "as",
 }
 
+#: How far, as a fraction of a sentence's words, an English cut may be moved from
+#: the position the Chinese implies. Punctuation makes a break read better, so the
+#: scoring rewards it -- but ``split_english_text_to_n_parts`` used to search every
+#: remaining position, and a terminal-punctuation bonus (+15) is worth about 7.5
+#: words of the distance penalty (-2/word). A break a whole clause away therefore
+#: beat the correct one, pairing a Chinese line with the English of a different
+#: clause. Bounded at 15% so punctuation chooses among *nearby* breaks only.
+_BREAK_WINDOW_RATIO = 0.15
+
 #: Chinese connectives used as secondary split points when a phrase is too long
 #: for one line. Order matters: the first match in the string wins.
 CHINESE_CONJUNCTIONS = [
@@ -555,13 +564,27 @@ def split_english_text_to_n_parts(
     chosen_cuts: list[int] = []
     min_cut = 0
 
+    # How far a cut may move from where the Chinese put it. Without this the
+    # search below ranges over the whole remaining sentence, and because a
+    # terminal punctuation bonus is worth ~7.5 words of distance penalty, a cut
+    # nine words away from its target wins whenever it lands after a full stop --
+    # which is a whole clause, and shows the viewer a Chinese line and an English
+    # line that are not each other's translation. Measured on a real 59-sentence
+    # transcript: 9 of the 45 split sentences drifted past a 20% share mismatch.
+    window = max(2, round(total_words * _BREAK_WINDOW_RATIO))
+
     for i, target_pos in enumerate(target_cuts):
         remaining_parts = (n_parts - 1) - i
         max_cut = total_words - 1 - remaining_parts
 
-        best_k = min_cut
+        low = max(min_cut, round(target_pos) - window)
+        high = min(max_cut, round(target_pos) + window)
+        if low > high:  # window missed the legal span entirely
+            low, high = min_cut, max_cut
+
+        best_k = low
         best_score = float("-inf")
-        for k in range(min_cut, max_cut + 1):
+        for k in range(low, high + 1):
             candidate = score_breakpoint(k, target_pos)
             if candidate > best_score:
                 best_score = candidate

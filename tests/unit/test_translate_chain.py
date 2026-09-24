@@ -532,6 +532,46 @@ class TestTranslationHappensOnSentences:
         assert min(item.start_ms for item in result.items) >= 1000
         assert max(item.end_ms for item in result.items) <= 9000
 
+    def test_the_english_cut_follows_the_chinese_cut(self, ctx, tmp_path) -> None:
+        """A cue's English must be the translation of that cue's Chinese.
+
+        Regression: the English breakpoint search ranged over the whole remaining
+        sentence, and a terminal-punctuation bonus is worth about 7.5 words of the
+        distance penalty (-2/word), so a cut a full clause away could beat the
+        correct one. The sentence below is from a real transcript and paired
+        Chinese "...on the cash map" with English "...you're completely safe." --
+        a 33.6% share mismatch. Across that transcript 9 of 45 split sentences
+        drifted past 20%; bounding the search to a window took it to 1.
+        """
+        english = (
+            "Counter-strike is also a game where you can hide behind this blue door "
+            "on cash and think you're completely safe. But if you're touching the "
+            "door, the enemy can."
+        )
+        chinese = (
+            "反恐精英也是一款你可以躲在现金地图上的这扇蓝色门后面"
+            "并认为自己完全安全的游戏。但如果你碰到门\uff0c敌人也可以。"
+        )
+        backend = FakeBackend("only", lambda texts: [chinese for _ in texts])
+        subtitles = _set(tmp_path, count=1)
+        subtitles.items[0].start_ms = 0
+        subtitles.items[0].end_ms = 8000
+        subtitles.items[0].source_text = english
+
+        result = TranslationChain([backend]).translate(subtitles, "zh-Hans", ctx)
+
+        assert len(result.items) > 1, "this sentence is long enough to be split"
+        total_zh = sum(len(item.target_text) for item in result.items)
+        total_en = sum(len(item.source_text) for item in result.items)
+        for item in result.items:
+            zh_share = len(item.target_text) / total_zh
+            en_share = len(item.source_text) / total_en
+            assert abs(zh_share - en_share) < 0.20, (
+                f"cue {item.index} pairs {zh_share:.0%} of the Chinese with "
+                f"{en_share:.0%} of the English: "
+                f"{item.target_text!r} / {item.source_text!r}"
+            )
+
     def test_the_transcript_records_what_the_translator_was_given(
         self, ctx, tmp_path
     ) -> None:
