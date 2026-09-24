@@ -102,23 +102,31 @@ jobs:
       - name: Rename the binaries to include their platform
         run: |
           set -euo pipefail
-          cd artifacts
-          for dir in porter-*; do
-            target="${dir#porter-}"
+          # Flatten into a directory of its own. Renaming in place does not work:
+          # the artifacts land in directories *named* `porter-<target>`, so
+          # `mv "$dir/porter" "porter-${target}"` resolves the destination to that
+          # directory and moves the file into itself --
+          #     mv: 'porter-linux-x86_64/porter' and 'porter-linux-x86_64/porter'
+          #     are the same file
+          # Only the Windows case appeared to work, because `porter-<target>.exe`
+          # happens not to be a directory name.
+          mkdir -p release
+          for dir in artifacts/porter-*; do
+            target="${dir#artifacts/porter-}"
             for f in "$dir"/*; do
               base="$(basename "$f")"
               # Keep the .exe suffix recognisable; append the platform otherwise.
               case "$base" in
-                *.exe) mv "$f" "porter-${target}.exe" ;;
-                *)     mv "$f" "porter-${target}" ;;
+                *.exe) mv "$f" "release/porter-${target}.exe" ;;
+                *)     mv "$f" "release/porter-${target}" ;;
               esac
             done
           done
-          ls -l
+          ls -l release
 
       - uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/porter-*
+          files: release/porter-*
           # Users have to know the download is not self-contained.
           body: |
             ## 安装方式
