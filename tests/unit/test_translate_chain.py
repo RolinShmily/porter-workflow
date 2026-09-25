@@ -403,6 +403,18 @@ class TestOutput:
         text = broken.subtitle_bilingual_ass.read_text(encoding="utf-8")
         assert "PlayResX: 1920" in text
 
+    def test_adaptive_font_size_scales_with_resolution(self, ctx, tmp_path) -> None:
+        """Low-resolution videos must get scaled-down font sizes, not 1080p defaults."""
+        low_res = _set(tmp_path, width=640, height=360)
+        TranslationChain([FakeBackend("ok", chinese)]).translate(low_res, "zh-Hans", ctx)
+
+        text = low_res.subtitle_bilingual_ass.read_text(encoding="utf-8")
+        assert "PlayResX: 640" in text
+        assert "PlayResY: 360" in text
+        # Under 360p, 52 font size should scale to 18
+        assert "Style: SubtitleZh,Microsoft YaHei,18," in text
+        assert "Style: SubtitleEn,Arial,12," in text
+
     def test_target_lang_is_passed_through(self, ctx, tmp_path) -> None:
         seen: list[str] = []
 

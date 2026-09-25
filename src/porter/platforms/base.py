@@ -66,7 +66,7 @@ from porter.media.prepare import (
     master_is_complete,
     standardize_master,
 )
-from porter.media.probe import find_downloaded_video
+from porter.media.probe import find_downloaded_video, probe
 from porter.models.materials import RawMaterials, TaskLayout
 from porter.models.metadata import VideoMetadata
 from porter.models.request import JobOptions
@@ -226,6 +226,9 @@ class YtDlpExtractor:
         if not ctx.options.force and master_is_complete(runner, video_path, audio_path):
             _logger.info("reusing the existing master in %s", layout.raw_dir)
             ctx.progress(Phase.PREPARE, 95.0, "reusing existing raw materials")
+            existing_info = probe(runner, video_path)
+            if existing_info is not None:
+                metadata = apply_measured_dimensions(metadata, existing_info)
         else:
             # --- 4. subtitles (best effort) -----------------------------
             self._download_subtitles(url, base_policy, layout, plan, ctx)

@@ -7,7 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.5] - 2026-09-24
+## [0.2.6] - 2026-09-25
+
+### Fixed
+
+- **Fixed oversized subtitle font rendering during hard-sub burning.**
+  In previous versions, `compute_adaptive_subtitle_style` was omitted when
+  generating ASS subtitles in the `TRANSLATE` phase, causing baseline 1080p
+  font and margin values to be written into low-resolution or mismatched
+  virtual canvases. Additionally, when resuming an existing master video,
+  initial unverified metadata (e.g. 640x360 from YouTube) was not updated
+  from the physical video file. Together, these caused libass to upscale
+  subtitles by up to 300% on 1080p release videos.
+- **Fixed hardcoded font size in adaptive single-track Chinese ASS style.**
+  Single-track Chinese subtitles now dynamically inherit user-configured
+  `zh_font_size` scaling instead of clamping to a static 58px.
 
 ### Fixed
 
@@ -358,7 +372,8 @@ Skill of the same name).
   assets and a standardised `raw/` + `cooked/` output layout.
 - Agent Skill packaging (`SKILL.md`, scripts, references, example config).
 
-[Unreleased]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.5...HEAD
+[Unreleased]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.6...HEAD
+[0.2.6]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.2...v0.2.3

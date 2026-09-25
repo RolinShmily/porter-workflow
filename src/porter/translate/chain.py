@@ -62,7 +62,11 @@ from porter.errors import JobCancelled, PorterError
 from porter.events import ArtifactKind, ArtifactReady, Phase
 from porter.logging import get_logger
 from porter.models.subtitle import SubtitleItem, SubtitleSet, TranscriptSentence
-from porter.subtitles.ass import generate_bilingual_ass, generate_zh_ass
+from porter.subtitles.ass import (
+    compute_adaptive_subtitle_style,
+    generate_bilingual_ass,
+    generate_zh_ass,
+)
 from porter.subtitles.phrasing import (
     has_chinese_translation,
     merge_short_fragments,
@@ -313,7 +317,9 @@ class TranslationChain:
         save_transcript_json(sentences, subtitles.transcript_json_path)
         save_transcript_txt(sentences, subtitles.transcript_txt_path)
 
-        css = ctx.config.style
+        bilingual_style, zh_style, res_x, res_y = compute_adaptive_subtitle_style(
+            width, height, ctx.config.style
+        )
         subtitles.subtitle_bilingual_srt.write_text(
             generate_bilingual_srt(subtitles.items), encoding="utf-8"
         )
@@ -322,13 +328,19 @@ class TranslationChain:
         )
         subtitles.subtitle_bilingual_ass.write_text(
             generate_bilingual_ass(
-                items=subtitles.items, style=css, play_res_x=width, play_res_y=height
+                items=subtitles.items,
+                style=bilingual_style,
+                play_res_x=res_x,
+                play_res_y=res_y,
             ),
             encoding="utf-8",
         )
         subtitles.subtitle_zh_ass.write_text(
             generate_zh_ass(
-                items=subtitles.items, style=css, play_res_x=width, play_res_y=height
+                items=subtitles.items,
+                style=zh_style,
+                play_res_x=res_x,
+                play_res_y=res_y,
             ),
             encoding="utf-8",
         )

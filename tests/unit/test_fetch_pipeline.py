@@ -574,6 +574,17 @@ class TestResumption:
 
         assert len(fake_ydl.download_calls) > downloads_before
 
+    def test_reused_master_measures_dimensions_from_existing_video(
+        self, extractor, ctx, runner, fake_ydl
+    ) -> None:
+        """A reused master must correct initial yt-dlp metadata from real pixels."""
+        extractor.fetch(URL, ctx, runner=runner)
+
+        fake_ydl.info = {**fake_ydl.info, "width": 640, "height": 360}
+        materials = extractor.fetch(URL, ctx, runner=runner)
+        assert materials.info.width == 1920
+        assert materials.info.height == 1080
+
     def test_truncated_master_is_not_reused(
         self, extractor, ctx, runner, fake_ydl, monkeypatch
     ) -> None:

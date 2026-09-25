@@ -103,14 +103,16 @@ def compute_adaptive_subtitle_style(
     if is_vertical:
         # Vertical video (e.g. 1080x1920 Shorts / Reels / TikTok)
         scale_v = h / 1920.0
-        bilingual_style.zh_font_size = max(24, round(56 * scale_v))
-        bilingual_style.en_font_size = max(16, round(38 * scale_v))
+        zh_ratio = base_style.zh_font_size / 52.0
+        en_ratio = base_style.en_font_size / 34.0
+        bilingual_style.zh_font_size = max(24, round(56 * zh_ratio * scale_v))
+        bilingual_style.en_font_size = max(16, round(38 * en_ratio * scale_v))
         bilingual_style.bilingual_zh_margin_v = max(40, round(220 * scale_v))
         bilingual_style.bilingual_en_margin_v = max(25, round(140 * scale_v))
         bilingual_style.outline_width = max(1.5, round(4.0 * scale_v, 1))
         bilingual_style.shadow = max(1.0, round(2.0 * scale_v, 1))
 
-        zh_style.zh_font_size = max(28, round(64 * scale_v))
+        zh_style.zh_font_size = max(28, round(64 * zh_ratio * scale_v))
         zh_style.margin_v = max(35, round(180 * scale_v))
         zh_style.outline_width = max(1.5, round(4.2 * scale_v, 1))
         zh_style.shadow = max(1.0, round(2.0 * scale_v, 1))
@@ -143,7 +145,8 @@ def compute_adaptive_subtitle_style(
         bilingual_style.shadow = max(1.0, round(base_style.shadow * scale_h * aspect_boost, 1))
 
         # Pure Chinese track calculations (larger font size for clean single track)
-        zh_single_size = max(20, round(58 * scale_h * aspect_boost))
+        zh_ratio = base_style.zh_font_size / 52.0
+        zh_single_size = max(20, round(58 * zh_ratio * scale_h * aspect_boost))
         zh_single_margin = max(15, round(base_style.margin_v * scale_h * aspect_boost))
 
         zh_style.zh_font_size = zh_single_size
