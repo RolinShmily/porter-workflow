@@ -290,9 +290,9 @@ class TestHonestyAboutUnverifiedEndpoints:
         plan = plan_for(URL, ctx=ctx)
 
         by_name = {backend.name: backend.verified for backend in plan.subtitles.asr_backends}
+        assert by_name["whisper-local"] is True
         assert by_name["whisper-api"] is True, "a documented API should be verified"
-        assert by_name["bcut"] is False, "a reverse-engineered endpoint should not be"
-        assert by_name["google-web"] is False
+        assert by_name["videocaptioner"] is True
 
 
 class TestDerivedNotAuthored:

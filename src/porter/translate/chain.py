@@ -62,6 +62,7 @@ from porter.errors import JobCancelled, PorterError
 from porter.events import ArtifactKind, ArtifactReady, Phase
 from porter.logging import get_logger
 from porter.models.subtitle import SubtitleItem, SubtitleSet, TranscriptSentence
+from porter.ports import TranscriptRefiner
 from porter.subtitles.ass import (
     compute_adaptive_subtitle_style,
     generate_bilingual_ass,
@@ -104,8 +105,13 @@ class TranslationChain:
 
     name = "chain"
 
-    def __init__(self, backends: list[TranslationBackend] | None = None) -> None:
+    def __init__(
+        self,
+        backends: list[TranslationBackend] | None = None,
+        refiner: TranscriptRefiner | None = None,
+    ) -> None:
         self.backends: list[TranslationBackend] = list(backends or [])
+        self.refiner = refiner
 
     def add(self, backend: TranslationBackend) -> TranslationChain:
         """Append a backend. Returns self, so assembly is one expression."""
@@ -152,6 +158,10 @@ class TranslationChain:
             ctx.progress(Phase.TRANSLATE, 0.5, "using the platform Chinese track")
             self._carry_platform_chinese(subtitles, sentences, ctx)
         else:
+            if self.refiner is not None and self.refiner.available(ctx):
+                ctx.progress(Phase.TRANSLATE, 0.1, "refining transcript via LLM")
+                sentences = self.refiner.refine(sentences, ctx)
+
             outcome, reused = self._translate_or_reuse(sentences, target_lang, subtitles, ctx)
             subtitles.items = _cues_from_sentences(
                 sentences, outcome.texts, outcome.sources
@@ -206,7 +216,7 @@ class TranslationChain:
         ctx: RunContext,
     ) -> TranslationOutcome:
         """Try each backend until one returns text that is actually Chinese."""
-        inputs = [sentence.en_text for sentence in sentences]
+        inputs = [sentence.source_text for sentence in sentences]
         if not inputs:
             raise PorterError(
                 "there are no sentences to translate",
@@ -424,7 +434,7 @@ def _cues_from_sentences(
     cues: list[SubtitleItem] = []
     for offset, sentence in enumerate(sentences):
         chinese = texts[offset] if offset < len(texts) else ""
-        english = sentence.en_text
+        english = sentence.source_text
         if sources is not None and offset < len(sources) and sources[offset].strip():
             english = sources[offset]
         cues.extend(

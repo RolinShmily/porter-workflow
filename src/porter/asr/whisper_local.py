@@ -2,18 +2,13 @@
 
 The only ASR backend in the chain that needs **no key, no network and no third
 party service**: the model runs on this machine, so a transcription is
-reproducible, unmetered and immune to an endpoint being withdrawn. Every other
-key-free backend porter has (``bcut``, ``google_web``) is a reverse-engineered
-HTTP endpoint, and both were measured returning empty results on 2026-09-22.
+reproducible, unmetered and immune to an endpoint being withdrawn.
 
 ## Why not VideoCaptioner, which does the same thing
 
 VideoCaptioner is GPL-3.0 and pins ``python<3.13``, so it can never be a
 dependency of this MIT project; porter reaches it only as an external process
-(``asr/videocaptioner.py``). Of the engines that CLI offers, ``bijian`` and
-``jianying`` are *online* reverse-engineered endpoints -- ``bijian`` is the very
-service ``asr/bcut.py`` speaks, which is the one already measured dead -- and
-only ``whisper-cpp`` is genuinely local. So this module implements the *idea*
+(``asr/videocaptioner.py``). This module implements the idea
 (local Whisper, no key) on a permissively licensed stack rather than borrowing
 GPL code: ``faster-whisper`` is MIT and its CTranslate2 backend needs no
 PyTorch, which keeps the extra around 100 MB instead of ~2 GB.

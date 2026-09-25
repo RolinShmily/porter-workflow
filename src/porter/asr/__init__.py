@@ -14,12 +14,6 @@
     ``[asr-local]`` extra. The only backend that needs no key, no network and no
     third-party service, and the only one whose ``endpoint_verified`` is true by
     construction rather than by measurement.
-``bcut.py``
-    Bilibili Bcut. Key-free, chunked upload, its own session so a configured proxy
-    cannot stall the upload. **Unverified endpoint.**
-``google_web.py``
-    Google Web STT with recursive VAD slicing, so long dialogue does not lose its
-    tail. Requires the ``[stt]`` extra. **Unverified endpoint.**
 ``videocaptioner.py``
     ★ Optional adapter around the **external** ``videocaptioner`` CLI.
     GPL-3.0 and ``python<3.13``, therefore never a declared dependency and only
@@ -28,18 +22,10 @@
 ``base.py``
     The backend protocol, the shared :class:`~porter.asr.base.AsrOutcome`, and the
     cue helpers every backend needs.
-
-"Unverified endpoint" is a claim about the *wire format*, not the structure. Those
-two modules port v0.1's request/response handling for services that were
-reverse-engineered rather than documented; they cannot be exercised in an offline
-test suite and may already be dead. Their availability probes, error mapping,
-timeouts and cancellation handling are deliberate and tested.
 """
 
 from porter.asr.base import AsrBackend, AsrBackendError, AsrOutcome
-from porter.asr.bcut import BcutBackend
 from porter.asr.chain import AsrChain
-from porter.asr.google_web import GoogleWebBackend
 from porter.asr.platform_subs import load_platform_subtitles
 from porter.asr.videocaptioner import VideoCaptionerBackend
 from porter.asr.whisper_api import WhisperApiBackend
@@ -50,8 +36,6 @@ __all__ = [
     "AsrBackendError",
     "AsrChain",
     "AsrOutcome",
-    "BcutBackend",
-    "GoogleWebBackend",
     "VideoCaptionerBackend",
     "WhisperApiBackend",
     "WhisperLocalBackend",

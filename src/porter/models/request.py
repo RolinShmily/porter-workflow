@@ -56,6 +56,7 @@ class JobOptions(BaseModel):
     translator: str | None = None
     llm_model: str | None = None
     target_lang: str = "zh-Hans"
+    refine: bool = True
 
     cookies_file: Path | None = None
     cookies_browser: str | None = None

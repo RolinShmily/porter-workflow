@@ -67,6 +67,7 @@ def _isolate_job_registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
 def project_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A throwaway project directory, used as the CWD for config discovery."""
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("porter.config.config_file", lambda: tmp_path / "nonexistent_user_config.json")
     return tmp_path
 
 

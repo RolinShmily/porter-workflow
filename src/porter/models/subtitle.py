@@ -76,7 +76,12 @@ class TranscriptSentence:
     end_ms: int
     en_text: str
     zh_text: str = ""
+    refined_en_text: str = ""
     fragment_indices: list[int] | None = None
+
+    @property
+    def source_text(self) -> str:
+        return self.refined_en_text or self.en_text
 
     @property
     def start_srt(self) -> str:

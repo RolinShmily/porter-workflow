@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-09-25
+
+### Added
+
+- **Dedicated transcript refinement subsystem (`porter.refine`)**:
+  Introduced the `TranscriptRefiner` port protocol, implemented by `LLMTranscriptRefiner`
+  and `PassthroughRefiner`. Intercepts whole reconstructed sentences before translation
+  to correct ASR mis-hearings, homophones, missing sentence punctuation, and proper noun
+  capitalization.
+- **Configurable refinement controls**:
+  Added `refine` section to `PorterConfig` (`refine.enabled`, `refine.model`) and a
+  per-run flag `refine` on `JobOptions`.
+
+### Changed
+
+- **Decoupled ASR proofreading from translation**:
+  `LLMTranslationBackend` is now freed from dual-tasking typo fixes and English echo
+  generation. The translation prompt focuses purely on idiomatic, colloquial, and
+  culturally resonant Simplified Chinese translation, halving token output and minimizing
+  JSON formatting failures.
+- **High-fidelity source tracking in bilingual cues**:
+  `TranscriptSentence` now tracks `refined_en_text` and provides dynamic `source_text`
+  resolution, ensuring both translation backends and output bilingual subtitles show
+  error-free English text.
+
+### Removed
+
+- **Removed broken reverse-engineered ASR backends**:
+  Deprecate and remove `bcut` and `google-web` endpoints. The ASR chain is streamlined to
+  reliable, offline-first and documented engines: `[whisper-local, whisper-api, videocaptioner]`.
+
 ## [0.2.6] - 2026-09-25
 
 ### Fixed
@@ -372,7 +403,8 @@ Skill of the same name).
   assets and a standardised `raw/` + `cooked/` output layout.
 - Agent Skill packaging (`SKILL.md`, scripts, references, example config).
 
-[Unreleased]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.6...HEAD
+[Unreleased]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.7...HEAD
+[0.2.7]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.6...v0.2.7
 [0.2.6]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.3...v0.2.4

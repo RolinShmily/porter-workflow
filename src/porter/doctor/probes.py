@@ -542,15 +542,13 @@ def probe_asr_route(config: PorterConfig, *, which: Any = None) -> Finding:
         return Finding.info(
             "asr_route",
             "Speech-to-text route",
-            "the VideoCaptioner CLI, then the key-free Bcut / Google Web endpoints",
+            "the VideoCaptioner CLI",
         )
 
     return Finding.info(
         "asr_route",
         "Speech-to-text route",
-        "the key-free Bcut / Google Web endpoints, which are reverse-engineered "
-        "and, as measured on 2026-09-22, do not transcribe at all (Google Web "
-        "returns an empty result for every request). Set an LLM or Whisper API "
+        "no speech-to-text backend is available. Set an LLM or Whisper API "
         "key, or install porter-workflow[asr-local] for offline transcription "
         "with no key, or transcription will fail",
     )

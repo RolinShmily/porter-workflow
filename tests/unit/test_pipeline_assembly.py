@@ -123,13 +123,11 @@ class TestAsrChainOrder:
     than being deleted.
     """
 
-    def test_the_default_order_is_local_then_api_then_free_then_cli(self, tmp_path) -> None:
+    def test_the_default_order_is_local_then_api_then_cli(self, tmp_path) -> None:
         pipeline = Pipeline.default(_ctx(tmp_path))
         assert [backend.name for backend in pipeline.transcriber.backends] == [
             "whisper-local",
             "whisper-api",
-            "bcut",
-            "google-web",
             "videocaptioner",
         ]
 
@@ -159,7 +157,7 @@ class TestAsrChainOrder:
         assert names.count("videocaptioner") == 1
 
     @pytest.mark.parametrize(
-        "engine", ["whisper-local", "whisper-api", "bcut", "google-web", "videocaptioner"]
+        "engine", ["whisper-local", "whisper-api", "videocaptioner"]
     )
     def test_the_named_backend_flag_is_promoted_to_the_front(
         self, tmp_path, engine: str
@@ -179,10 +177,10 @@ class TestAsrChainOrder:
         assert names[0] == engine
         # Promotion is a reorder, not a filter: the rest stay as fallbacks.
         assert names.count(engine) == 1
-        assert len(names) == 5
+        assert len(names) == 3
 
     @pytest.mark.parametrize(
-        "engine", ["whisper-local", "whisper-api", "bcut", "google-web", "videocaptioner"]
+        "engine", ["whisper-local", "whisper-api", "videocaptioner"]
     )
     def test_a_configured_backend_is_promoted_to_the_front(
         self, tmp_path, engine: str
@@ -192,7 +190,7 @@ class TestAsrChainOrder:
         names = [backend.name for backend in Pipeline.default(ctx).transcriber.backends]
 
         assert names[0] == engine
-        assert len(names) == 5
+        assert len(names) == 3
 
     def test_the_flag_wins_over_the_config_key(self, tmp_path) -> None:
         """Two sources, one answer, and the more specific one wins.
@@ -201,12 +199,12 @@ class TestAsrChainOrder:
         be written first -- the kind of ambiguity that surfaces as a bug report
         years later.
         """
-        ctx = _ctx(tmp_path, PorterConfig(asr={"engine": "google-web"}), asr_engine="bcut")
+        ctx = _ctx(tmp_path, PorterConfig(asr={"engine": "videocaptioner"}), asr_engine="whisper-api")
 
         names = [backend.name for backend in Pipeline.default(ctx).transcriber.backends]
 
-        assert names[0] == "bcut"
-        assert names.count("google-web") == 1
+        assert names[0] == "whisper-api"
+        assert names.count("videocaptioner") == 1
 
     def test_an_unrecognised_engine_keeps_the_default_order(
         self, tmp_path, monkeypatch
@@ -237,9 +235,9 @@ class TestAsrChainOrder:
         assert names[0] == "whisper-local"
         assert any("whisperx" in message for message in messages)
 
-    def test_the_free_endpoints_sit_between_whisper_and_the_cli(self, tmp_path) -> None:
+    def test_the_cli_sits_after_whisper(self, tmp_path) -> None:
         names = [b.name for b in Pipeline.default(_ctx(tmp_path)).transcriber.backends]
-        assert names.index("whisper-api") < names.index("bcut") < names.index("videocaptioner")
+        assert names.index("whisper-local") < names.index("whisper-api") < names.index("videocaptioner")
 
     def test_a_named_backend_that_is_missing_is_reported(
         self, tmp_path, monkeypatch

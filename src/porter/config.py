@@ -72,6 +72,15 @@ class LLMConfig(BaseModel):
     model: str = "deepseek-chat"
 
 
+class RefineConfig(BaseModel):
+    """Transcript refinement settings (ASR correction, punctuation, homophones)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = True
+    model: str | None = None
+
+
 class ASRConfig(BaseModel):
     """Speech-to-text settings. ``engine=None`` means "walk the fallback chain"."""
 
@@ -139,6 +148,7 @@ class PorterConfig(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="ignore")
 
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    refine: RefineConfig = Field(default_factory=RefineConfig)
     asr: ASRConfig = Field(default_factory=ASRConfig)
     ffmpeg: FFmpegConfig = Field(default_factory=FFmpegConfig)
     style: SubtitleStyleConfig = Field(default_factory=SubtitleStyleConfig)

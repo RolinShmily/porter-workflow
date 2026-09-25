@@ -42,9 +42,8 @@ class BackendPlan(BaseModel):
     a remote 429.
 
     ``verified`` says whether that engine's wire format has ever been checked
-    against the live service. ``bcut`` and ``google_web`` are reverse-engineered
-    and answered with empty results on every probe made while building this port,
-    so they report ``available: true`` and still cannot transcribe. An agent that
+    against the live service. An unverified engine is reverse-engineered,
+    so it may report ``available: true`` and still cannot transcribe. An agent that
     only read ``available`` would promise a user a job that was going to fail.
     """
 

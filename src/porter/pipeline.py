@@ -46,6 +46,7 @@ from porter.ports import (
     LocalPreparer,
     Renderer,
     Transcriber,
+    TranscriptRefiner,
     Translator,
 )
 
@@ -342,16 +343,10 @@ def _default_transcriber(ctx: RunContext) -> Transcriber:
     ======================  ===================================================
     1. Local Whisper        ``[asr-local]`` installed; needs no key or network
     2. Whisper API          needs an OpenAI-compatible key
-    3. Bcut                 key-free, unverified
-    4. Google Web           key-free, unverified
-    5. VideoCaptioner CLI   external process, GPL-3.0
+    3. VideoCaptioner CLI   external process, GPL-3.0
     ======================  ===================================================
 
-    **Local Whisper leads**. The v0.1 order put the paid API
-    first for quality and speed, which was written when the key-free endpoints
-    still worked -- both were measured returning empty results on 2026-09-22
-    , so the first slot should go to the backend most likely to finish.
-    Local inference is also the only one that is unmetered, offline-capable and
+    **Local Whisper leads**. Local inference is unmetered, offline-capable and
     immune to an endpoint being withdrawn.
 
     ``--asr-engine`` (``options.asr_engine``) or the ``asr.engine`` config key then
@@ -362,7 +357,7 @@ def _default_transcriber(ctx: RunContext) -> Transcriber:
     * One of VideoCaptioner's engine names (``bijian``/``jianying``/``whisper-cpp``)
       promotes the external CLI, which is how v0.1 asked for it.
     * Any other name that matches a backend (``whisper-local``, ``whisper-api``,
-      ``bcut``, ``google-web``, ``videocaptioner``) promotes that backend.
+      ``videocaptioner``) promotes that backend.
 
     Both sources are consulted, and that is a fix rather than symmetry: for a long
     time only the config key was, because the flag went into
@@ -372,9 +367,7 @@ def _default_transcriber(ctx: RunContext) -> Transcriber:
     notice. A name matching nothing logs a warning instead of passing unremarked.
     """
     from porter.asr.base import AsrBackend
-    from porter.asr.bcut import BcutBackend
     from porter.asr.chain import AsrChain
-    from porter.asr.google_web import GoogleWebBackend
     from porter.asr.videocaptioner import VideoCaptionerBackend
     from porter.asr.whisper_api import WhisperApiBackend
     from porter.asr.whisper_local import WhisperLocalBackend
@@ -390,8 +383,6 @@ def _default_transcriber(ctx: RunContext) -> Transcriber:
     ordered: list[AsrBackend] = [
         WhisperLocalBackend(),
         WhisperApiBackend(),
-        BcutBackend(),
-        GoogleWebBackend(),
         VideoCaptionerBackend(),
     ]
 
@@ -487,10 +478,19 @@ def _default_translator(ctx: RunContext) -> Translator:
             ", ".join(backend.name for backend in ordered),
         )
 
-    chain = TranslationChain()
-    for backend in ordered:
-        chain.add(backend)
+    refiner = _default_refiner(ctx)
+    chain = TranslationChain(backends=ordered, refiner=refiner)
     return chain
+
+
+def _default_refiner(ctx: RunContext) -> TranscriptRefiner:
+    """The transcript proofreader/refiner before translation."""
+    from porter.refine.llm import LLMTranscriptRefiner
+    from porter.refine.passthrough import PassthroughRefiner
+
+    if not ctx.options.refine or not ctx.config.refine.enabled:
+        return PassthroughRefiner()
+    return LLMTranscriptRefiner()
 
 
 def _default_renderer(ctx: RunContext) -> Renderer:

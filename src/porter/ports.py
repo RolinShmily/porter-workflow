@@ -23,7 +23,7 @@ from porter.context import RunContext
 from porter.models.materials import RawMaterials
 from porter.models.metadata import VideoMetadata
 from porter.models.request import BurnMode, BurnResult
-from porter.models.subtitle import SubtitleItem, SubtitleSet
+from porter.models.subtitle import SubtitleItem, SubtitleSet, TranscriptSentence
 
 __all__ = [
     "AsrBackend",
@@ -31,6 +31,7 @@ __all__ = [
     "LocalPreparer",
     "Renderer",
     "Transcriber",
+    "TranscriptRefiner",
     "Translator",
 ]
 
@@ -114,6 +115,25 @@ class Transcriber(Protocol):
 
     def transcribe(self, raw: RawMaterials, ctx: RunContext) -> SubtitleSet:
         """Return source cues plus the on-disk subtitle files."""
+        ...
+
+
+@runtime_checkable
+class TranscriptRefiner(Protocol):
+    """Refine transcript sentences (fix ASR typos, punctuation, homophones)."""
+
+    name: str
+
+    def available(self, ctx: RunContext) -> bool:
+        """Whether this refiner can run right now."""
+        ...
+
+    def refine(
+        self,
+        sentences: list[TranscriptSentence],
+        ctx: RunContext,
+    ) -> list[TranscriptSentence]:
+        """Refine each sentence's text and populate ``refined_en_text``."""
         ...
 
 

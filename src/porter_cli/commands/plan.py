@@ -54,7 +54,7 @@ def configure(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="Plan to stop after this phase.",
     )
     # The plan prints the ASR and translation routes, so the flags that choose
-    # them belong here too. Without these, `porter plan --asr-engine bcut` was
+    # them belong here too. Without these, `porter plan --asr-engine whisper-api` was
     # rejected as a misuse while `porter plan --cookies` was accepted -- and the
     # route the plan reported could not be made to match the one `porter run`
     # would take.

@@ -13,8 +13,8 @@ the config lookup and the file writing.
 ## The fallback rules, and why the obvious ones are wrong
 
 * **An empty result from an available backend is a failure, not a success.**
-  Bcut answers HTTP 200 with zero utterances when its quota is exhausted. A chain
-  that treats "returned no cues" as done writes an empty subtitle file and reports
+  An endpoint answering HTTP 200 with zero utterances when its quota is exhausted
+  must not be treated as done: that would write an empty subtitle file and report
   the job DONE.
 * **``available()`` is advisory.** Backends probe cheap local facts (a key is set,
   a binary is on PATH), which cannot predict a remote 429. ``available()`` is used

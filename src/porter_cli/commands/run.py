@@ -59,7 +59,7 @@ def configure(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -
         metavar="ENGINE",
         help=(
             "Try this ASR engine first. The other engines stay as fallback: "
-            "whisper-local, whisper-api, bcut, google-web, videocaptioner, "
+            "whisper-local, whisper-api, videocaptioner, "
             "or a VideoCaptioner engine (bijian, jianying, whisper-cpp)."
         ),
     )

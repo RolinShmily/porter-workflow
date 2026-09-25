@@ -699,7 +699,7 @@ class TestRouteProbes:
         finding = probe_asr_route(PorterConfig(), which=_which_for())
 
         assert finding.ok is True, "it is not a failure, it is a fact"
-        assert "do not transcribe" in finding.detail
+        assert "no speech-to-text backend is available" in finding.detail
         assert "key" in finding.detail
         assert "will fail" in finding.detail
         assert "asr-local" in finding.detail, "it must name the free way out"

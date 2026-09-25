@@ -114,10 +114,7 @@ class AsrBackend(Protocol):
     #:
     #: ``available()`` cannot answer this: it probes *local* facts (a key is set, a
     #: binary is on PATH), which say nothing about whether the remote endpoint
-    #: still speaks the protocol this code was written for. ``bcut`` and
-    #: ``google_web`` are reverse-engineered and answered with empty results on
-    #: every probe made while building this port, so they report ``available`` and
-    #: still cannot transcribe.
+    #: still speaks the protocol this code was written for.
     #:
     #: ``False`` is not "broken" -- it is "nobody has checked", which is exactly
     #: what a caller needs to know before promising a user that a job will finish.

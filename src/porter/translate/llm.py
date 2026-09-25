@@ -226,9 +226,9 @@ class LLMTranslationBackend:
             "Below is a list of complete sentences extracted from a video transcript (which may include podcasts, interviews, dialogue, or speeches).\n"
             "Please translate each English sentence into natural, fluent, and concise Simplified Chinese (zh-Hans).\n"
             "Rules:\n"
-            "1. Fix any remaining ASR / transcription / punctuation typos in the English sentence.\n"
-            "2. Keep the Chinese translation idiomatic, colloquial, and synchronized with conversational dialogue pacing (preserve oral humor and conversational tone).\n"
-            "3. Output MUST be a strict JSON array of objects with keys: 'id' (number), 'en' (refined English), 'zh' (Chinese translation).\n\n"
+            "1. Keep the Chinese translation idiomatic, colloquial, and synchronized with conversational dialogue pacing (preserve oral humor and conversational tone).\n"
+            "2. Adapt slang, technical terms, and idioms appropriately for native Chinese viewers.\n"
+            "3. Output MUST be a strict JSON array of objects with keys: 'id' (number), 'zh' (Chinese translation).\n\n"
             f"Input transcript sentences:\n{json.dumps(batch_payload, ensure_ascii=False)}"
         )
 
