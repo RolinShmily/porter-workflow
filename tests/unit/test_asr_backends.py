@@ -16,8 +16,6 @@ than pretending the wire format is known good.
 
 from __future__ import annotations
 
-import http.client
-import json
 import sys
 import threading
 import time
@@ -27,7 +25,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-import requests
 
 from porter import mirrors
 from porter.asr import videocaptioner, whisper_api, whisper_local

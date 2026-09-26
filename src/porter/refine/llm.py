@@ -12,6 +12,7 @@ import os
 from typing import Any
 
 from porter.context import RunContext
+from porter.errors import JobCancelled
 from porter.logging import get_logger
 from porter.models.subtitle import TranscriptSentence
 
@@ -95,7 +96,7 @@ class LLMTranscriptRefiner:
         for start in range(0, len(sentences), _BATCH_SIZE):
             ctx.check_cancelled()
             batch = sentences[start : start + _BATCH_SIZE]
-            self._refine_batch(client, model, batch, start, ctx)
+            self._refine_batch(client, model, batch, start)
 
         return sentences
 
@@ -126,7 +127,6 @@ class LLMTranscriptRefiner:
         model: str,
         batch: list[TranscriptSentence],
         base_index: int,
-        ctx: RunContext,
     ) -> None:
         """Call the LLM to proofread one batch. Degrades gracefully on failure."""
         json_repair = _load_json_repair()
@@ -151,6 +151,18 @@ class LLMTranscriptRefiner:
             f"Input sentences:\n{json.dumps(batch_payload, ensure_ascii=False)}"
         )
 
+        # One broad handler, deliberately. Refinement is an *enhancement*: the
+        # transcript is already complete and correct enough to translate without
+        # it. A failure here must therefore leave the raw ASR text in place
+        # rather than kill a job that has already paid for the download, the
+        # recognition and the enhancement pass.
+        #
+        # Enumerating the expected types is not possible and not worth it: the
+        # OpenAI SDK is an optional extra, its transport (httpx) raises
+        # ``TransportError`` subclasses that are neither ``OSError`` nor
+        # ``OpenAIError``, and ``json_repair`` raises whatever its parser does.
+        # ``exc_info=True`` is what keeps this from being a swallowed error --
+        # an unexpected bug still lands in the log with its traceback.
         try:
             response = client.chat.completions.create(
                 model=model,
@@ -162,22 +174,31 @@ class LLMTranscriptRefiner:
             )
             content = response.choices[0].message.content or ""
             parsed = json_repair.loads(content)
-            if not isinstance(parsed, list):
-                _logger.warning("refinement LLM returned non-array JSON; skipping batch")
-                return
+        except JobCancelled:
+            # Not a refinement failure: the user asked to stop, and carrying on
+            # with the remaining batches would ignore that.
+            raise
+        except Exception as exc:  # any refinement failure degrades, never aborts
+            _logger.warning(
+                "LLM refinement batch failed (%s); keeping the raw ASR text",
+                exc,
+                exc_info=True,
+            )
+            return
 
-            by_id: dict[int, str] = {}
-            for item in parsed:
-                if isinstance(item, dict):
-                    item_id = item.get("id")
-                    item_text = item.get("text")
-                    if isinstance(item_id, int) and isinstance(item_text, str) and item_text.strip():
-                        by_id[item_id] = item_text.strip()
+        if not isinstance(parsed, list):
+            _logger.warning("refinement LLM returned non-array JSON; skipping batch")
+            return
 
-            for offset, sentence in enumerate(batch):
-                cid = base_index + offset
-                if cid in by_id:
-                    sentence.refined_en_text = by_id[cid]
+        by_id: dict[int, str] = {}
+        for item in parsed:
+            if isinstance(item, dict):
+                item_id = item.get("id")
+                item_text = item.get("text")
+                if isinstance(item_id, int) and isinstance(item_text, str) and item_text.strip():
+                    by_id[item_id] = item_text.strip()
 
-        except Exception as exc:
-            _logger.warning("LLM transcript refinement batch failed (%s); keeping raw ASR text", exc)
+        for offset, sentence in enumerate(batch):
+            cid = base_index + offset
+            if cid in by_id:
+                sentence.refined_en_text = by_id[cid]

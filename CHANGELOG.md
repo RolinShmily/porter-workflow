@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-09-25
+
+A patch release. v0.2.7 never reached PyPI: its `gate` job failed on `ruff`, so
+`release-pypi` stopped before publishing. The tag and GitHub Release were already
+created by `release-exe`, so this ships the same changes with the lint fixed
+rather than rewriting a published tag.
+
+### Fixed
+
+- **`ruff` gate: `BLE001` on the refinement batch handler.** The graceful-degrade
+  `except Exception` in `src/porter/refine/llm.py` did not log with
+  `exc_info=True`, which is what the project's other wide catches use to keep an
+  unexpected bug diagnosable. The traceback is now preserved while the batch
+  still degrades to the raw ASR text.
+- **`JobCancelled` was swallowed by that same handler.** A cancellation raised
+  while a refinement request was in flight was treated as an ordinary batch
+  failure, so the remaining batches were still requested after the user asked to
+  stop. It is now re-raised explicitly, matching the ASR chain's rule that
+  cancellation is not a backend failure.
+- **`ruff` gate: three unused imports** in `tests/unit/test_asr_backends.py`
+  (`http.client`, `json`, `requests`), left behind when the Bcut and Google Web
+  suites were deleted in v0.2.7.
+
+### Added
+
+- A regression test pinning that a cancellation raised by the LLM client escapes
+  the refinement's graceful-degrade handler.
+
 ## [0.2.7] - 2026-09-25
 
 ### Added
@@ -403,7 +431,8 @@ Skill of the same name).
   assets and a standardised `raw/` + `cooked/` output layout.
 - Agent Skill packaging (`SKILL.md`, scripts, references, example config).
 
-[Unreleased]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.7...HEAD
+[Unreleased]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.8...HEAD
+[0.2.8]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.7...v0.2.8
 [0.2.7]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.6...v0.2.7
 [0.2.6]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.4...v0.2.5

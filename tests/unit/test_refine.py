@@ -138,3 +138,22 @@ class TestLLMTranscriptRefiner:
         ]
         with pytest.raises(JobCancelled):
             refiner.refine(sentences, ctx)
+
+    def test_cancellation_raised_by_the_client_escapes_the_graceful_catch(
+        self, tmp_path: Path
+    ) -> None:
+        """A cancel is the user's instruction, not a refinement failure.
+
+        Without an explicit re-raise the batch handler's graceful-degradation
+        catch would swallow ``JobCancelled`` and keep spending requests on the
+        remaining batches -- the same bug the ASR chain guards against.
+        """
+        client = _FakeClient(JobCancelled("user pressed Ctrl-C"))
+        refiner = LLMTranscriptRefiner(client=client)
+        ctx = _ctx(tmp_path)
+
+        sentences = [
+            TranscriptSentence(sentence_id=1, start_ms=0, end_ms=1000, en_text="hello"),
+        ]
+        with pytest.raises(JobCancelled):
+            refiner.refine(sentences, ctx)
