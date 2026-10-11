@@ -15,15 +15,16 @@
 URL, get back a standardised asset bundle plus hard-subbed release videos with
 bilingual and Chinese-only subtitles.
 
-It ships as **one engine with three frontends**:
+It ships as **one engine with four frontends**:
 
 | Frontend | Entry point | For |
 | --- | --- | --- |
 | `porter` (CLI) | `porter "<URL>"` | Humans and shell scripts |
 | `porter-mcp` | `uvx --from "porter-workflow[mcp]" porter-mcp` | AI agents via Model Context Protocol |
+| `porter-web` (WebUI) | `uvx --from "porter-workflow[web]" porter-web` | Humans and agents via interactive HITL workbench |
 | `porter-skill` | `npx skills add RolinShmily/porter-workflow` | Agents that use the Agent Skills spec |
 
-All three call the same `porter` library. The engine contains no argument
+All four call the same `porter` library. The engine contains no argument
 parsing and never writes to stdout — a requirement, because in an MCP stdio
 server stdout *is* the JSON-RPC channel.
 
@@ -44,6 +45,9 @@ uvx porter-workflow "<URL>"
 
 # CLI with every optional backend
 uvx --from "porter-workflow[all]" porter "<URL>"
+
+# WebUI, interactive workbench (Gradio)
+uvx --from "porter-workflow[web]" porter-web
 
 # Persistent install
 pipx install "porter-workflow[all]"
@@ -271,6 +275,7 @@ Repository layout:
 src/porter/        engine (library) — all business logic lives here
 src/porter_cli/    CLI frontend
 src/porter_mcp/    MCP frontend
+src/porter_web/    Gradio WebUI frontend (HITL workbench)
 skills/porter-skill/   Agent Skill assets (SKILL.md, scripts, references)
 tests/{unit,regression,integration}/
 ```
@@ -297,6 +302,8 @@ Porter is built on other people's work, and the debt is worth stating plainly:
 * **[FFmpeg](https://ffmpeg.org/) and
   [libass](https://github.com/libass/libass)** — the entire media layer:
   standardisation, denoising and professional ASS rendering.
+* **[Gradio](https://github.com/gradio-app/gradio)** — the interactive WebUI
+  frontend and Human-in-the-Loop visualization workbench.
 
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) records every component,
 its licence, and whether porter depends on it, optionally installs it, or only

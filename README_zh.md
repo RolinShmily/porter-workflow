@@ -13,15 +13,16 @@
 
 **Porter Workflow** 是一条全自动视频本地化流水线：给它一个视频链接，拿回一套标准化素材，以及烧好硬字幕的双语版与纯中文版成片。
 
-它以**一个引擎 + 三个前端**的形态发布：
+它以**一个引擎 + 四个前端**的形态发布：
 
 | 前端 | 入口 | 面向 |
 | --- | --- | --- |
 | `porter`（CLI） | `porter "<URL>"` | 人类与 Shell 脚本 |
 | `porter-mcp` | `uvx --from "porter-workflow[mcp]" porter-mcp` | 通过 MCP 协议接入的 AI 智能体 |
+| `porter-web`（WebUI） | `uvx --from "porter-workflow[web]" porter-web` | 人类与智能体人机协同工作台（Gradio） |
 | `porter-skill` | `npx skills add RolinShmily/porter-workflow` | 使用 Agent Skills 规范的智能体 |
 
-三者调用同一个 `porter` 库。引擎内不含任何参数解析，且**绝不向 stdout 写入**——因为 MCP 的 stdio 传输里 stdout 就是 JSON-RPC 通道。
+四者调用同一个 `porter` 库。引擎内不含任何参数解析，且**绝不向 stdout 写入**——因为 MCP 的 stdio 传输里 stdout 就是 JSON-RPC 通道。
 
 > **状态：`v0.2.x` 是 `main` 上的当前开发线。**
 > v0.2 重构（一个引擎 + 三个前端）已落地。v0.1 的原实现保留在 git 历史中，
@@ -39,6 +40,9 @@ uvx porter-workflow "<URL>"
 
 # 带全部可选后端
 uvx --from "porter-workflow[all]" porter "<URL>"
+
+# WebUI 交互式工作台（Gradio）
+uvx --from "porter-workflow[web]" porter-web
 
 # 持久安装
 pipx install "porter-workflow[all]"
@@ -244,6 +248,7 @@ pytest
 src/porter/             引擎（库）—— 全部业务逻辑在此
 src/porter_cli/         CLI 前端
 src/porter_mcp/         MCP 前端
+src/porter_web/         Gradio WebUI 前端（人机协同工作台）
 skills/porter-skill/    Agent Skill 资产（SKILL.md、scripts、references）
 tests/{unit,regression,integration}/
 ```
@@ -269,6 +274,7 @@ Porter 站在他人的工作之上，这份亏欠值得写清楚：
 * **[FFmpeg](https://ffmpeg.org/) 与
   [libass](https://github.com/libass/libass)** —— 整个媒体层：标准化、降噪与专业
   ASS 渲染。
+* **[Gradio](https://github.com/gradio-app/gradio)** —— 交互式 WebUI 前端与人机协同可视化工作台。
 
 每个组件、其许可证，以及 porter 是依赖它、可选安装它、还是仅以子进程方式调用它，
 都记录在 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。

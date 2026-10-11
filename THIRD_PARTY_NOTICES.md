@@ -63,6 +63,7 @@ none is imported unless the corresponding capability is used.
 | `asr-local` | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) | MIT | Local Whisper inference with no API key and no network. |
 | `images` | [pillow](https://github.com/python-pillow/Pillow) | MIT-CMU (HPND) | Cover image handling. |
 | `mcp` | [fastmcp](https://github.com/jlowin/fastmcp) | Apache-2.0 | The `porter-mcp` server. |
+| `web` | [gradio](https://github.com/gradio-app/gradio) | Apache-2.0 | The `porter-web` interactive Human-in-the-Loop workbench. |
 
 ### 2.1 What `faster-whisper` pulls in
 
@@ -80,6 +81,16 @@ none is imported unless the corresponding capability is used.
 | Component | License |
 | --- | --- |
 | [mcp](https://github.com/modelcontextprotocol/python-sdk) | MIT |
+
+### 2.3 What `gradio` pulls in
+
+| Component | License |
+| --- | --- |
+| [fastapi](https://github.com/fastapi/fastapi) | MIT |
+| [starlette](https://github.com/encode/starlette) | BSD-3-Clause |
+| [pandas](https://github.com/pandas-dev/pandas) | BSD-3-Clause |
+| [pydub](https://github.com/jiaaro/pydub) | MIT |
+| [jinja2](https://github.com/pallets/jinja) | BSD-3-Clause |
 
 ---
 
