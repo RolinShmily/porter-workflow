@@ -59,6 +59,7 @@ class JobState(str, Enum):
 
     PENDING = "pending"
     RUNNING = "running"
+    AWAITING_USER = "awaiting_user"
     DONE = "done"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -148,8 +149,25 @@ class PhaseCompleted(Event):
     phase: Phase
 
 
+class AwaitingUserAction(Event):
+    """The pipeline is suspended awaiting user review or interaction (e.g. via workbench)."""
+
+    type: Literal["awaiting_user_action"] = "awaiting_user_action"
+    phase: Phase
+    action: str
+    message: str = ""
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
 AnyEvent = Annotated[
-    PhaseStarted | PhaseCompleted | StepCompleted | ProgressUpdated | ArtifactReady | LogRecord | PhaseFailed,
+    PhaseStarted
+    | PhaseCompleted
+    | StepCompleted
+    | ProgressUpdated
+    | ArtifactReady
+    | LogRecord
+    | PhaseFailed
+    | AwaitingUserAction,
     Field(discriminator="type"),
 ]
 
@@ -178,6 +196,7 @@ __all__ = [
     "AnyEvent",
     "ArtifactKind",
     "ArtifactReady",
+    "AwaitingUserAction",
     "ErrorInfo",
     "Event",
     "EventSink",

@@ -26,7 +26,14 @@ from collections import deque
 from dataclasses import dataclass, field
 
 from porter.context import RunContext
-from porter.events import Event, JobState, ProgressUpdated
+from porter.events import (
+    AwaitingUserAction,
+    Event,
+    JobState,
+    PhaseStarted,
+    ProgressUpdated,
+    StepCompleted,
+)
 from porter.jobs.records import (
     JobRecord,
     JobRegistry,
@@ -101,6 +108,13 @@ class Job:
                 return event
         return None
 
+    def last_interaction(self) -> AwaitingUserAction | None:
+        """Most recent interaction request, if any."""
+        for event in reversed(self.events):
+            if isinstance(event, AwaitingUserAction):
+                return event
+        return None
+
     def to_record(self) -> JobRecord:
         """Project this live job into its durable form.
 
@@ -115,6 +129,7 @@ class Job:
         a job that had just produced them.
         """
         progress = self.last_progress()
+        interaction = self.last_interaction()
         result = self.result
         base = JobRecord(
             job_id=self.job_id,
@@ -132,6 +147,8 @@ class Job:
             error=result.error.message if result is not None and result.error else None,
             pid=self.pid,
             pid_start=self.pid_start,
+            interaction_required=interaction.action if interaction is not None else None,
+            interaction_data=interaction.payload if interaction is not None else {},
         )
         if result is None:
             return base
@@ -205,6 +222,13 @@ class JobStore:
         def sink(event: Event) -> None:
             with self._lock:
                 job.events.append(event)
+                if isinstance(event, AwaitingUserAction):
+                    job.state = JobState.AWAITING_USER
+                elif (
+                    isinstance(event, (PhaseStarted, StepCompleted, ProgressUpdated))
+                    and job.state is JobState.AWAITING_USER
+                ):
+                    job.state = JobState.RUNNING
             previous(event)
             self._publish(job)
 

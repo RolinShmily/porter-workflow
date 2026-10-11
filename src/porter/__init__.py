@@ -50,6 +50,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "RunContext": "porter.context",
     # events
     "ArtifactKind": "porter.events",
+    "AwaitingUserAction": "porter.events",
     "Event": "porter.events",
     "EventSink": "porter.events",
     "JobState": "porter.events",
@@ -72,7 +73,14 @@ _LAZY_EXPORTS: dict[str, str] = {
 
 if TYPE_CHECKING:  # pragma: no cover - import-time only, for type checkers
     from porter.context import RunContext
-    from porter.events import ArtifactKind, Event, EventSink, JobState, Phase
+    from porter.events import (
+        ArtifactKind,
+        AwaitingUserAction,
+        Event,
+        EventSink,
+        JobState,
+        Phase,
+    )
     from porter.models import (
         BurnMode,
         BurnResult,
@@ -110,6 +118,7 @@ def __dir__() -> list[str]:
 __all__ = [
     "ArtifactKind",
     "AsrError",
+    "AwaitingUserAction",
     "BurnMode",
     "BurnResult",
     "CapabilityMissingError",

@@ -214,6 +214,7 @@ def render_event(event: Event) -> None:
 _JOB_STATE_GLYPHS: dict[JobState, tuple[str, str]] = {
     JobState.PENDING: ("…", "."),
     JobState.RUNNING: ("▶", ">"),
+    JobState.AWAITING_USER: ("⏸", "="),
     JobState.DONE: ("✓", "+"),
     JobState.FAILED: ("✗", "x"),
     JobState.CANCELLED: ("⊘", "-"),

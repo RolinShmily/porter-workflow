@@ -322,6 +322,11 @@ class JobRecord:
     #: through the event sink it already has, so no signal is involved.
     cancel_requested: bool = False
 
+    #: Human-in-the-loop action requested while in AWAITING_USER state.
+    interaction_required: str | None = None
+    interaction_data: dict[str, Any] = field(default_factory=dict)
+    interaction_response: dict[str, Any] | None = None
+
     @property
     def state_enum(self) -> JobState:
         try:

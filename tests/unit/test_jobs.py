@@ -17,7 +17,13 @@ import pytest
 
 from porter.config import PorterConfig
 from porter.context import RunContext
-from porter.events import ArtifactReady, JobState, Phase, ProgressUpdated
+from porter.events import (
+    ArtifactReady,
+    AwaitingUserAction,
+    JobState,
+    Phase,
+    ProgressUpdated,
+)
 from porter.jobs import (
     SCHEMA_VERSION,
     JobRecord,
@@ -107,6 +113,7 @@ class TestJobRecord:
         [
             (JobState.PENDING, False),
             (JobState.RUNNING, False),
+            (JobState.AWAITING_USER, False),
             (JobState.DONE, True),
             (JobState.FAILED, True),
             (JobState.CANCELLED, True),
@@ -656,6 +663,37 @@ class TestStorePublication:
         assert record.phase == Phase.PREPARE.value
         assert record.percent == pytest.approx(55.0)
         assert record.message == "halfway"
+
+    def test_awaiting_user_action_updates_state_and_record(
+        self, registry: JobRegistry, tmp_path: Path
+    ) -> None:
+        store = JobStore(registry=registry)
+        job = store.create(_request())
+        ctx = _ctx(tmp_path)
+        store.attach(job, ctx)
+
+        ctx.emit(
+            AwaitingUserAction(
+                phase=Phase.TRANSLATE,
+                action="review_subtitles",
+                message="Please review subtitles in workbench",
+                payload={"subtitle_count": 42},
+            )
+        )
+        store._publish(job, force=True)
+
+        assert job.state is JobState.AWAITING_USER
+        record = registry.get(job.job_id)
+        assert record is not None
+        assert record.state == JobState.AWAITING_USER.value
+        assert record.interaction_required == "review_subtitles"
+        assert record.interaction_data == {"subtitle_count": 42}
+
+        # Progress update resumes running state
+        ctx.emit(ProgressUpdated(phase=Phase.BURN, percent=10.0, message="burning"))
+        store._publish(job, force=True)
+        assert job.state is JobState.RUNNING
+        assert registry.get(job.job_id).state == JobState.RUNNING.value
 
     def test_finish_publishes_the_terminal_state(
         self, registry: JobRegistry, tmp_path: Path

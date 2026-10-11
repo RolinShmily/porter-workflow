@@ -55,7 +55,8 @@ stt = ["SpeechRecognition>=3.10"]
 asr-local = ["faster-whisper>=1.0"]
 images = ["pillow>=10.0"]
 mcp = ["fastmcp>=2.11"]
-all = ["porter-workflow[llm,stt,asr-local,images,mcp]"]
+web = ["gradio>=5.0"]
+all = ["porter-workflow[llm,stt,asr-local,images,mcp,web]"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
@@ -68,6 +69,7 @@ dev = [
 [project.scripts]
 porter = "porter_cli.__main__:main"
 porter-mcp = "porter_mcp.server:main"
+porter-web = "porter_web.app:main"
 
 [project.urls]
 Homepage = "https://github.com/RolinShmily/porter-workflow"
@@ -81,7 +83,7 @@ Changelog = "https://github.com/RolinShmily/porter-workflow/blob/main/CHANGELOG.
 path = "src/porter/__init__.py"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/porter", "src/porter_cli", "src/porter_mcp"]
+packages = ["src/porter", "src/porter_cli", "src/porter_mcp", "src/porter_web"]
 
 # The sdist is the source of record, so it carries the license and the
 # third-party notices that `license-files` already puts into the wheel.
@@ -126,6 +128,7 @@ ignore = ["E501", "UP042"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/porter_cli/**" = ["T20"]
+"src/porter_web/**" = ["RUF001", "B008"]
 # assert IS the test mechanism, and tests spawn ffmpeg to build fixtures on
 # purpose. Both are meaningful signals in src/, so they stay enabled there.
 "tests/**" = ["T20", "S101", "S603", "S607"]
@@ -175,7 +178,15 @@ namespace_packages = true
 # it ``Success: no issues found in 96 source files``.
 # ---------------------------------------------------------------------------
 [[tool.mypy.overrides]]
-module = ["openai._extras.*"]
+module = [
+    "openai._extras.*",
+    "numpy",
+    "numpy.*",
+    "gradio",
+    "gradio.*",
+    "pandas",
+    "pandas.*",
+]
 follow_imports = "skip"
 
 # ---------------------------------------------------------------------------
@@ -191,7 +202,7 @@ include_external_packages = true
 name = "engine must not import frontends"
 type = "forbidden"
 source_modules = ["porter"]
-forbidden_modules = ["porter_cli", "porter_mcp"]
+forbidden_modules = ["porter_cli", "porter_mcp", "porter_web"]
 
 [[tool.importlinter.contracts]]
 name = "engine layers"

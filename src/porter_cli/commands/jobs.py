@@ -135,6 +135,9 @@ def _summary_line(record: JobRecord) -> str:
         progress = f" {phase} {record.percent:3.0f}%"
     elif state is JobState.PENDING:
         progress = " waiting"
+    elif state is JobState.AWAITING_USER:
+        action = record.interaction_required or "action"
+        progress = f" {action} needed"
 
     return (
         f"{glyph} {record.job_id}  {state.value:<9}{progress}"
