@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-11
+
+A minor release introducing the fourth frontend: `porter-web`, an interactive
+Human-in-the-Loop (HITL) visualization workbench built with native Gradio components,
+alongside core collaboration contracts and archive packaging.
+
+### Added
+
+- **The fourth frontend: `porter-web`.** An interactive web workbench providing media
+  inspection cards, live streaming progress with terminal-style logs, bilingual and
+  target-only release video players, and comprehensive system diagnostics.
+- **Human-in-the-Loop (HITL) coordination.** Extended `JobState` with `AWAITING_USER`
+  and introduced `AwaitingUserAction` event flow in `porter.events`. The live `JobStore`
+  and durable `JobRegistry` now support suspending workflows for manual review and
+  resuming execution upon operator decisions.
+- **One-click archive packaging.** Added instant packaging for `cooked.zip` (release
+  videos, subtitles, ASS styles) and `raw.zip` (master media, extracted audio, metadata)
+  with strict internal dotfile exclusion.
+- **Full bilingual internationalization (i18n).** Clean English and Simplified Chinese
+  translations for all components, integrated seamlessly with Gradio's client locale
+  settings without metadata interpolation leaks.
+- **Two-column responsive layout.** Active agent tasks are monitored prominently with
+  real-time progress sliders (hidden when idle), paired with side-by-side job registry
+  browsing and material extraction.
+
+### Changed
+
+- Updated `pyproject.toml` with `[web]` optional dependency (`gradio>=5.0`),
+  the `porter-web` CLI console entry point, and strict `import-linter` boundary guards.
+- Updated `THIRD_PARTY_NOTICES.md`, `README.md`, and `README_zh.md` to reflect the
+  four-frontend architecture.
+
 ## [0.2.8] - 2026-09-25
 
 A patch release. v0.2.7 never reached PyPI: its `gate` job failed on `ruff`, so
@@ -431,7 +463,8 @@ Skill of the same name).
   assets and a standardised `raw/` + `cooked/` output layout.
 - Agent Skill packaging (`SKILL.md`, scripts, references, example config).
 
-[Unreleased]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.8...HEAD
+[Unreleased]: https://github.com/RolinShmily/porter-workflow/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.8...v0.3.0
 [0.2.8]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.7...v0.2.8
 [0.2.7]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.6...v0.2.7
 [0.2.6]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.5...v0.2.6
