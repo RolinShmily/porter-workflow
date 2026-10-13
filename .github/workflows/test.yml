@@ -144,6 +144,17 @@ jobs:
           # in the gate job above, where ffmpeg is installed.
           uv run pytest -m "not slow" --deselect tests/regression/test_synthesizer_port.py
 
+  windows-skill:
+    name: native PowerShell skill host preflight
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      # No Python packages or uv needed: mock uvx and test preflight plus
+      # argument forwarding before attempting a dependency resolve.
+      - name: Smoke native launcher with fake uvx
+        shell: pwsh
+        run: ./tests/windows/skill-launcher-smoke.ps1 -Launcher ./skills/porter-skill/scripts/porter.ps1
+
   build:
     name: build sdist + wheel
     runs-on: ubuntu-latest

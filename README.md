@@ -24,6 +24,8 @@ It ships as **one engine with four frontends**:
 | `porter-web` (WebUI) | `uvx --from "porter-workflow[web]" porter-web` | Humans and agents via interactive HITL workbench |
 | `porter-skill` | `npx skills add RolinShmily/porter-workflow` | Agents that use the Agent Skills spec |
 
+On Windows or workspace-write-only desktop hosts, use the skill's native PowerShell launcher and opt-in workspace state directory. An installer `spawn EPERM` is not a reason to disable the sandbox by default; see the [restricted-host guide](skills/porter-skill/references/HOSTS.md).
+
 All four call the same `porter` library. The engine contains no argument
 parsing and never writes to stdout — a requirement, because in an MCP stdio
 server stdout *is* the JSON-RPC channel.

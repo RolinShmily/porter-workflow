@@ -10,4 +10,4 @@
 # Exit code 1 means the link is unusable (404, private, unsupported host). That is
 # a fact about the link, not a failure of the tool.
 set -euo pipefail
-exec uvx --from "porter-workflow[all]" porter inspect "$@"
+exec "$(dirname "${BASH_SOURCE[0]}")/porter.sh" inspect "$@"

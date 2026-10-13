@@ -17,6 +17,9 @@ sdist/
 MANIFEST
 
 # Virtualenvs / tooling caches
+.state/
+.uv-cache/
+.uv-tools/
 .venv/
 venv/
 ENV/

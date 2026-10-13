@@ -22,6 +22,8 @@
 | `porter-web`（WebUI） | `uvx --from "porter-workflow[web]" porter-web` | 人类与智能体人机协同工作台（Gradio） |
 | `porter-skill` | `npx skills add RolinShmily/porter-workflow` | 使用 Agent Skills 规范的智能体 |
 
+Windows PowerShell 与只允许工作区写入的桌面宿主，请使用技能的原生 `porter.ps1` 和显式状态目录；遇到安装器 `spawn EPERM` 不要直接关闭沙盒。参见 [受限宿主指南](skills/porter-skill/references/HOSTS.md)。
+
 四者调用同一个 `porter` 库。引擎内不含任何参数解析，且**绝不向 stdout 写入**——因为 MCP 的 stdio 传输里 stdout 就是 JSON-RPC 通道。
 
 > **状态：`v0.2.x` 是 `main` 上的当前开发线。**

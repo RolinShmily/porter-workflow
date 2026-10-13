@@ -66,11 +66,13 @@ class TestSkillLayout:
             "SKILL.md",
             "README.md",
             "scripts/porter.sh",
+            "scripts/porter.ps1",
             "scripts/inspect.sh",
             "scripts/bootstrap.sh",
             "references/ARCHITECTURE.md",
             "references/CONFIG.md",
             "references/MCP.md",
+            "references/HOSTS.md",
             "assets/config.example.json",
         ):
             assert (SKILL_ROOT / rel).is_file(), f"missing {rel}"

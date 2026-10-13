@@ -32,9 +32,13 @@ The repository being called `porter-workflow` while the skill is called
 | Path | Purpose |
 | --- | --- |
 | `SKILL.md` | Frontmatter (`name`, `description`, `compatibility`) plus the workflow an agent follows. |
-| `scripts/` | Entry points the agent runs. `porter.sh` and `inspect.sh` delegate to `uvx`, so no manual install or virtualenv activation is needed. `bootstrap.sh` is the offline fallback. |
+| `scripts/` | Bash `porter.sh` / `inspect.sh` and native PowerShell `porter.ps1` delegate to `uvx`; `bootstrap.sh` works from a source checkout with local dependencies. |
 | `references/` | Deep material loaded only on demand: architecture, configuration, and the MCP mapping. |
 | `assets/` | `config.example.json`. |
+
+## Restricted desktop hosts
+
+Use `scripts/porter.ps1` on PowerShell without requiring Git Bash / WSL. With a workspace-only sandbox, set `PORTER_SKILL_STATE_DIR` explicitly to an absolute writable workspace directory and run `--host-check` before `doctor`; this redirects uv, yt-dlp and the job registry there. The CLI wrappers default to `porter-workflow[llm]` rather than pulling `[all]` for a simple `inspect`. See [`references/HOSTS.md`](references/HOSTS.md) for Windows examples, custom extras and sandbox limitations. Do not grant full filesystem access as the default workaround.
 
 ## Calling the engine: CLI, not MCP
 

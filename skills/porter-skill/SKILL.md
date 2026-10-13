@@ -44,13 +44,14 @@ metadata:
 
 ## 调用入口
 
-`scripts/` 下的三个入口，都通过 `uvx` 免安装运行：
+CLI 入口通过 `uvx` 运行。**Windows PowerShell 请用原生 `.ps1`，不要假定 Git Bash / WSL 可用**：
 
 | 脚本 | 用途 |
 |---|---|
-| `scripts/porter.sh` | 主入口，转发给 `porter` CLI。等价于 `porter <子命令>`。 |
-| `scripts/inspect.sh` | 轻量预检，等价于 `porter inspect`。 |
-| `scripts/bootstrap.sh` | 离线兜底：无法用 `uvx` 时在仓库检出里建 `.venv`。 |
+| `scripts/porter.sh` | Bash 主入口，转发给 `porter` CLI。 |
+| `scripts/porter.ps1` | Windows PowerShell 主入口，同样支持 `inspect` / `plan` / `run` / `jobs` 等子命令。 |
+| `scripts/inspect.sh` | Bash 预检，等价于 `porter.sh inspect`。 |
+| `scripts/bootstrap.sh` | 从仓库检出创建 `.venv` 的备用入口；不随技能安装 Python 源码。 |
 
 ```bash
 # 预检
@@ -61,7 +62,11 @@ metadata:
 <SKILL_DIR>/scripts/porter.sh run "https://youtu.be/dQw4w9WgXcQ" -o ./porter_output
 ```
 
-`uvx` 首次运行需要联网解析依赖。离线机器用 `bootstrap.sh`。
+Windows PowerShell 使用 `& '<SKILL_DIR>\scripts\porter.ps1' inspect '<URL>' --json`，`plan` / `run` / `jobs` 也调用同一入口。`inspect.sh` 和下面的 `nohup`、`grep` 命令是 Bash 示例，不能原样粘贴进 PowerShell。
+
+`uvx` 首次运行需要联网解析依赖。默认只安装 `porter-workflow[llm]`（基础包已有 yt-dlp）；需要本地 ASR 时，经用户同意设置 `PORTER_SKILL_SPEC=porter-workflow[llm,asr-local]`。离线安装请在仓库检出里准备本地依赖，而不是指望技能目录自带源码。
+
+在只能写工作区的宿主，**先确认获准的绝对目录**，设置 `PORTER_SKILL_STATE_DIR` 为其中的 `.state`，运行 `porter.sh --host-check` 或 `porter.ps1 --host-check`；它会把 uv、yt-dlp 与作业注册表缓存重定向进去（覆盖宿主已设的缓存路径）。输出 `-o` 也要位于获准目录。未设置时保留宿主默认路径。命令、限制及 Windows 示例见 [`references/HOSTS.md`](references/HOSTS.md)。
 
 ---
 
@@ -116,6 +121,8 @@ nohup <SKILL_DIR>/scripts/porter.sh run "<URL>" -o ./porter_output > run.log 2>&
 <SKILL_DIR>/scripts/porter.sh jobs list
 <SKILL_DIR>/scripts/porter.sh jobs status <job_id>
 ```
+
+PowerShell 请用宿主提供的**后台作业工具**异步启动 `& '<SKILL_DIR>\scripts\porter.ps1' run ...`，并持续使用相同的 `PORTER_SKILL_STATE_DIR` 调用 `jobs status`。不要用 `Out-String` 把耗时命令的进度攒到结束才输出。
 
 > **不要**用"把工具超时设成 1200 秒"来硬扛长任务（v0.1 的做法）。那在视频更长时照样失败，而且失败时你拿不到任何进度。作业注册表就是为这个设计的。
 
@@ -238,4 +245,5 @@ run "<URL>" --json
 | [`references/ARCHITECTURE.md`](references/ARCHITECTURE.md) | 四阶段管线、平台与后端回退链、设计约束 |
 | [`references/CONFIG.md`](references/CONFIG.md) | 全部配置键、环境变量、优先级 |
 | [`references/MCP.md`](references/MCP.md) | MCP 工具对照表与配置方法 |
+| [`references/HOSTS.md`](references/HOSTS.md) | Windows 原生入口与受限宿主预检 |
 | [`assets/config.example.json`](assets/config.example.json) | 配置模板 |
