@@ -41,12 +41,12 @@ jobs:
             target: windows-x86_64
             binary: porter.exe
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # 3.12, not the newest: PyInstaller trails new CPython releases, and the
       # launcher uses no 3.13+ syntax, so pinning to what PyInstaller supports
       # is free.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -105,7 +105,7 @@ jobs:
           # Hand-over only happens once the install produced a real console script.
           test -x "$PORTER_HOME/venv/bin/porter"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: porter-${{ matrix.target }}
           path: dist/${{ matrix.binary }}
@@ -119,7 +119,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
 
@@ -148,7 +148,7 @@ jobs:
           done
           ls -l release
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: release/porter-*
           # Users have to know the download is not self-contained.
