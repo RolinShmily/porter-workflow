@@ -56,8 +56,12 @@ try {
     & $Launcher --host-check
     if ($LASTEXITCODE -ne 1) { throw "blocked state should fail with 1, got $LASTEXITCODE" }
 
+    $global:LASTEXITCODE = 0
     Write-Output 'PowerShell skill launcher smoke passed'
 } finally {
     Remove-Item Function:\uvx -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $root -Recurse -Force
 }
+
+$global:LASTEXITCODE = 0
+exit 0
