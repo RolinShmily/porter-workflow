@@ -20,7 +20,7 @@ Use GitHub's private vulnerability reporting: go to the
 **Report a vulnerability**. This creates a private advisory visible only to you
 and the maintainer.
 
-If you cannot use that, email **rol1n@srprolin.top** with `[porter
+If you cannot use that, email **contact@srprolin.com** with `[porter
 security]` in the subject.
 
 Please include:
