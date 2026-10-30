@@ -1007,6 +1007,7 @@ def build_settings_tab(gr: Any, i18n: Any = None) -> None:
             Any,
             Any,
             Any,
+            Any,
         ]:
             data, dest = read_config_dict()
             formatted = json.dumps(data, indent=2, ensure_ascii=False)
@@ -1035,6 +1036,7 @@ def build_settings_tab(gr: Any, i18n: Any = None) -> None:
                 style_d.get("bilingual_zh_margin_v", 90),
                 style_d.get("bilingual_en_margin_v", 35),
                 data.get("cookies_browser") or "",
+                str(data.get("cookies_file") or ""),
             )
 
         reload_all_btn.click(
@@ -1060,6 +1062,7 @@ def build_settings_tab(gr: Any, i18n: Any = None) -> None:
                 style_margin_zh,
                 style_margin_en,
                 cookies_browser,
+                cookies_file,
             ],
         )
 

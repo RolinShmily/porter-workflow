@@ -25,7 +25,7 @@ ENGINE_ROOT = Path(porter.__file__).parent
 ENGINE_FILES = sorted(ENGINE_ROOT.rglob("*.py"))
 
 SRC_ROOT = ENGINE_ROOT.parent
-FRONTEND_PACKAGES = {"porter_cli", "porter_mcp"}
+FRONTEND_PACKAGES = {"porter_cli", "porter_mcp", "porter_web"}
 
 
 def _imported_roots(tree: ast.AST) -> set[str]:
@@ -100,7 +100,7 @@ def test_unknown_attribute_raises_attribute_error() -> None:
 
 @pytest.mark.parametrize("frontend", sorted(FRONTEND_PACKAGES))
 def test_frontends_do_not_import_each_other(frontend: str) -> None:
-    """``porter_cli`` and ``porter_mcp`` are siblings, not layers.
+    """``porter_cli``, ``porter_mcp``, and ``porter_web`` are siblings, not layers.
 
     Both depend on ``porter``; neither may depend on the other. This is checked
     here rather than by an import-linter contract because import-linter can only

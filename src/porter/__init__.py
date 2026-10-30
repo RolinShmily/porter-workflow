@@ -1,15 +1,17 @@
 """porter — automated video localization engine.
 
 This package is the **library** layer. It contains no command-line parsing and
-never writes to stdout: two thin frontends consume it.
+never writes to stdout: frontends consume it.
 
 * ``porter_cli`` — the ``porter`` console script, for humans.
 * ``porter_mcp`` — the ``porter-mcp`` MCP server, for AI agents.
+* ``porter_web`` — the ``porter-web`` web interface, for interactive HITL workbench.
+* ``porter-skill`` — the agent skill, following the Agent Skills spec.
 
 Architectural rules (enforced by ``lint-imports`` and a test that scans for
 ``print`` calls):
 
-1. This package must never import ``porter_cli`` or ``porter_mcp``.
+1. This package must never import ``porter_cli``, ``porter_mcp``, or ``porter_web``.
 2. Nothing under this package may call ``print()`` — in an MCP stdio server,
    stdout *is* the JSON-RPC channel. Use :func:`porter.logging.get_logger`.
 3. Nothing in this package may assume a deployment layout (agent skill
@@ -42,7 +44,7 @@ from porter.errors import (
 from porter.logging import configure as configure_logging
 from porter.logging import get_logger
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 #: Public API, resolved lazily. Maps attribute name -> defining module.
 _LAZY_EXPORTS: dict[str, str] = {

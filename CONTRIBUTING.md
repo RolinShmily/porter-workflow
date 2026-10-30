@@ -80,7 +80,7 @@ These are enforced by tooling, not convention. A PR that breaks one will fail
 the gate.
 
 1. **The engine never imports a frontend.** `porter` must not import
-   `porter_cli` or `porter_mcp`. Enforced by `lint-imports`.
+   `porter_cli`, `porter_mcp`, or `porter_web`. Enforced by `lint-imports`.
 2. **The engine never writes to stdout.** In an MCP stdio server, stdout *is*
    the JSON-RPC channel. A single stray `print()` corrupts the protocol. Use
    `porter.logging.get_logger`. Enforced by ruff's `T20` rule.

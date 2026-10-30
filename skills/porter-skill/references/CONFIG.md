@@ -57,14 +57,24 @@ v0.1 的旧文件名 `porter_config.json` 仍被识别，升级不会丢配置�
 
 | 键 | 默认 | 说明 |
 |---|---|---|
-| `engine` | `null` | `null` = 走回退链；也可强制 `whisper-api` / `bcut` / `google-web` / `videocaptioner` |
+| `engine` | `null` | `null` = 走回退链；也可强制 `whisper-local` / `whisper-api` / `videocaptioner` |
 | `language` | `auto` | 源语言 |
 | `whisper_api_key` | `null` | 未设时回落到 `llm.api_key` |
 | `whisper_api_base` | `null` | 未设时回落到 `llm.api_base` |
 | `whisper_model` | `whisper-1` | |
+| `whisper_local_model` | `small` | 本地 Whisper 模型尺寸（`tiny` / `base` / `small` / `medium` / `large-v3` 或 HuggingFace 模型 ID） |
+| `whisper_local_device` | `auto` | 计算设备（`auto` / `cpu` / `cuda`） |
+| `whisper_local_compute_type` | `auto` | 计算精度（`auto` / `int8` / `float16` 等） |
 | `audio_denoise` | `true` | 是否生成 ASR 专用增强音轨（不影响成片音质） |
 
-> **转录需要 Key。** 免 Key 的语音识别端点（`bcut`、`google-web`）已实测失效。没有 Key、视频也没有原生字幕轨时，任务必然在转录阶段失败。详见 `references/ARCHITECTURE.md` §3。
+### `refine`
+
+转录后字幕文本纠错与语义精炼（标点修复、同音字校对）。
+
+| 键 | 默认 | 说明 |
+|---|---|---|
+| `enabled` | `true` | 是否启用 LLM 语义校对 |
+| `model` | `null` | 指定精炼模型（未指定时继承 `llm.model`） |
 
 ### `ffmpeg`
 

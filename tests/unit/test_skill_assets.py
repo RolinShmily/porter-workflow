@@ -49,10 +49,10 @@ class TestSkillLayout:
         exactly one ``SKILL.md``; two of them make it prompt, which breaks the
         one-line install that the README documents.
         """
-        # ``.pi`` holds this machine's *installed* copy of the skill, which is
-        # not part of the repository. Counting it would make the test fail on any
-        # developer machine that has the skill installed -- i.e. always.
-        skip = {".venv", ".git", ".pi", "node_modules", "__pycache__"}
+        # ``.pi`` and ``.agents`` hold this machine's *installed* copies of skills,
+        # which are not part of the repository. Counting them would make the test
+        # fail on any developer machine that has the skill installed -- i.e. always.
+        skip = {".venv", ".git", ".pi", ".agents", "node_modules", "__pycache__"}
         found = [p for p in REPO_ROOT.rglob("SKILL.md") if not skip & set(p.parts)]
         assert len(found) == 1, f"expected one SKILL.md, found {found}"
 
@@ -162,6 +162,16 @@ class TestFrontmatter:
     def test_the_body_stays_within_the_recommended_length(self) -> None:
         _, body = _frontmatter()
         assert len(body.splitlines()) < 500, "the SKILL.md body is meant to stay under 500 lines"
+
+    def test_metadata_version_tracks_package_version(self) -> None:
+        """The skill's metadata.version must stay aligned with porter.__version__."""
+        import porter
+
+        front, _ = _frontmatter()
+        metadata = front.get("metadata", {})
+        assert isinstance(metadata, dict)
+        skill_ver = str(metadata.get("version", ""))
+        assert skill_ver.startswith(porter.__version__.rsplit(".", 1)[0])
 
 
 # ---------------------------------------------------------------------------

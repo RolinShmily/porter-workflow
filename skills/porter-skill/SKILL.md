@@ -17,7 +17,7 @@ compatibility: >
   without any key. Optional: pip install videocaptioner for extra local engines.
 metadata:
   homepage: https://github.com/RolinShmily/porter-workflow
-  version: "0.2"
+  version: "0.3.1"
 ---
 
 # Porter Skill（流媒体搬运工）

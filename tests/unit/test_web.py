@@ -188,3 +188,43 @@ class TestJobsTableFormatting:
         choices = app.get_job_id_choices(fake_registry)
         assert len(choices) == 1
         assert choices[0][1] == "run-job1"
+
+
+class TestSettingsTabAssembly:
+    def test_settings_tab_reload_all_parity(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Verify on_reload_all reloads all config fields including cookies_file, matching outputs."""
+        target = tmp_path / "config.json"
+        monkeypatch.setattr(app, "get_config_target", lambda: target)
+        data = {
+            "llm": {"api_key": "{{SECRET_8r7j001r}}", "model": "deepseek-chat"},
+            "cookies_browser": "chrome",
+            "cookies_file": "/path/to/cookies.txt",
+        }
+        app.save_config_dict(data, target)
+
+        fake_gr = MagicMock()
+        handlers: list[tuple[object, list[object]]] = []
+
+        def fake_click(fn: object, inputs: object = None, outputs: list[object] | None = None) -> MagicMock:
+            handlers.append((fn, outputs or []))
+            return MagicMock()
+
+        btn_mock = MagicMock()
+        btn_mock.click.side_effect = fake_click
+        fake_gr.Button.return_value = btn_mock
+
+        app.build_settings_tab(fake_gr)
+
+        reload_entry = next(
+            (h for h in handlers if getattr(h[0], "__name__", "") == "on_reload_all"),
+            None,
+        )
+        assert reload_entry is not None, "on_reload_all handler not registered"
+        fn, outputs = reload_entry
+        res = fn()  # type: ignore[operator]
+        assert len(res) == len(outputs) == 21
+        assert res[-2] == "chrome"
+        assert res[-1] == "/path/to/cookies.txt"
+

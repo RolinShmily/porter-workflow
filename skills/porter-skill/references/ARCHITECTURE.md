@@ -51,12 +51,11 @@ prepare → transcribe → translate → burn
 
 | 后端 | 需要 | 端点是否经实测 |
 |---|---|---|
+| `whisper-local` | `[asr-local]` extra（本地模型，零 Key 离线可用） | ✅ |
 | `whisper-api` | Whisper API Key（或 `llm.api_key`） | ✅ |
-| `bcut` | 无 | ❌ 逆向，**当前返回空结果** |
-| `google-web` | 无 | ❌ 逆向，**当前返回空结果** |
 | `videocaptioner` | 已安装 VideoCaptioner CLI | ✅ |
 
-**"端点是否经实测"不等于"当前可用"。** 上表后两列的 `❌` 表示线格式是逆向出来的、随时可能失效——而 `bcut` / `google-web` 已经实测失效。所以**没有 Key 时，若视频也没有原生字幕轨，转录必然失败**。
+默认优先走免 Key、离线的 `whisper-local`（需要安装 `[asr-local]` 可选依赖）；如未安装则按顺序尝试云端 `whisper-api` 或本地 `videocaptioner`。若既无本地引擎，也无 API Key，且视频没有原生字幕轨，转录将无法执行。
 
 ### 翻译
 

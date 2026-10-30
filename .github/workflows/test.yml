@@ -175,13 +175,13 @@ jobs:
       - name: Build
         run: uv build
 
-      - name: Verify the wheel contains all three top-level packages
+      - name: Verify the wheel contains all four top-level packages
         run: >
           python -c "import glob, zipfile, sys;
           w = glob.glob('dist/*.whl')[0];
           tops = {n.split('/')[0] for n in zipfile.ZipFile(w).namelist()};
-          missing = sorted({'porter', 'porter_cli', 'porter_mcp'} - tops);
-          sys.exit(f'{w} is missing: {missing}') if missing else print(f'{w}: all three packages present')"
+          missing = sorted({'porter', 'porter_cli', 'porter_mcp', 'porter_web'} - tops);
+          sys.exit(f'{w} is missing: {missing}') if missing else print(f'{w}: all four packages present')"
 
       - uses: actions/upload-artifact@v4
         with:

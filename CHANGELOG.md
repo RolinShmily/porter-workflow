@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-30
+
+A patch release delivering functional fixes for the web workbench, test isolation
+improvements, sandboxed Windows launcher enhancements, and architectural alignment.
+
+### Fixed
+
+- **Web workbench config reload parity (`porter_web`).** Fixed an issue where reloading
+  configuration via `on_reload_all()` omitted `cookies_file`, causing the form field
+  to remain un-synchronized after saving and reloading.
+- **Agent skill test isolation (`tests/unit/test_skill_assets.py`).** Added `.agents` to
+  the test discovery ignore filter so that machines running contemporary Agent Skills tooling
+  do not trigger false-positive duplicate `SKILL.md` detection failures.
+- **Architectural test coverage (`tests/unit/test_architecture.py`).** Integrated `porter_web`
+  into `FRONTEND_PACKAGES` to enforce reciprocal frontend decoupling and prevent the engine
+  from importing web dependencies.
+- **CI wheel distribution validation (`.github/workflows/test.yml`).** Upgraded the
+  distribution gate to verify all four top-level packages (`porter`, `porter_cli`,
+  `porter_mcp`, `porter_web`) are packaged in wheels.
+- **Sandboxed Windows launcher compatibility.** Hardened PowerShell launcher (`porter.ps1`)
+  and smoke scripts for restricted workspace environments.
+
+### Changed
+
+- Synchronized references, `SKILL.md` metadata, issue templates, and documentation
+  to reflect the v0.3 line and accurate ASR fallback chains (`whisper-local`, `whisper-api`,
+  `videocaptioner`).
+
 ## [0.3.0] - 2026-10-11
 
 A minor release introducing the fourth frontend: `porter-web`, an interactive
@@ -463,7 +491,8 @@ Skill of the same name).
   assets and a standardised `raw/` + `cooked/` output layout.
 - Agent Skill packaging (`SKILL.md`, scripts, references, example config).
 
-[Unreleased]: https://github.com/RolinShmily/porter-workflow/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/RolinShmily/porter-workflow/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/RolinShmily/porter-workflow/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.8...v0.3.0
 [0.2.8]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.7...v0.2.8
 [0.2.7]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.6...v0.2.7
