@@ -11,6 +11,10 @@
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green"></a>
 </p>
 
+<p align="center">
+  <img src="assets/preview.webp" alt="Porter Workflow: video input, media preparation, subtitle extraction, translation, and subtitled video delivery" width="1200">
+</p>
+
 **Porter Workflow** is an automated video localization pipeline: give it a video
 URL, get back a standardised asset bundle plus hard-subbed release videos with
 bilingual and Chinese-only subtitles.

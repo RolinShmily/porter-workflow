@@ -81,9 +81,8 @@ tmp/
 # ---------------------------------------------------------------------------
 docs/
 
-# Skill assets are the one place media is source, not output: a subtitle sample
-# must be committable. Pipeline output dropped anywhere else is still ignored by
-# the rules above.
+# Skill assets are source media: subtitle samples must be committable.
+# Pipeline output dropped anywhere else is still ignored by the rules above.
 !skills/**/*.png
 !skills/**/*.jpg
 !skills/**/*.jpeg
@@ -92,6 +91,9 @@ docs/
 !skills/**/*.svg
 !skills/**/*.srt
 !skills/**/*.ass
+
+# README preview is source media, not pipeline output.
+!/assets/preview.webp
 
 # ---------------------------------------------------------------------------
 # Agent / editor / OS

@@ -11,6 +11,10 @@
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green"></a>
 </p>
 
+<p align="center">
+  <img src="assets/preview.webp" alt="Porter Workflow 视频本地化流程：输入视频、准备素材、获取字幕、翻译排版、交付成片" width="1200">
+</p>
+
 **Porter Workflow** 是一条全自动视频本地化流水线：给它一个视频链接，拿回一套标准化素材，以及烧好硬字幕的双语版与纯中文版成片。
 
 它以**一个引擎 + 四个前端**的形态发布：
