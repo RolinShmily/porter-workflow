@@ -1,8 +1,8 @@
 # Contributing to Porter Workflow
 
-Thanks for taking the time to contribute. This document covers what you need to
-build, test and land a change. The engine's rationale lives in the code itself:
-every non-obvious decision is explained in a module docstring next to it.
+Thanks for taking the time to contribute. This page is the entry point; the
+details live in [`docs/development/`](docs/development/README.md) so they are not
+maintained twice.
 
 By participating you agree to the [Code of Conduct](CODE_OF_CONDUCT.md).
 
@@ -21,86 +21,46 @@ agreed before you spend time on it.
 
 ---
 
-## Prerequisites
+## Quick start
 
-| Requirement | Why |
-| --- | --- |
-| Python ≥ 3.11 | The floor declared in `pyproject.toml`. CI tests 3.11–3.13. |
-| [uv](https://docs.astral.sh/uv/) | Environment and dependency management used throughout. |
-| FFmpeg + ffprobe, built with `libass` | The whole media layer. The test suite runs real encodes. |
-| Deno or Node ≥ 20 | Only needed for live YouTube downloads, not for the test suite. |
-
----
-
-## Setting up
+Requirements: Python ≥ 3.11, [uv](https://docs.astral.sh/uv/), FFmpeg with
+`libass`, and (for live YouTube downloads) Deno or Node ≥ 20.
 
 ```bash
 git clone https://github.com/RolinShmily/porter-workflow
 cd porter-workflow
-uv sync --extra all --extra dev     # installs exactly what uv.lock pins
+uv sync --extra all --extra dev
 ```
 
-`uv.lock` is committed, and CI installs from it with
-`uv sync --locked`, which fails if the lock no longer matches `pyproject.toml`.
-So if you add, remove or bump a dependency, run `uv lock` in the same commit.
-
-## The gate
-
-Every change must pass the same four checks CI runs. Run them from the
-repository root:
+Run the gate before opening a PR:
 
 ```bash
-ruff check src tests packaging     # style + lint (includes T20, see "Architecture rules")
-mypy src packaging                 # strict type checking
-lint-imports             # enforces the engine/frontend boundary
-pytest -m "not slow"     # the fast suite
+uv run ruff check src tests scripts
+uv run mypy src scripts
+uv run lint-imports
+uv run pytest -m "not network"
 ```
-
-`pytest` without `-m "not slow"` also runs the `slow` tier: end-to-end tests that
-shell out to FFmpeg and touch the network. Run those before opening a PR that
-touches the media layer, but they are excluded from CI because they are flaky
-and slow.
-
-Test tiers are documented in each directory:
-
-* [`tests/unit/`](tests/unit/) — fast, stubbed, no system dependencies.
-* [`tests/regression/`](tests/regression/README.md) — behaviour-equivalence
-  ports of the v0.1 implementation; some use a real FFmpeg.
-* [`tests/integration/`](tests/integration/README.md) — end-to-end, marked
-  `slow`.
-
-If you add a test that shells out to FFmpeg or hits the network, mark it
-`@pytest.mark.slow`.
 
 ---
 
-## Architecture rules
+## Read next
 
-These are enforced by tooling, not convention. A PR that breaks one will fail
-the gate.
-
-1. **The engine never imports a frontend.** `porter` must not import
-   `porter_cli`, `porter_mcp`, or `porter_web`. Enforced by `lint-imports`.
-2. **The engine never writes to stdout.** In an MCP stdio server, stdout *is*
-   the JSON-RPC channel. A single stray `print()` corrupts the protocol. Use
-   `porter.logging.get_logger`. Enforced by ruff's `T20` rule.
-3. **Respect the layer order.** `lint-imports` encodes the real dependency
-   graph; see the comment above `[tool.importlinter]` in `pyproject.toml` for
-   why each module sits where it does.
-4. **Keep the zero-configuration path light.** Pure Python plus FFmpeg must
-   keep working without `openai`, `pillow` or `SpeechRecognition` installed.
-   New capabilities go behind an optional extra.
+| Topic | Document |
+| --- | --- |
+| Environment, lockfile rules, troubleshooting | [docs/development/setup.md](docs/development/setup.md) |
+| The four gates, test tiers, architecture and licence rules | [docs/development/gate.md](docs/development/gate.md) |
+| Adding a platform, ASR or translation backend | [docs/development/extending.md](docs/development/extending.md) |
+| Release process and launcher | [docs/development/release.md](docs/development/release.md) |
+| Documentation conventions | [docs/development/docs.md](docs/development/docs.md) |
+| Architecture | [docs/architecture/overview.md](docs/architecture/overview.md) |
 
 ### Licence rules
 
-Porter is MIT. Contributions are accepted under the same terms.
-
-* **Do not add a hard dependency on a copyleft package.** Anything under
-  GPL/AGPL stays behind a subprocess boundary, as `videocaptioner` does. If you
-  are unsure, ask in the issue before writing code.
-* **If you add or remove a dependency, update
-  [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)**, including the licence.
-* Do not paste code from a copyleft project into this repository.
+Porter is MIT. Contributions are accepted under the same terms. Do not add a
+hard dependency on a copyleft package, and update
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) whenever a dependency changes.
+The full rules are in
+[docs/development/gate.md#licence-rules](docs/development/gate.md#licence-rules).
 
 ---
 
@@ -108,44 +68,16 @@ Porter is MIT. Contributions are accepted under the same terms.
 
 1. Fork, then branch from `main`. Use a descriptive name
    (`fix/burn-truncation`, `feat/rumble-platform`).
-2. Make the change. Keep commits focused; squash noise before requesting review.
+2. Make the change. Keep commits focused.
 3. Add or update tests. A bug fix should come with a test that fails before it.
 4. Run the gate above.
-5. Update documentation in the same PR. Behaviour changes that are not
-   reflected in `README.md`, `README_zh.md` or `CHANGELOG.md` are incomplete.
+5. Update documentation in the same PR: the relevant page under `docs/`, plus
+   `README.md` / `README_zh.md` / `CHANGELOG.md` for user-visible behaviour.
 6. Open the pull request and fill in the template.
 
-### Commit messages
-
-[Conventional Commits](https://www.conventionalcommits.org/): `feat:`,
-`fix:`, `docs:`, `refactor:`, `test:`, `chore:`, `perf:`, `build:`, `ci:`.
-A scope is welcome — `fix(mcp): ...`. Both English and Chinese messages are
-fine; match the change, not a language policy.
-
-### Documentation language
-
-* `README.md` is English, `README_zh.md` is Chinese. A user-visible change
-  should update both.
-* Governance files (`CONTRIBUTING`, `CODE_OF_CONDUCT`, `SECURITY`,
-  `CHANGELOG`, `THIRD_PARTY_NOTICES`) and GitHub templates are in English.
-* `THIRD_PARTY_NOTICES.md` is in English: it is a legal notice.
-
----
-
-## Adding a platform, ASR backend or translation backend
-
-These three extension points are the most common contributions. Each has a
-registry and a transport-shaped base class:
-
-* Platforms — `src/porter/platforms/`. Implement the base in
-  `platforms/base.py`, register it, and add URL handling in `platforms/urls.py`.
-* ASR backends — `src/porter/asr/`. Implement the chain's backend protocol and
-  add it to the chain in `asr/chain.py`.
-* Translation backends — `src/porter/translate/`, same shape.
-
-For all three: a backend must fail in a way the chain can fall through, never
-by raising out of the chain. Add a unit test with the network stubbed, and a
-`doctor` probe if the backend has an environment prerequisite.
+Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/):
+`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`, `perf:`, `build:`, `ci:`.
+English and Chinese messages are both fine.
 
 ---
 

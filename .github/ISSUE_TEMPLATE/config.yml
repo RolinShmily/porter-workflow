@@ -4,8 +4,8 @@ contact_links:
     url: https://github.com/RolinShmily/porter-workflow/security/advisories/new
     about: Report a vulnerability privately. Do not open a public issue.
   - name: Documentation
-    url: https://github.com/RolinShmily/porter-workflow/tree/main/docs
-    about: Architecture, configuration, MCP contract and the v0.1 → v0.2 migration guide.
+    url: https://github.com/RolinShmily/porter-workflow/blob/main/docs/README.md
+    about: Development, architecture, CLI/API reference, and design notes.
   - name: Contributing guide
     url: https://github.com/RolinShmily/porter-workflow/blob/main/CONTRIBUTING.md
     about: Development setup, the gate commands, and the architecture and licence rules.

@@ -59,7 +59,6 @@ none is imported unless the corresponding capability is used.
 | --- | --- | --- | --- |
 | `llm` | [openai](https://github.com/openai/openai-python) | Apache-2.0 | Whisper API transcription and LLM-based translation/subtitle repair. |
 | `llm` | [json-repair](https://github.com/mangiucugna/json_repair) | MIT | Recovering JSON from imperfect LLM output. |
-| `stt` | [SpeechRecognition](https://github.com/Uberi/speech_recognition) | BSD-3-Clause | Google Web STT. Bundles a FLAC decoder under its own bundled licence (`LICENSE-FLAC.txt` in that distribution). **Measured non-functional** — see the README. |
 | `asr-local` | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) | MIT | Local Whisper inference with no API key and no network. |
 | `images` | [pillow](https://github.com/python-pillow/Pillow) | MIT-CMU (HPND) | Cover image handling. |
 | `mcp` | [fastmcp](https://github.com/jlowin/fastmcp) | Apache-2.0 | The `porter-mcp` server. |
@@ -159,7 +158,7 @@ Porter stands on the shoulders of these projects, and is grateful to them:
   five platforms is a solved problem rather than five scrapers.
 * **[VideoCaptioner](https://github.com/WEIFENG2333/VideoCaptioner)** — its
   sentence segmentation, alignment and subtitle-processing design shaped the
-  approach taken in `porter.subtitles` and the ASR chain.
+  approach taken in `porter.core.subtitles` and the ASR chain.
 * **[FFmpeg](https://ffmpeg.org/) + [libass](https://github.com/libass/libass)** —
   the entire media layer: standardisation, denoising and professional ASS
   rendering.

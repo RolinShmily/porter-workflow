@@ -8,7 +8,7 @@ body:
       value: |
         Before proposing a new dependency or a new backend, please read the
         licence rules in
-        [CONTRIBUTING.md](https://github.com/RolinShmily/porter-workflow/blob/main/CONTRIBUTING.md#licence-rules).
+        [docs/development/gate.md](https://github.com/RolinShmily/porter-workflow/blob/main/docs/development/gate.md#licence-rules).
         Porter is MIT; copyleft components stay behind a subprocess boundary.
 
   - type: dropdown

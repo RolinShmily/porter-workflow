@@ -12,208 +12,156 @@
 </p>
 
 <p align="center">
-  <img src="assets/preview.webp" alt="Porter Workflow: video input, media preparation, subtitle extraction, translation, and subtitled video delivery" width="1200">
+  <img src="https://raw.githubusercontent.com/RolinShmily/porter-workflow/main/docs/images/preview.webp" alt="Porter Workflow: video input, media preparation, subtitle extraction, translation, and subtitled video delivery" width="1200">
 </p>
 
-**Porter Workflow** is an automated video localization pipeline: give it a video
-URL, get back a standardised asset bundle plus hard-subbed release videos with
-bilingual and Chinese-only subtitles.
+**Porter Workflow** takes a video URL or a local file and produces a localized
+release: a standardized asset bundle, bilingual and Chinese-only subtitles, and
+hard-subbed MP4s.
 
-It ships as **one engine with four frontends**:
+## How it works
 
-| Frontend | Entry point | For |
+```text
+URL / local file
+      │
+      ▼
+PREPARE     download, standardize, fetch platform subtitles, extract audio
+      │
+      ▼
+TRANSCRIBE  use the platform's subtitle track, or run speech recognition
+      │
+      ▼
+TRANSLATE   produce target-language subtitles (default: zh-Hans)
+      │
+      ▼
+BURN        render bilingual / Chinese-only hard-subbed MP4s
+```
+
+Completed phases are reused on a rerun. `--force` redoes them, `--only-phase`
+stops after one, and `--burn skip` stops before encoding.
+
+### Supported platforms
+
+| Platform | URL examples | Platform subtitle track |
 | --- | --- | --- |
-| `porter` (CLI) | `porter "<URL>"` | Humans and shell scripts |
-| `porter-mcp` | `uvx --from "porter-workflow[mcp]" porter-mcp` | AI agents via Model Context Protocol |
-| `porter-web` (WebUI) | `uvx --from "porter-workflow[web]" porter-web` | Humans and agents via interactive HITL workbench |
-| `porter-skill` | `npx skills add RolinShmily/porter-workflow` | Agents that use the Agent Skills spec |
+| YouTube | `youtube.com`, `youtu.be` | Yes |
+| Bilibili | `bilibili.com`, `b23.tv`, `bilibili.tv` | Yes (CC may require cookies) |
+| TikTok | `tiktok.com`, `vm.tiktok.com` | Yes |
+| X / Twitter | `x.com`, `twitter.com` | No — ASR runs |
+| Instagram | `instagram.com` | No — ASR runs |
+| Local file | any readable path | No — ASR or `--subtitle-file` |
 
-On Windows or workspace-write-only desktop hosts, use the skill's native PowerShell launcher and opt-in workspace state directory. An installer `spawn EPERM` is not a reason to disable the sandbox by default; see the [restricted-host guide](skills/porter-skill/references/HOSTS.md).
+Downloads go through yt-dlp, so other sites it supports may work, but only these
+platforms have explicit specs. A native track is *requested*, not guaranteed:
+rate limiting can make the fetch fail, and the ASR chain then takes over.
 
-All four call the same `porter` library. The engine contains no argument
-parsing and never writes to stdout — a requirement, because in an MCP stdio
-server stdout *is* the JSON-RPC channel.
+## Backends by phase
 
-> **Status: `v0.3.x` is the current development line on `main`.**
-> The v0.3 release — one engine, four frontends (CLI, MCP, WebUI workbench, and Agent Skill) — has landed. The v0.1
-> implementation is preserved in git history at commit `b5fd577`.
+### PREPARE
 
----
+- **URL** — yt-dlp download; **local file** — used in place.
+- **FFmpeg** normalizes video to H.264/AAC and audio to 16 kHz mono.
+- **Deno** (or Node ≥ 20) is recommended for YouTube's JS challenges.
 
-## Installation
+### TRANSCRIBE
+
+| Route | Requires | Notes |
+| --- | --- | --- |
+| Platform subtitles | — | Free and exact; preferred when the platform provides them |
+| `whisper-local` | `[asr-local]` extra | Key-free and offline after the model downloads; tried first |
+| `whisper-api` | `[llm]` extra + API key | Any OpenAI-compatible `/audio/transcriptions` endpoint |
+| `videocaptioner` | External CLI, installed by you | GPL-3.0 and `python<3.13`, so never a declared dependency |
+| `--subtitle-file FILE` | A local SRT | Explicit source track; skips platform tracks and ASR |
+
+The first available backend wins. `--asr-engine NAME` moves a named backend to
+the front but keeps the rest as fallbacks. A Chinese platform track skips the
+translation phase entirely.
+
+### TRANSLATE
+
+| Backend | Requires | Notes |
+| --- | --- | --- |
+| `llm` | `[llm]` extra + API key | Best quality; can also repair transcription errors |
+| `bing` | Nothing | Key-free endpoint |
+| `google` | Nothing | Key-free endpoint |
+| `mymemory` | Nothing | Key-free public API |
+| `videocaptioner-llm` | External CLI | GPL-3.0, installed by you |
+| `videocaptioner` | External CLI | GPL-3.0, installed by you |
+
+The first backend that produces usable text wins. For a Chinese target, a
+response without CJK characters is rejected and the next backend is tried.
+`--translator NAME` promotes a backend to the front, like `--asr-engine`.
+`--target-lang` defaults to `zh-Hans`.
+
+### BURN
+
+| Mode | Output |
+| --- | --- |
+| `dual` (default) | `video_bilingual.mp4` + `video_zh.mp4` |
+| `zh_only` | `video_zh.mp4` |
+| `bilingual_only` | `video_bilingual.mp4` |
+| `skip` | Subtitles only, no video encoding |
+
+Burning requires **FFmpeg with libass**. Fonts, sizes, colors, margins and fades
+are configurable under the `style` section.
+
+## Install
 
 Requires **Python ≥ 3.11**.
 
-```bash
-# CLI, minimal install (pure-Python; translation works without a key, but
-# transcription needs the [asr-local] extra or an API key -- see below)
-uvx porter-workflow "<URL>"
+System dependencies (not Python packages, must be on `PATH`):
 
-# CLI with every optional backend
+| Dependency | Needed for | Notes |
+| --- | --- | --- |
+| **FFmpeg + ffprobe** | Everything | Must be built **with `libass`**. Verify: `ffmpeg -filters \| grep subtitles` |
+| **Deno** (recommended) | YouTube downloads | yt-dlp ≥ 2025.11.12 needs an external JS runtime; Node ≥ 20 also works |
+
+```bash
+# Recommended: local, key-free, offline transcription
+uvx --from "porter-workflow[asr-local]" porter "<URL>"
+
+# Every optional backend, including WebUI support
 uvx --from "porter-workflow[all]" porter "<URL>"
 
-# WebUI, interactive workbench (Gradio)
+# WebUI workbench
 uvx --from "porter-workflow[web]" porter-web
 
 # Persistent install
 pipx install "porter-workflow[all]"
-```
 
-### System dependencies
-
-These are **not** Python packages and must be on `PATH`:
-
-| Dependency | Needed for | Notes |
-| --- | --- | --- |
-| **FFmpeg + ffprobe** | Everything | Must be built **with `libass`** for hardsubbing. Verify: `ffmpeg -filters \| grep subtitles` |
-| **Deno** (recommended) | YouTube downloads | yt-dlp ≥ 2025.11.12 needs an external JS runtime to solve YouTube's JS challenges. Node ≥ 20 also works. |
-
-Check everything at once:
-
-```bash
+# Check the environment
 porter doctor
 ```
 
-### Transcription is key-free and offline, or an API key
-
-**Local Whisper runs on your own machine: no key, no network after the first
-run.** Measured 2026-09-24 on real speech -- 18 s of audio became 3 cues in
-7.2 s on CPU with the default `small` model:
-
-| ASR backend | Needs | Status |
-| --- | --- | --- |
-| **`whisper-local`** | the `[asr-local]` extra | **Works.** Key-free; offline once the model is cached |
-| Whisper API | `OPENAI_API_KEY` (or a compatible endpoint) | Works |
-| VideoCaptioner CLI | the `videocaptioner` package, installed separately | Works |
-| Bcut | nothing | Host answers, but returns **zero utterances** |
-| Google Web (`[stt]`) | nothing | Returns the empty result `{"result":[]}` for **every** request |
-
-`whisper-local` is tried first, so it is what a run uses whenever it is
-installed. It sits behind an extra because `faster-whisper` and `ctranslate2`
-are heavy, and CTranslate2-backed rather than PyTorch:
-
-```bash
-# Key-free and offline. This is the recommended install.
-uvx --from "porter-workflow[asr-local]" porter "<URL>"
-
-# Or everything at once -- [all] includes [asr-local]
-uvx --from "porter-workflow[all]" porter "<URL>"
-```
-
-The first run downloads the model from Hugging Face (464 MB for the default
-`small`); after that it is fully offline. Device and precision are chosen for
-you -- CUDA if it loads, CPU otherwise -- and can be pinned:
-
-```bash
-porter config set asr.whisper_local_model=medium
-porter config set asr.whisper_local_device=cuda
-porter config set asr.whisper_local_compute_type=float16
-```
-
-A **bare** `uvx porter-workflow "<URL>"` still cannot transcribe, because no ASR
-backend is in a minimal install: it downloads and standardises the video and
-then fails with `every speech-to-text backend failed`. The two key-free
-*endpoints* are the ones that are dead -- both are reverse-engineered, and
-Google Web's response is malformed at the HTTP level, so the read fails outright
-rather than merely returning nothing. Bcut's failure is the more ambiguous of
-the two -- the host answers, so it could be a quota or a changed field rather
-than a dead endpoint -- which is why it keeps an "unverified" label in the
-source.
-
-So to get subtitles, do one of:
-
-```bash
-# Option A (recommended): local, key-free, offline
-uvx --from "porter-workflow[asr-local]" porter "<URL>" --burn skip
-
-# Option B: an LLM key (also improves translation quality a lot)
-export OPENAI_API_KEY=sk-...
-porter "<URL>" --burn skip
-
-# Option C: install VideoCaptioner and use its engines
-pip install videocaptioner
-porter "<URL>" --asr-engine bijian --burn skip
-```
-
-**Translation is unaffected.** Bing, Google and MyMemory all still work without
-a key; each was probed against its live endpoint and returned real Chinese. Only
-transcription ever needed credentials.
-
-`porter doctor` reports which route a job will actually take before you start it.
-
-### Optional extras
-
 | Extra | Adds | Enables |
 | --- | --- | --- |
-| `[asr-local]` | `faster-whisper` | **Local Whisper ASR — key-free and offline**, see above |
+| `[asr-local]` | `faster-whisper` | Local Whisper — key-free and offline |
 | `[llm]` | `openai`, `json-repair` | LLM translation + Whisper API ASR |
-| `[stt]` | `SpeechRecognition` | Google Web STT — **measured non-functional**, see above |
 | `[images]` | `pillow` | Cover image handling |
 | `[mcp]` | `fastmcp` | The `porter-mcp` server |
+| `[web]` | `gradio` | The `porter-web` workbench |
 | `[all]` | all of the above | — |
 
-`videocaptioner` is **deliberately not a dependency.** It is GPL-3.0 (this
-project is MIT) and pins `python<3.13`. Porter detects it at runtime and, if
-present, uses it as an extra ASR/translation backend across a process boundary.
-Install it yourself if you want those engines:
-
-```bash
-pip install videocaptioner
-```
-
-### Slow or blocked? Mirrors for China
-
-Both of porter's downloads default to endpoints that are painful from mainland
-China: the packages come from PyPI, and the Whisper weights from Hugging Face. On
-a machine that looks Chinese -- by timezone, by a UTC+8 offset, or by a `zh`
-locale -- porter switches to domestic mirrors on its own:
-
-| What | Default elsewhere | Default in China | Change it with |
-| --- | --- | --- | --- |
-| Python packages | PyPI | [USTC](https://mirrors.ustc.edu.cn/pypi/simple) | `UV_DEFAULT_INDEX` |
-| Whisper weights | Hugging Face | [ModelScope](https://modelscope.cn) | `HF_ENDPOINT` |
-
-The `faster-whisper-*` repositories on ModelScope hold the official CTranslate2
-weights rather than a re-conversion: their `config.json` is **byte-identical** to
-`Systran/faster-whisper-small`'s. Each model size is downloaded from there once.
-
-To force a direction, or to use a mirror of your own choosing:
-
-```bash
-PORTER_MIRROR=cn     # always prefer the mirrors
-PORTER_MIRROR=off    # never; always use the official sources
-```
-
-**An index you set yourself always wins** and is never overwritten. Setting
-`UV_DEFAULT_INDEX` (or the older `UV_INDEX_URL`) is enough on its own.
-`PIP_INDEX_URL` is honoured as well, and is copied across to uv -- because uv
-ignores `PIP_INDEX_URL` by itself, so `pip config set global.index-url <mirror>`
-alone would silently do nothing at all.
-
----
+A minimal install without `[asr-local]` or `[llm]` can download and translate,
+but cannot transcribe unless a platform subtitle track exists or the external
+VideoCaptioner CLI is installed. `porter doctor` reports the route a job will
+actually take.
 
 ## Usage
 
 ```bash
-# Inspect a link without downloading anything
-porter inspect "<URL>"
-
-# Full pipeline: download → transcribe → translate → burn
-porter "<URL>" -o ./porter_output
-
-# Subtitles only, no video encoding
-porter "<URL>" --burn skip
-
-# Diagnose the environment
-porter doctor
-
-# Show resolved configuration (secrets masked)
-porter config list
+porter inspect "<URL>"              # Inspect a link without downloading
+porter plan "<URL>"                 # Show the exact route and expected failures
+porter "<URL>"                      # Full pipeline
+porter "<URL>" -o ./porter_output   # Choose the output directory
+porter "<URL>" --burn skip          # Subtitles only
+porter doctor                       # Diagnose the environment
+porter config list                  # Show resolved config (secrets masked)
 ```
 
 ### Output layout
 
-```
+```text
 <output_dir>/<video_id>_<safe_title>/
 ├── raw/
 │   ├── video.mp4                 H.264 + AAC + faststart master
@@ -230,98 +178,87 @@ porter config list
     └── video_zh.mp4
 ```
 
-### Configuration
+### Frontends
+
+| Frontend | Command | For |
+| --- | --- | --- |
+| CLI | `porter` | Humans and shell scripts |
+| MCP | `uvx --from "porter-workflow[mcp]" porter-mcp` | AI agents over stdio JSON-RPC |
+| WebUI | `uvx --from "porter-workflow[web]" porter-web` | Humans and agents using the HITL workbench |
+| Agent Skill | `npx skills add RolinShmily/porter-workflow` | Agents using the Agent Skills spec |
+
+All four call the same engine. MCP setup details are in
+[`skills/porter-skill/references/MCP.md`](skills/porter-skill/references/MCP.md);
+restricted Windows hosts are covered in
+[`skills/porter-skill/references/HOSTS.md`](skills/porter-skill/references/HOSTS.md).
+
+## Configuration
 
 Resolved in this order, highest priority first:
 
 1. `--config <path>`
 2. `$PORTER_CONFIG`
-3. Environment variables (`OPENAI_API_KEY`, `PORTER_ASR_ENGINE`, …)
-4. Project-level `./porter.json`
-5. User-level config directory (`platformdirs`)
+3. Environment variables (they override the selected file)
+4. Nearest project config: `porter.json` → `porter.toml` → `config.json`
+5. User config under `platformdirs` (only if there is no project config)
 6. Built-in defaults
 
----
-
-## MCP server
-
-```json
-{
-  "mcpServers": {
-    "porter": {
-      "command": "uvx",
-      "args": ["--from", "porter-workflow[mcp]", "porter-mcp"]
-    }
-  }
-}
-```
-
-Long jobs are exposed as a start/status/result/cancel API rather than one
-blocking call, because encoding a 1080p video can take tens of minutes.
-
----
-
-## Development
+| Section | Keys | Purpose |
+| --- | --- | --- |
+| top level | `output_dir`, `cookies_file`, `cookies_browser` | Output location and gated-media access |
+| `llm` | `api_key`, `api_base`, `model` | LLM translation, refinement and Whisper API fallback |
+| `asr` | `engine`, `language`, `audio_denoise`, `whisper_local_model`, `whisper_local_device`, `whisper_local_compute_type`, `whisper_api_key`, `whisper_api_base`, `whisper_model` | Speech recognition |
+| `refine` | `enabled`, `model` | LLM transcript cleanup before translation |
+| `ffmpeg` | `ffmpeg_path`, `ffprobe_path`, `video_codec`, `preset`, `crf`, `pixel_format`, `audio_codec`, `audio_bitrate`, `audio_sample_rate`, `wav_sample_rate`, `auto_tune` | Encoding and hardware tuning |
+| `style` | `zh_font`, `en_font`, sizes, colors, `outline_*`, `shadow`, `margin_*`, `fade_*` | ASS subtitle appearance |
 
 ```bash
-uv sync --extra all --extra dev      # installs exactly what uv.lock pins
-
-ruff check src          # includes T20: the engine must not print()
-mypy src
-lint-imports            # enforces the engine/frontend boundary
-pytest
+porter config list                     # Effective values + source, secrets masked
+porter config get llm                  # Show one section
+porter config set llm.model=deepseek-chat
+porter config set llm.api_key=sk-...   # Writes user-level config by default
 ```
 
-[`CONTRIBUTING.md`](CONTRIBUTING.md) documents the full gate, the architecture
-rules those tools enforce, and the licence rules for new dependencies.
+The complete key table, defaults and examples are in
+[`skills/porter-skill/references/CONFIG.md`](skills/porter-skill/references/CONFIG.md).
+
+## Build and develop
+
+Development needs **Python 3.11–3.13**, **uv**, **FFmpeg + libass**, and
+**Deno** or **Node ≥ 20**. The runtime dependencies are `yt-dlp[default]`,
+`requests`, `pydantic` and `platformdirs`; everything else is an optional extra.
+
+```bash
+uv sync --extra all --extra dev      # Install exactly what uv.lock pins
+
+ruff check src tests scripts        # Lint; T20 enforces no print() in the engine
+mypy src scripts                    # Strict type checking
+lint-imports                        # Engine/frontend dependency contracts
+pytest -m "not network"             # Offline suite
+```
 
 Repository layout:
 
-```
-src/porter/        engine (library) — all business logic lives here
-src/porter_cli/    CLI frontend
-src/porter_mcp/    MCP frontend
-src/porter_web/    Gradio WebUI frontend (HITL workbench)
-skills/porter-skill/   Agent Skill assets (SKILL.md, scripts, references)
+```text
+src/porter/
+├── __init__.py       stable public API (lazy exports), __version__
+├── core/             engine — all business logic
+├── cli/              CLI frontend
+├── mcp/              MCP frontend
+└── webui/            Gradio WebUI frontend (HITL workbench)
+skills/porter-skill/  Agent Skill assets (SKILL.md, scripts, references)
+scripts/              developer / release helper scripts (launcher.py)
+docs/                 development, architecture, reference, design, images
 tests/{unit,regression,integration}/
 ```
 
----
+- [Documentation index](docs/README.md)
+- [Architecture overview](docs/architecture/overview.md)
+- [Development gate](docs/development/gate.md)
+- [CLI reference](docs/reference/cli.md)
+- [Contributing](CONTRIBUTING.md)
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
-
----
-
-## Acknowledgements
-
-Porter is built on other people's work, and the debt is worth stating plainly:
-
-* **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** — downloading from five
-  platforms is a solved problem rather than five scrapers, because of this.
-* **[VideoCaptioner](https://github.com/WEIFENG2333/VideoCaptioner)** (GPL-3.0) —
-  its sentence segmentation, alignment and subtitle-processing design shaped the
-  approach in `porter.subtitles` and the ASR chain. Ideas only: no code was
-  copied, and it is never imported — only run as an external process, which is
-  why porter can stay MIT.
-* **[FFmpeg](https://ffmpeg.org/) and
-  [libass](https://github.com/libass/libass)** — the entire media layer:
-  standardisation, denoising and professional ASS rendering.
-* **[Gradio](https://github.com/gradio-app/gradio)** — the interactive WebUI
-  frontend and Human-in-the-Loop visualization workbench.
-
-[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) records every component,
-its licence, and whether porter depends on it, optionally installs it, or only
-spawns it as a subprocess.
-
----
-
-## Contributing
-
-Contributions are welcome. [`CONTRIBUTING.md`](CONTRIBUTING.md) covers the
-development setup and the gate every change must pass; [`SECURITY.md`](SECURITY.md)
-explains how to report a vulnerability privately; release history lives in
-[`CHANGELOG.md`](CHANGELOG.md).
-
-This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md).
+MIT. See [LICENSE](LICENSE). Third-party components and their licences are
+listed in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).

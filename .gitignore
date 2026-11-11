@@ -77,12 +77,9 @@ tmp/
 *.tmp
 
 # ---------------------------------------------------------------------------
-# Local-only working area  (kept on disk, never published)
-# ---------------------------------------------------------------------------
-docs/
-
 # Skill assets are source media: subtitle samples must be committable.
 # Pipeline output dropped anywhere else is still ignored by the rules above.
+# ---------------------------------------------------------------------------
 !skills/**/*.png
 !skills/**/*.jpg
 !skills/**/*.jpeg
@@ -92,8 +89,8 @@ docs/
 !skills/**/*.srt
 !skills/**/*.ass
 
-# README preview is source media, not pipeline output.
-!/assets/preview.webp
+# Documentation images are source media, not pipeline output.
+!/docs/images/**
 
 # ---------------------------------------------------------------------------
 # Agent / editor / OS
