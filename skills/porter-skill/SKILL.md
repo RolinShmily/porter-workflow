@@ -20,7 +20,7 @@ compatibility: >
   WebUI are optional frontends.
 metadata:
   homepage: https://github.com/RolinShmily/porter-workflow
-  version: "0.3.1"
+  version: "0.3.2"
 ---
 
 # Porter Skill（流媒体搬运工 SOP）

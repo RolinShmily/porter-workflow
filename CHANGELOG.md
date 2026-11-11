@@ -7,6 +7,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-11-11
+
+### Changed
+
+- **Repository layout: one top-level package.** `src/porter` (the engine) now
+  lives under `src/porter/core/`; the CLI, MCP server and WebUI moved into
+  `src/porter/cli/`, `src/porter/mcp/` and `src/porter/webui/`. The stable
+  library surface is unchanged: `from porter import Pipeline, JobOptions, ...`
+  still works, and the `porter`, `porter-mcp` and `porter-web` console script
+  names are unchanged.
+- **Internal import layout is a breaking change.** Paths such as
+  `porter.models`, `porter.pipeline`, `porter.config` and `porter.jobs` no longer
+  exist; use the public root API, or `porter.core.*` if you were deliberately
+  reaching into internals. The top-level `porter_cli`, `porter_mcp` and
+  `porter_web` packages are gone; import `porter.cli`, `porter.mcp` and
+  `porter.webui` instead.
+- **Logger names gained a `core` segment.** Modules that call
+  `get_logger(__name__)` now report names like `porter.core.asr.chain` instead of
+  `porter.asr.chain`. Records still aggregate under the `porter` root logger; any
+  log filter or alert keyed on the old names needs updating.
+- **`packaging/` is now `scripts/`.** It only ever contained the release
+  launcher, and the new name says it is a development/release helper directory.
+  `scripts/launcher.py` is still the PyInstaller entry point; the release
+  workflow, tests and docs were updated.
+- **The WebUI is split by tab.** `porter.webui.app` now only assembles the
+  application and owns the entry point; each tab lives in `porter.webui.tabs`,
+  with configuration, material, job-view and doctor helpers in their own modules.
+  The public helper names remain re-exported from `app.py`.
+- **Import contracts cover the remaining modules.** `porter.core.refine` is in
+  the backend layer, `porter.core.mirrors` is a leaf, and a new `independence`
+  contract enforces that `porter.cli`, `porter.mcp` and `porter.webui` never
+  import one another.
+- **The Agent Skill is now an SOP.** `SKILL.md` starts by choosing an execution
+  channel (MCP when configured, CLI by default, WebUI for human operation), then
+  walks through environment/dependency confirmation, configuration validation,
+  inspect → plan → confirm → run → quality check. New references cover setup and
+  WebUI operations, and the transcription guidance now includes key-free local
+  Whisper instead of treating every key-free path as dead.
+- **`assets/` moved into the documentation tree.** The README preview is now
+  `docs/images/preview.webp`, and `docs/` is tracked in git (it was previously
+  ignored). The documentation system is Chinese-first; see
+  [`docs/README.md`](docs/README.md), with development, architecture, reference
+  and design sections.
+
+### Fixed
+
+- **TOML configs are never overwritten with JSON.** The WebUI settings tab now
+  resolves a JSON target only: when the nearest project config is TOML it logs a
+  warning and falls back to the user-level JSON file, leaving the TOML untouched.
+  `porter config set --file some.toml` likewise raises a `ConfigError` instead of
+  writing JSON into it. Editing TOML remains a manual operation.
+
+### Added
+
+- Conditional CI checks for the new artifact layout: the wheel must contain
+  `porter/core`, `porter/cli`, `porter/mcp`, `porter/webui` and `py.typed`, and
+  the declared entry points; the sdist must ship `docs/` and `scripts/` but not
+  `tests/`.
+- The README now leads with the pipeline, supported platforms and the live
+  backends for each phase, with build and contribution details in a separate
+  section.
+
+### Removed
+
+- **The dead `[stt]` extra and its backend.** `SpeechRecognition` (Google Web
+  STT) was measured returning no transcription at all; the dependency, extra and
+  every live reference are gone. `[all]` no longer includes it.
+- **Remaining dead-endpoint references.** Bcut and Google Web are no longer
+  named as available ASR routes in the README, doctor docstrings, tests or
+  plan warnings. The ASR chain is `whisper-local` → `whisper-api` →
+  `videocaptioner`, all of which are verified.
+- **The unimplemented `doctor --install-binaries` flag.** It was declared and
+  documented but never wired to any code, so the documentation now points at the
+  per-platform installation guidance `doctor` actually prints.
+
 ## [0.3.1] - 2026-10-30
 
 A patch release delivering functional fixes for the web workbench, test isolation
@@ -491,7 +566,8 @@ Skill of the same name).
   assets and a standardised `raw/` + `cooked/` output layout.
 - Agent Skill packaging (`SKILL.md`, scripts, references, example config).
 
-[Unreleased]: https://github.com/RolinShmily/porter-workflow/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/RolinShmily/porter-workflow/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/RolinShmily/porter-workflow/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/RolinShmily/porter-workflow/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.8...v0.3.0
 [0.2.8]: https://github.com/RolinShmily/porter-workflow/compare/v0.2.7...v0.2.8
