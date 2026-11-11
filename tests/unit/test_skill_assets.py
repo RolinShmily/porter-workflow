@@ -73,6 +73,8 @@ class TestSkillLayout:
             "references/CONFIG.md",
             "references/MCP.md",
             "references/HOSTS.md",
+            "references/SETUP.md",
+            "references/WEBUI.md",
             "assets/config.example.json",
         ):
             assert (SKILL_ROOT / rel).is_file(), f"missing {rel}"
@@ -183,18 +185,19 @@ class TestSkillText:
     def test_it_does_not_repeat_the_zero_key_claim(self) -> None:
         """The plan names this explicitly as something not to carry forward.
 
-        v0.1 advertised a "pure Python, zero-key" closed loop. Every key-free
-        speech endpoint has since stopped working, so the claim is now false --
-        and it is exactly the kind of attractive sentence that gets copied
-        forward by default.
+        v0.1 advertised a "pure Python, zero-key" closed loop. The key-free
+        *endpoints* have stopped working; the honest replacement is local Whisper
+        behind an explicit extra, not an unconditional zero-key promise.
         """
         text = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
-        assert "零 Key 闭环" not in text or "已经失效" in text or "已失效" in text
-        assert "纯 Python 零 Key 闭环" not in text.split("已经失效")[0].split("已经失效")[0] or True
+        assert "纯 Python 零 Key 闭环" not in text
+        assert "asr-local" in text
+        assert "免 Key" in text
 
-    def test_it_states_that_transcription_needs_a_key(self) -> None:
+    def test_it_states_the_transcription_routes(self) -> None:
         text = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
         assert "OPENAI_API_KEY" in text
+        assert "asr-local" in text
         assert "every speech-to-text backend failed" in text
 
     def test_it_says_translation_needs_no_key(self) -> None:
@@ -241,6 +244,25 @@ class TestSkillText:
         text = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
         assert "不会" in text and "MCP" in text
 
+    def test_it_chooses_a_channel_before_running(self) -> None:
+        """The SOP must not assume every host has the same entry point."""
+        text = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        assert "执行通道" in text
+        assert "CLI" in text and "MCP" in text and "WebUI" in text
+
+    def test_it_checks_environment_and_configuration_first(self) -> None:
+        text = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        assert "环境与依赖" in text
+        assert "配置检查" in text
+        assert "doctor" in text
+        assert "config list" in text
+
+    def test_it_documents_webui_operations(self) -> None:
+        text = (SKILL_ROOT / "references" / "WEBUI.md").read_text(encoding="utf-8")
+        for tab in ("工作台", "任务总览", "配置", "体检"):
+            assert tab in text
+        assert "AWAITING_USER" in text
+
 
 class TestMcpReference:
     def test_it_documents_the_setup(self) -> None:
@@ -269,7 +291,7 @@ class TestMcpReference:
 
         from fastmcp import Client
 
-        from porter_mcp.server import create_server
+        from porter.mcp.server import create_server
 
         async def _names() -> set[str]:
             async with Client(create_server()) as client:
@@ -298,17 +320,19 @@ class TestExampleConfig:
         and the setting simply never applies, which is a genuinely nasty bug to
         chase.
         """
-        from porter.config import (
+        from porter.core.config import (
             ASRConfig,
             FFmpegConfig,
             LLMConfig,
             PorterConfig,
+            RefineConfig,
             SubtitleStyleConfig,
         )
 
         data = json.loads((SKILL_ROOT / "assets" / "config.example.json").read_text(encoding="utf-8"))
         sections = {
             "llm": LLMConfig,
+            "refine": RefineConfig,
             "asr": ASRConfig,
             "ffmpeg": FFmpegConfig,
             "style": SubtitleStyleConfig,
@@ -330,7 +354,7 @@ class TestExampleConfig:
 
     def test_the_example_loads_into_the_engine(self, tmp_path: Path) -> None:
         """End to end: the template must actually be loadable, comments and all."""
-        from porter.config import resolve
+        from porter.core.config import resolve
 
         path = tmp_path / "porter.json"
         path.write_text(
@@ -348,18 +372,18 @@ class TestExampleConfig:
 
 class TestPlanCommand:
     def test_it_is_registered(self) -> None:
-        from porter_cli.app import SUBCOMMANDS
+        from porter.cli.app import SUBCOMMANDS
 
         assert "plan" in SUBCOMMANDS
 
     def test_it_appears_in_help(self) -> None:
-        from porter_cli.app import build_parser
+        from porter.cli.app import build_parser
 
         help_text = build_parser().format_help()
         assert "plan" in help_text
 
     def test_a_missing_source_is_refused(self, capsys: pytest.CaptureFixture[str]) -> None:
-        from porter_cli.app import main
+        from porter.cli.app import main
 
         code = main(["plan", "/nope/gone.mp4"])
         assert code != 0
@@ -372,7 +396,7 @@ class TestPlanCommand:
         path that does not exist, so both frontends promised a job that would
         die in its first second -- the exact waste the plan exists to prevent.
         """
-        from porter.plan import plan_for
+        from porter.core.plan import plan_for
 
         plan = plan_for("/nope/gone.mp4")
         assert plan.feasible is False
@@ -380,7 +404,7 @@ class TestPlanCommand:
 
     def test_a_local_file_plans_speech_recognition(self, tmp_path: Path) -> None:
         """A local file has no platform track, so recognition always runs."""
-        from porter_cli.app import main
+        from porter.cli.app import main
 
         media = tmp_path / "clip.mp4"
         media.write_bytes(b"not really a video, but the plan never decodes it")
@@ -391,8 +415,8 @@ class TestPlanCommand:
         import contextlib
         import io
 
-        from porter.models.plan import Plan
-        from porter_cli.app import main
+        from porter.cli.app import main
+        from porter.core.models.plan import Plan
 
         media = tmp_path / "clip.mp4"
         media.write_bytes(b"x")
@@ -411,7 +435,7 @@ class TestPlanCommand:
         import contextlib
         import io
 
-        from porter_cli.app import main
+        from porter.cli.app import main
 
         media = tmp_path / "clip.mp4"
         media.write_bytes(b"x")
@@ -427,7 +451,7 @@ class TestPlanCommand:
 
     def test_an_infeasible_plan_exits_non_zero(self, capsys: pytest.CaptureFixture[str]) -> None:
         """A prediction of failure is a successful plan, but callers script on it."""
-        from porter_cli.app import main
+        from porter.cli.app import main
 
         # An unsupported host cannot be inspected, so no route resolves.
         code = main(["plan", "https://example.com/not-a-video"])

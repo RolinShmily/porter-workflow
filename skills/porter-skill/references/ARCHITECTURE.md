@@ -127,20 +127,20 @@ h264_nvenc / hevc_nvenc / h264_qsv / h264_amf → libx264
 
 ## 7. 配置与分层
 
-引擎（`src/porter/`）不知道部署形态。CLI（`src/porter_cli/`）与 MCP（`src/porter_mcp/`）是两个对等前端，都只依赖引擎的公开接口。
+引擎（`src/porter/core/`）不知道部署形态；根门面 `src/porter/__init__.py` 提供稳定公开 API。CLI（`src/porter/cli/`）、MCP（`src/porter/mcp/`）与 WebUI（`src/porter/webui/`）是三个对等前端，都只依赖引擎的公开接口，互相之间不 import。
 
-分层由 `import-linter` 强制（2 条契约），依赖方向单向：
+分层由 `import-linter` 强制（`engine must not import frontends`、`frontends are independent` 与 `engine layers` 三条契约），依赖方向单向：
 
 ```
-porter_mcp / porter_cli
+porter.cli / porter.mcp / porter.webui
         ↓
-     porter.plan
+porter.core.plan
         ↓
-   porter.pipeline
+porter.core.pipeline
         ↓
-  asr / translate / platforms / media / doctor
+core.asr / translate / platforms / refine / media / doctor
         ↓
-   models / errors / events / config
+core.models / errors / events / config
 ```
 
-引擎内**零 `print()`**（由 ruff 的 `T20` 规则强制）：MCP 的 stdout 是 JSON-RPC 通道，任何一行杂输出都会破坏协议。所有日志走 stderr。
+前端之间的独立性由 `independence` 契约强制，`tests/unit/test_architecture.py` 保留同一检查以给出精确文件位置。引擎（含根门面）内**零 `print()`**（由 ruff 的 `T20` 规则强制）：MCP 的 stdout 是 JSON-RPC 通道，任何一行杂输出都会破坏协议。所有日志走 stderr。

@@ -2,17 +2,19 @@
 
 ## 搜索顺序
 
-后者覆盖前者：
+从高到低：
 
-1. **内置默认值**
-2. **环境变量**（见下表）
-3. **用户配置**——`porter config list` 会打印实际路径（Windows 与 Linux 不同，由 `platformdirs` 决定）
-4. **项目配置**——当前目录向上查找 `porter.json`、`porter.toml`、`config.json`
-5. **`--config <path>`** 或环境变量 `PORTER_CONFIG`（显式指定，最高优先级）
+1. **`--config <path>`**——文件不存在会报错，不会静默回退
+2. **`$PORTER_CONFIG`**——同样要求文件存在
+3. **环境变量**——覆盖所选文件中的对应键
+4. **最近的项目配置**——从当前目录向上查找 `porter.json`、`porter.toml`、
+   `config.json`；旧文件名 `porter_config.json` 仍被识别
+5. **用户配置**——`platformdirs` 的用户配置目录（仅当没有项目配置时）
+6. **内置默认值**
 
-v0.1 的旧文件名 `porter_config.json` 仍被识别，升级不会丢配置。
-
-`porter config list` 报告的 `source` 字段就是"这些值从哪来"的答案。
+项目配置与用户配置是**二选一**，不是深合并：找到项目配置后，用户配置不再参与。
+环境变量再覆盖所选文件里的具体键。`porter config list` 的 `source` 字段就是
+“这些值从哪来”的答案。
 
 ---
 
@@ -27,7 +29,14 @@ v0.1 的旧文件名 `porter_config.json` 仍被识别，升级不会丢配置�
 | `WHISPER_API_BASE` | `asr.whisper_api_base` |
 | `WHISPER_MODEL` | `asr.whisper_model` |
 | `PORTER_ASR_ENGINE` | `asr.engine` |
+| `PORTER_ASR_LOCAL_MODEL` | `asr.whisper_local_model` |
+| `PORTER_ASR_LOCAL_DEVICE` | `asr.whisper_local_device` |
+| `PORTER_ASR_LOCAL_COMPUTE_TYPE` | `asr.whisper_local_compute_type` |
+| `PORTER_OUTPUT_DIR` | `output_dir` |
 | `PORTER_CONFIG` | 显式配置文件路径 |
+| `PORTER_LOG_LEVEL` | CLI 日志级别（仅当未传 `--log-level`） |
+| `PORTER_MIRROR` | 下载镜像策略：`cn` 强制启用、`off` 强制关闭 |
+| `PORTER_CACHE_DIR` | 作业注册表所在目录（受限宿主/测试用） |
 
 **把密钥放环境变量比放配置文件安全**——配置文件可能被提交进仓库。MCP 侧的 `porter_config` 只读且密钥打码，**无法通过 MCP 写入密钥**（否则密钥会进入对话记录与遥测）。
 
@@ -66,6 +75,9 @@ v0.1 的旧文件名 `porter_config.json` 仍被识别，升级不会丢配置�
 | `whisper_local_device` | `auto` | 计算设备（`auto` / `cpu` / `cuda`） |
 | `whisper_local_compute_type` | `auto` | 计算精度（`auto` / `int8` / `float16` 等） |
 | `audio_denoise` | `true` | 是否生成 ASR 专用增强音轨（不影响成片音质） |
+
+`whisper-local` 需要 `[asr-local]` extra：免 Key，首次下载模型后可离线。`whisper-api`
+需要 OpenAI 兼容 Key；`videocaptioner` 需要用户自行安装外部 CLI。
 
 ### `refine`
 
@@ -119,7 +131,7 @@ ASS 字幕样式。字号单位是**视频自身分辨率下的像素**；竖屏
 
 ## 模板
 
-`assets/config.example.json` 是带注释的完整模板。复制到项目根目录命名为 `porter.json` 即可生效。
+`../assets/config.example.json` 是带注释的完整模板。复制到项目根目录命名为 `porter.json` 即可生效。
 
 ---
 

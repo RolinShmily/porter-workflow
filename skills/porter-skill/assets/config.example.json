@@ -10,13 +10,22 @@
   },
 
   "asr": {
-    "_comment": "engine: null walks the fallback chain. Transcription needs a key (whisper_api_key, or llm.api_key) or the VideoCaptioner CLI -- the key-free speech endpoints no longer work.",
+    "_comment": "engine: null walks the fallback chain. whisper-local needs the [asr-local] extra (key-free, offline after the model downloads); whisper-api needs whisper_api_key or llm.api_key; videocaptioner needs the external CLI.",
     "engine": null,
     "language": "auto",
     "whisper_api_key": "",
     "whisper_api_base": "https://api.openai.com/v1",
     "whisper_model": "whisper-1",
+    "whisper_local_model": "small",
+    "whisper_local_device": "auto",
+    "whisper_local_compute_type": "auto",
     "audio_denoise": true
+  },
+
+  "refine": {
+    "_comment": "LLM proofreading of the transcript before translation; only runs when LLM credentials are configured.",
+    "enabled": true,
+    "model": null
   },
 
   "ffmpeg": {

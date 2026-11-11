@@ -1,6 +1,10 @@
 # 通过 MCP 使用 porter
 
-本文件供**已配置 porter MCP server** 的环境阅读。全新安装的技能目录里没有 MCP server（`npx skills add` 只安装技能文件），所以默认路径是 CLI——见 `SKILL.md`。
+本文件供**已配置 porter MCP server** 的环境阅读。全新安装的技能目录里没有 MCP server（`npx skills add` 只安装技能文件），所以默认路径是 CLI——见 [`SKILL.md`](../SKILL.md)。
+
+MCP 与 CLI 共用同一套 SOP：先确认环境和配置，再 `inspect → plan → 确认 → 启动 →
+轮询 → 质检`。MCP 只是把入口换成结构化工具；判断标准没有变化。环境与配置检查见
+[`SETUP.md`](SETUP.md)。
 
 ---
 
@@ -16,6 +20,21 @@
 | **宿主模型翻译（零 Key）** | **不可能** | ✅ **唯一途径** |
 
 最后一行是能力差异而非偏好：**MCP sampling（§8.3）用宿主的模型翻译字幕，因此不需要任何 LLM API Key 就能拿到 LLM 级翻译质量。** CLI 是个独立进程，拿不到宿主模型。这是 MCP 形态唯一能提供、而 CLI 形态原理上做不到的东西。
+
+转录本身仍需要一条路由：平台字幕轨、`[asr-local]` 本地 Whisper、Whisper API Key，或
+VideoCaptioner CLI。MCP 的 sampling 不替代 ASR。
+
+---
+
+## 标准调用顺序
+
+1. `porter_version` / `porter_doctor`：确认入口与环境；有 blocker 先修。
+2. `porter_config`：确认 ASR/翻译路由与配置来源（只读、密钥打码）。
+3. `porter_inspect`：确认链接可用；`is_valid=false` 就停。
+4. `porter_plan`：读 `feasible`、`blocking_issues`、`notes`；不可行就停。
+5. **向用户报告路线与成本，取得同意**。
+6. `porter_job_start` 启动；`porter_job_status` 轮询；必要时 `porter_job_cancel`。
+7. `porter_job_result` 取产物，按 `SKILL.md` 的质检步骤验证后再交付。
 
 ---
 
@@ -115,6 +134,9 @@ uvx --from "porter-workflow[mcp]" porter-mcp
 
 ## 与技能的关系
 
-技能提供**领域知识**（四阶段语义、回退链、质检步骤、ASR 前置条件），MCP 工具自带**接口说明**（名称、描述、JSON schema）。两者不重复：技能正文不需要复述 MCP 工具签名——那样只会多出一份需要同步维护的副本。
+技能提供**SOP 与领域知识**（环境确认、四阶段语义、回退链、质检步骤、ASR 路由），
+MCP 工具自带**接口说明**（名称、描述、JSON schema）。两者不重复：技能正文不需要
+复述 MCP 工具签名——那样只会多出一份需要同步维护的副本。
 
-所以：**CLI 讲工作流，MCP 讲升级**。无论走哪条路，工作流的步骤与判断标准完全相同。
+所以：**CLI 讲默认路径，MCP 讲已配置时的升级，WebUI 讲人工可视化；三条通道共用同一
+套检查与判断标准。**
