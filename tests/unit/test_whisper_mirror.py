@@ -1,4 +1,4 @@
-"""Tests for the ModelScope model path in :mod:`porter.asr.whisper_local`.
+"""Tests for the ModelScope model path in :mod:`porter.core.asr.whisper_local`.
 
 Why the path exists: from China, fetching ~480 MB of weights from Hugging Face is
 slow at best and usually impossible, and ModelScope mirrors the identical
@@ -21,13 +21,13 @@ from typing import Any
 import pytest
 import requests
 
-from porter import mirrors
-from porter.asr import whisper_local
-from porter.asr.base import AsrBackendError
-from porter.config import ASRConfig, PorterConfig
-from porter.context import RunContext
-from porter.errors import JobCancelled
-from porter.models.request import JobOptions
+from porter.core import mirrors
+from porter.core.asr import whisper_local
+from porter.core.asr.base import AsrBackendError
+from porter.core.config import ASRConfig, PorterConfig
+from porter.core.context import RunContext
+from porter.core.errors import JobCancelled
+from porter.core.models.request import JobOptions
 
 _MODEL_FILES = ("config.json", "model.bin", "tokenizer.json", "vocabulary.txt")
 

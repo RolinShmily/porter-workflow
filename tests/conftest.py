@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from porter.logging import reset as reset_logging
+from porter.core.logging import reset as reset_logging
 
 
 @pytest.fixture(autouse=True)
@@ -58,7 +58,7 @@ def _isolate_job_registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     new test has to remember. Tests that want a specific registry still declare
     one; this only decides where the *default* points.
     """
-    from porter.jobs import records as records_module
+    from porter.core.jobs import records as records_module
 
     monkeypatch.setattr(records_module, "registry_file", lambda: tmp_path / "jobs.json")
 
@@ -67,7 +67,7 @@ def _isolate_job_registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
 def project_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A throwaway project directory, used as the CWD for config discovery."""
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("porter.config.config_file", lambda: tmp_path / "nonexistent_user_config.json")
+    monkeypatch.setattr("porter.core.config.config_file", lambda: tmp_path / "nonexistent_user_config.json")
     return tmp_path
 
 

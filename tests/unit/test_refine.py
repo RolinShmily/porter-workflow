@@ -6,13 +6,13 @@ from typing import Any
 
 import pytest
 
-from porter.config import PorterConfig
-from porter.context import RunContext
-from porter.errors import JobCancelled
-from porter.models.request import JobOptions
-from porter.models.subtitle import TranscriptSentence
-from porter.refine.llm import LLMTranscriptRefiner
-from porter.refine.passthrough import PassthroughRefiner
+from porter.core.config import PorterConfig
+from porter.core.context import RunContext
+from porter.core.errors import JobCancelled
+from porter.core.models.request import JobOptions
+from porter.core.models.subtitle import TranscriptSentence
+from porter.core.refine.llm import LLMTranscriptRefiner
+from porter.core.refine.passthrough import PassthroughRefiner
 
 
 def _ctx(tmp_path: Path, **kwargs: Any) -> RunContext:

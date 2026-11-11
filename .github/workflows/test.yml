@@ -77,10 +77,10 @@ jobs:
         run: uv sync --python ${{ matrix.python-version }} --extra all --extra dev --locked
 
       - name: ruff
-        run: uv run ruff check src tests packaging
+        run: uv run ruff check src tests scripts
 
       - name: mypy
-        run: uv run mypy src packaging
+        run: uv run mypy src scripts
 
       - name: import-linter
         run: uv run lint-imports
@@ -175,13 +175,25 @@ jobs:
       - name: Build
         run: uv build
 
-      - name: Verify the wheel contains all four top-level packages
+      - name: Verify the wheel layout and entry points
         run: >
           python -c "import glob, zipfile, sys;
           w = glob.glob('dist/*.whl')[0];
-          tops = {n.split('/')[0] for n in zipfile.ZipFile(w).namelist()};
-          missing = sorted({'porter', 'porter_cli', 'porter_mcp', 'porter_web'} - tops);
-          sys.exit(f'{w} is missing: {missing}') if missing else print(f'{w}: all four packages present')"
+          z = zipfile.ZipFile(w);
+          names = set(z.namelist());
+          required = {'porter/__init__.py', 'porter/py.typed',
+          'porter/core/__init__.py', 'porter/cli/__init__.py',
+          'porter/cli/__main__.py', 'porter/mcp/__init__.py',
+          'porter/mcp/server.py', 'porter/webui/__init__.py',
+          'porter/webui/app.py'};
+          missing = sorted(required - names);
+          ep = [n for n in names if n.endswith('.dist-info/entry_points.txt')][0];
+          text = z.read(ep).decode('utf-8');
+          expected = ['porter = porter.cli.__main__:main',
+          'porter-mcp = porter.mcp.server:main',
+          'porter-web = porter.webui.app:main'];
+          bad = [e for e in expected if e not in text];
+          sys.exit(f'{w} is missing: {missing}; bad entry points: {bad}') if missing or bad else print(f'{w}: layout and entry points verified')"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -191,10 +203,12 @@ jobs:
       # Tests are a development and CI artifact; users never run them. The
       # sdist must therefore not carry them, and a one-line include edit is the
       # kind of thing that silently regresses.
-      - name: Verify the sdist does not ship the test suite
+      - name: Verify the sdist ships docs and scripts but not the test suite
         run: >
           python -c "import glob, tarfile, sys;
           s = glob.glob('dist/*.tar.gz')[0];
           names = tarfile.open(s).getnames();
+          roots = {n.split('/', 1)[-1] for n in names};
           leaked = sorted({n for n in names if 'tests' in n.split('/')});
-          sys.exit(f'{s} ships test files: {leaked[:5]}') if leaked else print(f'{s}: no tests shipped')"
+          missing = sorted({'docs/README.md', 'scripts/launcher.py'} - roots);
+          sys.exit(f'{s} ships tests: {leaked[:5]}; missing: {missing}') if leaked or missing else print(f'{s}: docs and scripts present, no tests shipped')"

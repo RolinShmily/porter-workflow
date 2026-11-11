@@ -11,9 +11,9 @@ unless the platform is known.
 
 v0.2 therefore splits by knowledge rather than patching the loop:
 
-* ``porter.platforms.urls.clean_url(url, strip=...)`` — pure, and ``strip`` is
+* ``porter.core.platforms.urls.clean_url(url, strip=...)`` — pure, and ``strip`` is
   **required**, so no caller can inherit a silently wrong default.
-* ``porter.platforms.registry.canonicalize(url)`` — expand, identify, then clean
+* ``porter.core.platforms.registry.canonicalize(url)`` — expand, identify, then clean
   with that platform's set. This is the direct replacement for
   ``resolve_and_clean_url``.
 
@@ -27,8 +27,8 @@ from __future__ import annotations
 
 import pytest
 
-from porter.platforms.registry import canonicalize, identify_platform
-from porter.platforms.urls import CAMPAIGN_PARAMS, is_shortener
+from porter.core.platforms.registry import canonicalize, identify_platform
+from porter.core.platforms.urls import CAMPAIGN_PARAMS, is_shortener
 
 # --- From test_inspector.py::test_resolve_and_clean_url --------------------
 

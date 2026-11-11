@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import pytest
 
-from porter.platforms.titles import bilibili_title, caption_to_title, tweet_to_title
+from porter.core.platforms.titles import bilibili_title, caption_to_title, tweet_to_title
 
 TIKTOK = {"fallback_prefix": "TikTok_by_", "max_length": 50}
 INSTAGRAM = {"fallback_prefix": "Instagram_by_", "max_length": 50}
@@ -140,8 +140,8 @@ class TestTitlesArePathSafe:
         ],
     )
     def test_the_layout_path_cannot_escape_its_root(self, hostile: str, tmp_path) -> None:
-        from porter.models.materials import TaskLayout
-        from porter.utils.text import sanitize_filename
+        from porter.core.models.materials import TaskLayout
+        from porter.core.utils.text import sanitize_filename
 
         title = caption_to_title(hostile, "u", **TIKTOK)
         safe = sanitize_filename(title)

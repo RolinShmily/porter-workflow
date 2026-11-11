@@ -11,16 +11,16 @@ from __future__ import annotations
 
 import pytest
 
-from porter.models.plan import BackendPlan, Plan, SubtitlePlan, TranslationPlan
-from porter.models.request import BurnMode, JobOptions
-from porter.plan import plan_for
+from porter.core.models.plan import BackendPlan, Plan, SubtitlePlan, TranslationPlan
+from porter.core.models.request import BurnMode, JobOptions
+from porter.core.plan import plan_for
 
 URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
 
 @pytest.fixture
 def ctx(tmp_path):
-    from porter.context import RunContext
+    from porter.core.context import RunContext
 
     return RunContext(job_id="plan", options=JobOptions(output_dir=tmp_path / "out"))
 
@@ -41,8 +41,8 @@ def local_media(tmp_path):
 @pytest.fixture
 def inspected(monkeypatch):
     """Serve a canned inspection result instead of probing the network."""
-    from porter.models.inspection import InspectionResult
-    from porter.platforms import inspector as inspector_module
+    from porter.core.models.inspection import InspectionResult
+    from porter.core.platforms import inspector as inspector_module
 
     def install(**overrides):
         fields = {
@@ -70,7 +70,7 @@ def inspected(monkeypatch):
 @pytest.fixture
 def asr_available(monkeypatch):
     """Control the ASR chain's availability without touching real probes."""
-    from porter.asr.chain import AsrChain
+    from porter.core.asr.chain import AsrChain
 
     def install(entries):
         monkeypatch.setattr(AsrChain, "availability", lambda self, ctx: list(entries))
@@ -124,12 +124,12 @@ class TestLocalFiles:
     def test_no_available_engine_makes_it_infeasible(
         self, ctx, asr_available, local_media
     ) -> None:
-        asr_available([("whisper-api", False), ("bcut", False)])
+        asr_available([("whisper-api", False), ("videocaptioner", False)])
         plan = plan_for(str(local_media), ctx=ctx)
 
         assert plan.feasible is False
         assert "TRANSCRIBE will fail" in plan.blocking_issues[0]
-        assert "whisper-api, bcut" in plan.blocking_issues[0]
+        assert "whisper-api, videocaptioner" in plan.blocking_issues[0]
 
     def test_a_missing_local_file_is_infeasible(self, ctx, asr_available, tmp_path) -> None:
         """The file check must win over the ASR check when both would fire.
@@ -218,7 +218,7 @@ class TestSubtitleRoute:
         fetches nothing; a plan built on the flag would call the route "platform"
         and be wrong.
         """
-        from porter.platforms.instagram import SPEC as INSTAGRAM
+        from porter.core.platforms.instagram import SPEC as INSTAGRAM
 
         asr_available([("whisper-api", True)])
         # A listing that says captions exist, on a platform that never fetches any.
@@ -249,35 +249,8 @@ class TestSubtitleRoute:
         assert "404" in plan.blocking_issues[0]
 
 
-class TestHonestyAboutUnverifiedEndpoints:
-    """``available`` alone would promise jobs that were going to fail."""
-
-    def test_an_unverified_only_chain_is_flagged(self, ctx, asr_available, inspected) -> None:
-        asr_available([("whisper-api", False), ("bcut", True), ("google-web", True)])
-        inspected(raw_info={})
-
-        plan = plan_for(URL, ctx=ctx)
-
-        warning = " ".join(plan.notes)
-        assert "unverified endpoints" in warning
-        assert "bcut" in warning and "google-web" in warning
-
-    def test_a_verified_engine_silences_the_warning(self, ctx, asr_available, inspected) -> None:
-        asr_available([("whisper-api", True), ("bcut", True)])
-        inspected(raw_info={})
-
-        plan = plan_for(URL, ctx=ctx)
-
-        assert not any("unverified endpoints" in note for note in plan.notes)
-
-    def test_the_platform_route_needs_no_warning(self, ctx, asr_available, inspected) -> None:
-        """Nothing is recognised, so unverified recognisers are irrelevant."""
-        asr_available([("bcut", True)])
-        inspected(raw_info={"subtitles": {"en": [{}]}})
-
-        plan = plan_for(URL, ctx=ctx)
-
-        assert not any("unverified endpoints" in note for note in plan.notes)
+class TestBackendProvenance:
+    """The plan reports each chain's provenance by reading the backends."""
 
     def test_the_real_chains_provenance_is_reported(self, ctx, inspected) -> None:
         """Read from the backends, not from a table in the plan module.
@@ -303,7 +276,7 @@ class TestDerivedNotAuthored:
 
         plan = plan_for(URL, ctx=ctx)
 
-        from porter.pipeline import Pipeline
+        from porter.core.pipeline import Pipeline
 
         chain = Pipeline.default(ctx).transcriber
         assert [b.name for b in plan.subtitles.asr_backends] == [b.name for b in chain.backends]
@@ -322,7 +295,7 @@ class TestDerivedNotAuthored:
         assert plan.burn_runs is False
 
     def test_the_phase_list_honours_only_phase(self, ctx, asr_available, inspected) -> None:
-        from porter.events import Phase
+        from porter.core.events import Phase
 
         asr_available([("whisper-api", True)])
         inspected(raw_info={})

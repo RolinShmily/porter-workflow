@@ -22,17 +22,17 @@ from pathlib import Path
 
 import pytest
 
-from porter.config import PorterConfig
-from porter.context import RunContext
-from porter.events import ArtifactKind, ArtifactReady, JobState, Phase, collect
-from porter.media.burn import BILINGUAL_NAME, ZH_NAME
-from porter.media.ffmpeg import FFmpegRunner
-from porter.media.probe import probe
-from porter.models.materials import RawMaterials, TaskLayout
-from porter.models.metadata import VideoMetadata
-from porter.models.request import BurnMode, JobOptions, JobRequest
-from porter.models.subtitle import SubtitleItem, SubtitleSet
-from porter.pipeline import Pipeline
+from porter.core.config import PorterConfig
+from porter.core.context import RunContext
+from porter.core.events import ArtifactKind, ArtifactReady, JobState, Phase, collect
+from porter.core.media.burn import BILINGUAL_NAME, ZH_NAME
+from porter.core.media.ffmpeg import FFmpegRunner
+from porter.core.media.probe import probe
+from porter.core.models.materials import RawMaterials, TaskLayout
+from porter.core.models.metadata import VideoMetadata
+from porter.core.models.request import BurnMode, JobOptions, JobRequest
+from porter.core.models.subtitle import SubtitleItem, SubtitleSet
+from porter.core.pipeline import Pipeline
 
 pytestmark = [
     pytest.mark.slow,

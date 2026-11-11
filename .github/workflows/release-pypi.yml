@@ -51,10 +51,10 @@ jobs:
         run: uv sync --extra all --extra dev --locked
 
       - name: ruff
-        run: uv run ruff check src tests packaging
+        run: uv run ruff check src tests scripts
 
       - name: mypy
-        run: uv run mypy src packaging
+        run: uv run mypy src scripts
 
       - name: import-linter
         run: uv run lint-imports

@@ -25,12 +25,12 @@ from pathlib import Path
 
 import pytest
 
-from porter.config import PorterConfig
-from porter.context import RunContext
-from porter.events import JobState, null_sink
-from porter.jobs import JobRegistry, JobStore
-from porter.models.request import BurnMode, JobOptions, JobRequest
-from porter.pipeline import Pipeline
+from porter.core.config import PorterConfig
+from porter.core.context import RunContext
+from porter.core.events import JobState, null_sink
+from porter.core.jobs import JobRegistry, JobStore
+from porter.core.models.request import BurnMode, JobOptions, JobRequest
+from porter.core.pipeline import Pipeline
 
 pytestmark = pytest.mark.slow
 
@@ -86,7 +86,7 @@ def shared_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def _cli(cache: Path, *args: str) -> subprocess.CompletedProcess[str]:
     """Run the real CLI in a separate process."""
     return subprocess.run(
-        [sys.executable, "-m", "porter_cli", *args],
+        [sys.executable, "-m", "porter.cli", *args],
         capture_output=True,
         text=True,
         env={**os.environ, "PORTER_CACHE_DIR": str(cache)},
@@ -104,14 +104,14 @@ def test_a_cancel_from_another_process_stops_the_job(
     # mechanism is identical, only the interval changes -- and it keeps PREPARE
     # (a few seconds) comfortably longer than the cancel round trip, which is the
     # only reason a longer source would be needed.
-    monkeypatch.setattr("porter.jobs.store.CANCEL_POLL_SECONDS", 0.2)
+    monkeypatch.setattr("porter.core.jobs.store.CANCEL_POLL_SECONDS", 0.2)
     """The whole point of the shared registry.
 
     A job is started here, the CLI cancels it from another process, and the work
     stops. Asserted on the job's final state, not on the flag: writing the flag
     was never the part that could break.
     """
-    from porter.platforms.local import LocalFileDownloader
+    from porter.core.platforms.local import LocalFileDownloader
 
     registry = JobRegistry(shared_cache / "jobs.json")
     store = JobStore(registry=registry)

@@ -11,14 +11,14 @@ import sys
 
 import pytest
 
-from porter.config import PorterConfig
-from porter.context import RunContext
-from porter.events import Phase
-from porter.models.request import BurnMode, BurnResult, JobOptions, JobRequest
-from porter.pipeline import Pipeline
-from porter.platforms.downloader import PlatformDownloader
-from porter.platforms.registry import PlatformRegistry, registry
-from porter.ports import Downloader, Renderer, Transcriber, Translator
+from porter.core.config import PorterConfig
+from porter.core.context import RunContext
+from porter.core.events import Phase
+from porter.core.models.request import BurnMode, BurnResult, JobOptions, JobRequest
+from porter.core.pipeline import Pipeline
+from porter.core.platforms.downloader import PlatformDownloader
+from porter.core.platforms.registry import PlatformRegistry, registry
+from porter.core.ports import Downloader, Renderer, Transcriber, Translator
 
 
 def _ctx(
@@ -91,7 +91,7 @@ class TestDefaultWiring:
         touch the network.
         """
         script = (
-            "import sys; import porter.pipeline; "
+            "import sys; import porter.core.pipeline; "
             "print('yt_dlp' in sys.modules or 'yt_dlp' in ''.join(sys.modules))"
         )
         result = subprocess.run(
@@ -213,10 +213,10 @@ class TestAsrChainOrder:
 
         Asserts on the module logger directly rather than via ``caplog``: the
         engine root sets ``propagate = False`` (deliberately — see
-        ``porter.logging``), so records never reach the root logger a ``caplog``
+        ``porter.core.logging``), so records never reach the root logger a ``caplog``
         handler hangs off.
         """
-        import porter.pipeline as pipeline_module
+        import porter.core.pipeline as pipeline_module
 
         messages: list[str] = []
 
@@ -244,14 +244,14 @@ class TestAsrChainOrder:
     ) -> None:
         """Naming a backend keeps the rest as fallbacks, so a missing one is not
         fatal -- which is exactly why silence is wrong: someone who asked for
-        `bijian` and got Bcut's output has no way to tell.
+        `bijian` and got a different engine's output has no way to tell.
 
         The absence is forced rather than assumed, so the test does not depend on
         whether the machine happens to have the VideoCaptioner CLI installed.
         """
-        import porter.pipeline as pipeline_module
+        import porter.core.pipeline as pipeline_module
 
-        monkeypatch.setattr("porter.asr.videocaptioner._resolve_binary", lambda: None)
+        monkeypatch.setattr("porter.core.asr.videocaptioner._resolve_binary", lambda: None)
 
         messages: list[str] = []
 
@@ -275,10 +275,10 @@ class TestAsrChainOrder:
         self, tmp_path, monkeypatch
     ) -> None:
         """The warning must track reality, not fire on every named backend."""
-        import porter.pipeline as pipeline_module
+        import porter.core.pipeline as pipeline_module
 
         monkeypatch.setattr(
-            "porter.asr.videocaptioner._resolve_binary", lambda: "/usr/bin/videocaptioner"
+            "porter.core.asr.videocaptioner._resolve_binary", lambda: "/usr/bin/videocaptioner"
         )
         messages: list[str] = []
 
@@ -360,7 +360,7 @@ class TestTranslationChainOrder:
         self, tmp_path, monkeypatch
     ) -> None:
         """A typo changes nothing, and is reported rather than swallowed."""
-        import porter.pipeline as pipeline_module
+        import porter.core.pipeline as pipeline_module
 
         messages: list[str] = []
 
@@ -426,13 +426,13 @@ class TestRendererWiring:
         encoding by ``tests/regression/test_synthesizer_port.py``, which runs
         actual ffmpeg.
         """
-        from porter.media.encode import EncoderSelector, software_profile_for
+        from porter.core.media.encode import EncoderSelector, software_profile_for
 
         monkeypatch.setattr(EncoderSelector, "select", lambda self: software_profile_for())
 
     def test_default_wires_the_real_renderer(self, tmp_path) -> None:
-        from porter.media.burn import FfmpegRenderer
-        from porter.ports import Renderer
+        from porter.core.media.burn import FfmpegRenderer
+        from porter.core.ports import Renderer
 
         pipeline = Pipeline.default(_ctx(tmp_path))
 
@@ -461,7 +461,7 @@ class TestRendererWiring:
         The stubs never write the ASS files, so the real renderer refuses to
         burn -- which is the honest outcome and must not escape as an exception.
         """
-        from porter.events import JobState, PhaseFailed, collect
+        from porter.core.events import JobState, PhaseFailed, collect
 
         events: list[object] = []
         ctx = _ctx(tmp_path, events=collect(events))
@@ -509,7 +509,7 @@ class TestPlatformDownloader:
         assert not downloader.can_handle("https://example.com/video")
 
     def test_an_unsupported_url_raises_by_identifying_the_platform(self) -> None:
-        from porter.errors import UnsupportedPlatformError
+        from porter.core.errors import UnsupportedPlatformError
 
         with pytest.raises(UnsupportedPlatformError) as excinfo:
             PlatformDownloader().fetch("https://example.com/video", None)
@@ -538,7 +538,7 @@ class TestPlatformDownloader:
 
         assert downloader.can_handle("https://anything") is True
 
-        from porter.errors import UnsupportedPlatformError
+        from porter.core.errors import UnsupportedPlatformError
 
         with pytest.raises(UnsupportedPlatformError):
             downloader.probe("https://anything", None)
@@ -564,8 +564,8 @@ class _StubDownloader:
         raise NotImplementedError
 
     def fetch(self, url: str, ctx: RunContext):
-        from porter.models.materials import RawMaterials, TaskLayout
-        from porter.models.metadata import VideoMetadata
+        from porter.core.models.materials import RawMaterials, TaskLayout
+        from porter.core.models.metadata import VideoMetadata
 
         layout = TaskLayout.build(ctx.output_root, "abc", "Stub")
         layout.ensure_dirs()
@@ -588,7 +588,7 @@ class _StubTranscriber:
         return True
 
     def transcribe(self, raw, ctx: RunContext):
-        from porter.models.subtitle import SubtitleItem, SubtitleSet
+        from porter.core.models.subtitle import SubtitleItem, SubtitleSet
 
         cooked = raw.layout.cooked_dir
         cooked.mkdir(parents=True, exist_ok=True)
@@ -700,7 +700,7 @@ class TestPhaseSelection:
 
 def _request(tmp_path, *, burn: BurnMode, only_phase: Phase | None = None):
     """A request with the phase-selection options set."""
-    from porter.models.request import JobRequest
+    from porter.core.models.request import JobRequest
 
     return JobRequest(
         url="https://www.youtube.com/watch?v=abc",

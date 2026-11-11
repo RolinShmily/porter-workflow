@@ -15,16 +15,16 @@ from pathlib import Path
 
 import pytest
 
-from porter.config import PorterConfig
-from porter.context import RunContext
-from porter.events import (
+from porter.core.config import PorterConfig
+from porter.core.context import RunContext
+from porter.core.events import (
     ArtifactReady,
     AwaitingUserAction,
     JobState,
     Phase,
     ProgressUpdated,
 )
-from porter.jobs import (
+from porter.core.jobs import (
     SCHEMA_VERSION,
     JobRecord,
     JobRegistry,
@@ -34,14 +34,14 @@ from porter.jobs import (
     record_from_result,
     registry_file,
 )
-from porter.models.request import (
+from porter.core.models.request import (
     BurnResult,
     ErrorInfo,
     JobOptions,
     JobRequest,
     JobResult,
 )
-from porter.models.subtitle import SubtitleItem, SubtitleSet
+from porter.core.models.subtitle import SubtitleItem, SubtitleSet
 
 
 @pytest.fixture
@@ -418,7 +418,7 @@ class TestRegistryClear:
 
 class TestRegistryTrim:
     def test_old_finished_records_are_dropped(self, registry: JobRegistry) -> None:
-        from porter.jobs.records import MAX_RECORDS
+        from porter.core.jobs.records import MAX_RECORDS
 
         for index in range(MAX_RECORDS + 25):
             registry.publish(
@@ -435,7 +435,7 @@ class TestRegistryTrim:
 
     def test_unfinished_records_are_never_trimmed(self, registry: JobRegistry) -> None:
         """Dropping a running job would hide work that is still happening."""
-        from porter.jobs.records import MAX_RECORDS
+        from porter.core.jobs.records import MAX_RECORDS
 
         for index in range(MAX_RECORDS + 10):
             registry.publish(
@@ -461,7 +461,7 @@ class TestRegistryFileLocation:
     ) -> None:
         """The default path is resolved per access, not frozen in ``__init__``.
 
-        ``porter_mcp.tools.jobs`` builds its store at module import, so its
+        ``porter.mcp.tools.jobs`` builds its store at module import, so its
         registry is constructed before any test fixture runs. Resolving the path
         at construction froze the developer's real ``~/.cache/porter/jobs.json``
         and the suite wrote real job records into it -- four per full run, which
@@ -469,7 +469,7 @@ class TestRegistryFileLocation:
         created by the test process itself. The §13.33 fixture patched the seam
         correctly but too late to matter for an already-built registry.
         """
-        from porter.jobs import records as records_module
+        from porter.core.jobs import records as records_module
 
         # Stands in for import time: built while the seam pointed elsewhere.
         built_early = records_module.JobRegistry()
@@ -483,7 +483,7 @@ class TestRegistryFileLocation:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Lazy resolution must not undo injection for tests and embedders."""
-        from porter.jobs import records as records_module
+        from porter.core.jobs import records as records_module
 
         pinned = tmp_path / "pinned.json"
         registry = records_module.JobRegistry(pinned)
@@ -725,7 +725,7 @@ class TestStorePublication:
         read-modify-write several times a second, for information a polling
         client reads once every few seconds.
         """
-        monkeypatch.setattr("porter.jobs.store.PUBLISH_INTERVAL_SECONDS", 3600.0)
+        monkeypatch.setattr("porter.core.jobs.store.PUBLISH_INTERVAL_SECONDS", 3600.0)
         store = JobStore(registry=registry)
         job = store.create(_request())
         ctx = _ctx(tmp_path)
@@ -773,7 +773,7 @@ class TestStoreObservesCancel:
     def test_a_request_from_another_process_stops_the_job(
         self, registry: JobRegistry, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr("porter.jobs.store.CANCEL_POLL_SECONDS", 0.01)
+        monkeypatch.setattr("porter.core.jobs.store.CANCEL_POLL_SECONDS", 0.01)
         store = JobStore(registry=registry)
         job = store.create(_request())
         store.attach(job, _ctx(tmp_path))
@@ -792,7 +792,7 @@ class TestStoreObservesCancel:
         and the window where a user most wants to cancel is exactly the window in
         which nothing is being reported. Not a single event is emitted here.
         """
-        monkeypatch.setattr("porter.jobs.store.CANCEL_POLL_SECONDS", 0.01)
+        monkeypatch.setattr("porter.core.jobs.store.CANCEL_POLL_SECONDS", 0.01)
         store = JobStore(registry=registry)
         job = store.create(_request())
         ctx = _ctx(tmp_path)
@@ -806,7 +806,7 @@ class TestStoreObservesCancel:
         self, registry: JobRegistry, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A leaked thread per job would accumulate for the life of the server."""
-        monkeypatch.setattr("porter.jobs.store.CANCEL_POLL_SECONDS", 0.01)
+        monkeypatch.setattr("porter.core.jobs.store.CANCEL_POLL_SECONDS", 0.01)
         store = JobStore(registry=registry)
         job = store.create(_request())
         store.attach(job, _ctx(tmp_path))
@@ -833,7 +833,7 @@ class TestStoreObservesCancel:
     def test_an_unrequested_job_is_not_cancelled(
         self, registry: JobRegistry, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr("porter.jobs.store.CANCEL_POLL_SECONDS", 0.01)
+        monkeypatch.setattr("porter.core.jobs.store.CANCEL_POLL_SECONDS", 0.01)
         store = JobStore(registry=registry)
         job = store.create(_request())
         store.attach(job, _ctx(tmp_path))
@@ -846,7 +846,7 @@ class TestStoreObservesCancel:
         self, registry: JobRegistry, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A watchdog that dies on a transient error stops cancelling entirely."""
-        monkeypatch.setattr("porter.jobs.store.CANCEL_POLL_SECONDS", 0.01)
+        monkeypatch.setattr("porter.core.jobs.store.CANCEL_POLL_SECONDS", 0.01)
         store = JobStore(registry=registry)
         job = store.create(_request())
         store.attach(job, _ctx(tmp_path))

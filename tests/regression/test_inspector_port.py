@@ -2,7 +2,7 @@
 
 Patch target change only: v0.1 mocked ``yt_dlp.YoutubeDL`` directly, so the
 extractor skipped every option it would have set. v0.2 patches
-``porter.platforms.base.build_ydl`` — the single construction point — which means
+``porter.core.platforms.base.build_ydl`` — the single construction point — which means
 these tests now also prove the inspection path goes through the stdout-safe
 builder rather than around it. Every assertion is unchanged.
 
@@ -20,11 +20,11 @@ from unittest.mock import patch
 
 import pytest
 
-from porter.context import RunContext
-from porter.models.inspection import InspectionResult
-from porter.models.request import JobOptions
-from porter.platforms import inspector as inspector_module
-from porter.platforms.inspector import NO_VIDEO_MESSAGE, UNSUPPORTED, inspect_url
+from porter.core.context import RunContext
+from porter.core.models.inspection import InspectionResult
+from porter.core.models.request import JobOptions
+from porter.core.platforms import inspector as inspector_module
+from porter.core.platforms.inspector import NO_VIDEO_MESSAGE, UNSUPPORTED, inspect_url
 
 X_URL = "https://x.com/TechInsider/status/1895000123"
 
@@ -56,7 +56,7 @@ def fake_ydl(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         state.policies.append(policy)
         return FakeYDL(state)
 
-    monkeypatch.setattr("porter.platforms.base.build_ydl", build)
+    monkeypatch.setattr("porter.core.platforms.base.build_ydl", build)
     # Zero the backoff: the transient-failure test would otherwise sleep 4.5s.
     monkeypatch.setattr(inspector_module, "BACKOFF_BASE_SECONDS", 0.0)
     return state
@@ -248,7 +248,7 @@ class TestUnsupportedAndFailure:
     def test_cancellation_propagates_instead_of_being_reported_as_a_bad_link(
         self, fake_ydl, ctx
     ) -> None:
-        from porter.errors import JobCancelled
+        from porter.core.errors import JobCancelled
 
         ctx.request_cancel()
         with pytest.raises(JobCancelled):

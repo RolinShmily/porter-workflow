@@ -11,8 +11,8 @@ from unittest.mock import patch
 
 import pytest
 
-from porter.errors import CapabilityMissingError, MediaError
-from porter.media.encode import (
+from porter.core.errors import CapabilityMissingError, MediaError
+from porter.core.media.encode import (
     HARDWARE_PROFILES,
     EncoderProfile,
     EncoderSelector,
@@ -67,7 +67,7 @@ class TestWsl2Regression:
         """No device check for NVENC, because NVENC is not addressed by one."""
         runner = FakeRunner({"h264_nvenc": (0, "")})
 
-        with patch("porter.media.encode.Path") as fake_path:
+        with patch("porter.core.media.encode.Path") as fake_path:
             # Any path check at all would fail, since WSL2 has neither node.
             fake_path.return_value.exists.return_value = False
             profile = EncoderSelector(runner).select()
@@ -96,7 +96,7 @@ class TestWsl2Regression:
         """VAAPI *is* defined in terms of a node, so its absence is conclusive."""
         runner = FakeRunner({"h264_vaapi": (0, "")})
 
-        with patch("porter.media.encode.Path") as fake_path:
+        with patch("porter.core.media.encode.Path") as fake_path:
             fake_path.return_value.exists.return_value = False
             usable, reason = EncoderSelector(runner).probe(_profile("h264_vaapi"))
 
@@ -144,7 +144,7 @@ class TestAutoTune:
     """
 
     def test_off_uses_the_configured_preset_and_skips_the_probe(self) -> None:
-        from porter.config import FFmpegConfig
+        from porter.core.config import FFmpegConfig
 
         runner = FakeRunner()
         selector = EncoderSelector.for_config(
@@ -159,7 +159,7 @@ class TestAutoTune:
         assert "23" in profile.quality_args
 
     def test_on_keeps_the_hardware_candidates(self) -> None:
-        from porter.config import FFmpegConfig
+        from porter.core.config import FFmpegConfig
 
         selector = EncoderSelector.for_config(FakeRunner(), FFmpegConfig())
 
@@ -331,7 +331,7 @@ class TestSoftwareProfile:
         assert software_profile_for(7).tier is HardwareTier.SOFTWARE_SLOW
 
     def test_cpu_count_defaults_to_the_machine(self) -> None:
-        with patch("porter.media.encode.os.cpu_count", return_value=32):
+        with patch("porter.core.media.encode.os.cpu_count", return_value=32):
             assert software_profile_for().tier is HardwareTier.SOFTWARE_FAST
 
 

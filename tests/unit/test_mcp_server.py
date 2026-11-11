@@ -11,8 +11,8 @@ pytest.importorskip("fastmcp", reason="requires the [mcp] extra")
 from fastmcp import Client
 
 from porter import __version__
-from porter.jobs import process_marker
-from porter_mcp.server import create_server
+from porter.core.jobs import process_marker
+from porter.mcp.server import create_server
 
 
 class TestServerConstruction:
@@ -20,14 +20,14 @@ class TestServerConstruction:
         assert create_server() is not None
 
     def test_server_import_is_cheap_without_mcp_extra(self) -> None:
-        """``import porter_mcp`` must not require fastmcp.
+        """``import porter.mcp`` must not require fastmcp.
 
         The package ``__init__`` stays dependency-light so that tooling and
         tests can import it without the optional extra installed.
         """
-        import porter_mcp
+        import porter.mcp
 
-        assert porter_mcp.__doc__
+        assert porter.mcp.__doc__
 
 
 class TestToolContract:
@@ -132,7 +132,7 @@ class TestDoctorGuidesResource:
         }
 
     async def test_the_guide_document_is_markdown_naming_every_key(self) -> None:
-        from porter.doctor import GUIDES
+        from porter.core.doctor import GUIDES
 
         async with Client(create_server()) as client:
             content = await client.read_resource("porter://doctor/guides")
@@ -163,8 +163,8 @@ def _isolated_registry(tmp_path, monkeypatch):
     tests would write into the user's real cache directory -- which is exactly the
     kind of leak the doctor tests had.
     """
-    from porter.jobs import JobRegistry
-    from porter_mcp.tools import jobs as jobs_module
+    from porter.core.jobs import JobRegistry
+    from porter.mcp.tools import jobs as jobs_module
 
     registry = JobRegistry(tmp_path / "jobs.json")
     monkeypatch.setattr(jobs_module._STORE, "_registry", registry)
@@ -212,8 +212,8 @@ class TestJobStatusTool:
         Reporting "unknown job id" for work that is plainly recorded would make
         the two frontends disagree about reality.
         """
-        from porter.events import JobState
-        from porter.jobs import JobRecord
+        from porter.core.events import JobState
+        from porter.core.jobs import JobRecord
 
         _isolated_registry.publish(
             JobRecord(
@@ -234,8 +234,8 @@ class TestJobStatusTool:
 
 class TestJobResultTool:
     async def test_a_running_job_does_not_block(self, _isolated_registry) -> None:
-        from porter.events import JobState
-        from porter.jobs import JobRecord
+        from porter.core.events import JobState
+        from porter.core.jobs import JobRecord
 
         _isolated_registry.publish(
             JobRecord(job_id="a", source="u", state=JobState.RUNNING.value)
@@ -251,8 +251,8 @@ class TestJobResultTool:
     async def test_a_finished_job_reports_its_artifacts(
         self, _isolated_registry
     ) -> None:
-        from porter.events import JobState
-        from porter.jobs import JobRecord
+        from porter.core.events import JobState
+        from porter.core.jobs import JobRecord
 
         _isolated_registry.publish(
             JobRecord(
@@ -269,8 +269,8 @@ class TestJobResultTool:
         assert result.data["task_dir"] == "/out/task"
 
     async def test_a_failed_job_surfaces_the_error(self, _isolated_registry) -> None:
-        from porter.events import JobState
-        from porter.jobs import JobRecord
+        from porter.core.events import JobState
+        from porter.core.jobs import JobRecord
 
         _isolated_registry.publish(
             JobRecord(
@@ -291,8 +291,8 @@ class TestJobCancelTool:
         self, _isolated_registry
     ) -> None:
         """The owner is another process, so the request goes through the file."""
-        from porter.events import JobState
-        from porter.jobs import JobRecord
+        from porter.core.events import JobState
+        from porter.core.jobs import JobRecord
 
         _isolated_registry.publish(
             JobRecord(
@@ -318,7 +318,7 @@ class TestJobCancelTool:
 
 class TestJobListTool:
     async def test_it_lists_jobs_from_the_registry(self, _isolated_registry) -> None:
-        from porter.jobs import JobRecord
+        from porter.core.jobs import JobRecord
 
         _isolated_registry.publish(JobRecord(job_id="a", source="one"))
         _isolated_registry.publish(JobRecord(job_id="b", source="two"))
@@ -359,7 +359,7 @@ class TestJobStartTool:
         the test output, and make the assertion depend on how far that thread got
         before the test ended.
         """
-        from porter_mcp.tools import jobs as jobs_module
+        from porter.mcp.tools import jobs as jobs_module
 
         launched: list[str] = []
         monkeypatch.setattr(
@@ -387,7 +387,7 @@ class TestJobStartTool:
         cancellation flag is already wired to the context; attaching afterwards
         would drop it, and the job would run to completion.
         """
-        from porter_mcp.tools import jobs as jobs_module
+        from porter.mcp.tools import jobs as jobs_module
 
         observed: dict[str, object] = {}
 
@@ -414,11 +414,11 @@ class TestRunJobThreadBody:
     """
 
     def _job_and_ctx(self, tmp_path):
-        from porter.config import PorterConfig
-        from porter.context import RunContext
-        from porter.events import null_sink
-        from porter.jobs import JobStore
-        from porter.models.request import JobOptions, JobRequest
+        from porter.core.config import PorterConfig
+        from porter.core.context import RunContext
+        from porter.core.events import null_sink
+        from porter.core.jobs import JobStore
+        from porter.core.models.request import JobOptions, JobRequest
 
         store = JobStore()
         request = JobRequest.from_source("/videos/a.mp4", JobOptions())
@@ -435,10 +435,10 @@ class TestRunJobThreadBody:
     def test_an_expected_error_becomes_a_failed_result(
         self, tmp_path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from porter.errors import ExtractionError
-        from porter.models.request import JobResult
-        from porter.pipeline import Pipeline
-        from porter_mcp.tools import jobs as jobs_module
+        from porter.core.errors import ExtractionError
+        from porter.core.models.request import JobResult
+        from porter.core.pipeline import Pipeline
+        from porter.mcp.tools import jobs as jobs_module
 
         job, ctx, request = self._job_and_ctx(tmp_path)
 
@@ -455,9 +455,9 @@ class TestRunJobThreadBody:
     def test_an_unexpected_error_is_still_recorded(
         self, tmp_path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from porter.models.request import JobResult
-        from porter.pipeline import Pipeline
-        from porter_mcp.tools import jobs as jobs_module
+        from porter.core.models.request import JobResult
+        from porter.core.pipeline import Pipeline
+        from porter.mcp.tools import jobs as jobs_module
 
         job, ctx, request = self._job_and_ctx(tmp_path)
 
@@ -475,10 +475,10 @@ class TestRunJobThreadBody:
     def test_cancellation_becomes_a_cancelled_result(
         self, tmp_path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from porter.errors import JobCancelled
-        from porter.models.request import JobResult
-        from porter.pipeline import Pipeline
-        from porter_mcp.tools import jobs as jobs_module
+        from porter.core.errors import JobCancelled
+        from porter.core.models.request import JobResult
+        from porter.core.pipeline import Pipeline
+        from porter.mcp.tools import jobs as jobs_module
 
         job, ctx, request = self._job_and_ctx(tmp_path)
 
@@ -495,10 +495,10 @@ class TestRunJobThreadBody:
         self, tmp_path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A job cancelled while waiting its turn must not start when it gets one."""
-        from porter.events import JobState
-        from porter.models.request import JobResult
-        from porter.pipeline import Pipeline
-        from porter_mcp.tools import jobs as jobs_module
+        from porter.core.events import JobState
+        from porter.core.models.request import JobResult
+        from porter.core.pipeline import Pipeline
+        from porter.mcp.tools import jobs as jobs_module
 
         job, ctx, request = self._job_and_ctx(tmp_path)
         ran: list[str] = []
@@ -548,7 +548,7 @@ class TestInspectTool:
     @pytest.fixture
     def fake_inspect(self, monkeypatch):
         """Replace the engine call so shaping can be tested on its own."""
-        from porter.platforms import inspector as inspector_module
+        from porter.core.platforms import inspector as inspector_module
 
         def install(result_or_exc):
             def fake(url, ctx=None, **kwargs):
@@ -562,7 +562,7 @@ class TestInspectTool:
 
     @staticmethod
     def _valid() -> object:
-        from porter.models.inspection import InspectionResult
+        from porter.core.models.inspection import InspectionResult
 
         return InspectionResult(
             input_url="https://x.com/a/status/1",
@@ -608,7 +608,7 @@ class TestInspectTool:
         as ``ok: false`` reads as "the tool broke", and the natural response --
         retry -- is exactly wrong.
         """
-        from porter.models.inspection import InspectionResult
+        from porter.core.models.inspection import InspectionResult
 
         fake_inspect(
             InspectionResult(
@@ -656,7 +656,7 @@ class TestInspectTool:
 
     async def test_a_genuine_fault_is_a_tool_error(self, fake_inspect) -> None:
         """A missing dependency is not a bad link, and must not look like one."""
-        from porter.errors import PorterError
+        from porter.core.errors import PorterError
 
         fake_inspect(PorterError("ffmpeg is not installed"))
 
@@ -667,13 +667,13 @@ class TestInspectTool:
         assert "ffmpeg" in result.data["error"]
 
     async def test_an_unresolvable_config_is_a_tool_error(self, monkeypatch) -> None:
-        from porter.config import PorterConfig  # noqa: F401  (imported for clarity)
-        from porter.errors import PorterError
+        from porter.core.config import PorterConfig  # noqa: F401  (imported for clarity)
+        from porter.core.errors import PorterError
 
         def boom(explicit=None):
             raise PorterError("config file is not valid JSON")
 
-        monkeypatch.setattr("porter.config.resolve", boom)
+        monkeypatch.setattr("porter.core.config.resolve", boom)
 
         async with Client(create_server()) as client:
             result = await client.call_tool("porter_inspect", {"source": "https://x.com/a/status/1"})
@@ -693,7 +693,7 @@ class TestInspectToolIntegration:
     def ydl(self, monkeypatch):
         from types import SimpleNamespace
 
-        from porter.platforms import inspector as inspector_module
+        from porter.core.platforms import inspector as inspector_module
 
         state = SimpleNamespace(info=None, raises=None)
 
@@ -712,7 +712,7 @@ class TestInspectToolIntegration:
             def download(self, urls):  # pragma: no cover - inspection must not download
                 raise AssertionError("inspection must not download")
 
-        monkeypatch.setattr("porter.platforms.base.build_ydl", lambda *a, **k: FakeYDL())
+        monkeypatch.setattr("porter.core.platforms.base.build_ydl", lambda *a, **k: FakeYDL())
         # Zero the retry backoff so a failure test does not sleep 4.5 seconds.
         monkeypatch.setattr(inspector_module, "BACKOFF_BASE_SECONDS", 0.0)
         return state
@@ -810,9 +810,9 @@ class TestInspectConcurrency:
         import asyncio
         import threading
 
-        from porter.models.inspection import InspectionResult
-        from porter.platforms import inspector as inspector_module
-        from porter_mcp import limits
+        from porter.core.models.inspection import InspectionResult
+        from porter.core.platforms import inspector as inspector_module
+        from porter.mcp import limits
 
         monkeypatch.chdir(tmp_path)
         lock = threading.Lock()
@@ -862,8 +862,8 @@ class TestPlanTool:
 
     @pytest.fixture
     def inspected(self, monkeypatch):
-        from porter.models.inspection import InspectionResult
-        from porter.platforms import inspector as inspector_module
+        from porter.core.models.inspection import InspectionResult
+        from porter.core.platforms import inspector as inspector_module
 
         def install(**overrides):
             fields = {
@@ -888,7 +888,7 @@ class TestPlanTool:
 
     @pytest.fixture
     def asr_available(self, monkeypatch):
-        from porter.asr.chain import AsrChain
+        from porter.core.asr.chain import AsrChain
 
         def install(entries):
             monkeypatch.setattr(AsrChain, "availability", lambda self, ctx: list(entries))
@@ -974,7 +974,7 @@ class TestPlanTool:
 
     async def test_a_job_that_cannot_finish_is_flagged(self, inspected, asr_available) -> None:
         """The prediction the tool exists for: not after thirty minutes of encoding."""
-        asr_available([("whisper-api", False), ("bcut", False)])
+        asr_available([("whisper-api", False), ("videocaptioner", False)])
         inspected(raw_info={})
 
         async with Client(create_server()) as client:
@@ -985,26 +985,13 @@ class TestPlanTool:
         assert result.data["feasible"] is False
         assert "TRANSCRIBE will fail" in result.data["blocking_issues"][0]
 
-    async def test_an_unverified_engine_is_flagged_as_a_note(
-        self, inspected, asr_available
-    ) -> None:
-        asr_available([("whisper-api", False), ("bcut", True)])
-        inspected(raw_info={})
-
-        async with Client(create_server()) as client:
-            result = await client.call_tool(
-                "porter_plan", {"source": "https://www.youtube.com/watch?v=abc"}
-            )
-
-        assert any("unverified endpoints" in note for note in result.data["notes"])
-
     async def test_a_genuine_fault_is_a_tool_error(self, monkeypatch) -> None:
-        from porter.errors import PorterError
+        from porter.core.errors import PorterError
 
         def boom(source, options=None, ctx=None):
             raise PorterError("ffmpeg is not installed")
 
-        monkeypatch.setattr("porter.plan.plan_for", boom)
+        monkeypatch.setattr("porter.core.plan.plan_for", boom)
 
         async with Client(create_server()) as client:
             result = await client.call_tool("porter_plan", {"source": "/videos/a.mp4"})
@@ -1013,12 +1000,12 @@ class TestPlanTool:
         assert "ffmpeg" in result.data["error"]
 
     async def test_an_unresolvable_config_is_a_tool_error(self, monkeypatch) -> None:
-        from porter.errors import PorterError
+        from porter.core.errors import PorterError
 
         def boom(explicit=None):
             raise PorterError("config file is not valid JSON")
 
-        monkeypatch.setattr("porter.config.resolve", boom)
+        monkeypatch.setattr("porter.core.config.resolve", boom)
 
         async with Client(create_server()) as client:
             result = await client.call_tool("porter_plan", {"source": "/videos/a.mp4"})
@@ -1031,22 +1018,22 @@ class TestSharedConcurrencyLimits:
     """§8.4's caps live in one module, so a tool cannot invent its own."""
 
     def test_the_limits_are_declared_once(self) -> None:
-        from porter_mcp import limits
+        from porter.mcp import limits
 
         assert limits.HEAVY_CONCURRENCY == 1
         assert limits.LIGHT_CONCURRENCY == 4
 
     def test_every_network_probe_shares_the_light_cap(self) -> None:
         """Inspection and planning both hit the network; one cap covers both."""
-        from porter_mcp import limits
-        from porter_mcp.tools import inspect as inspect_module
-        from porter_mcp.tools import plan as plan_module
+        from porter.mcp import limits
+        from porter.mcp.tools import inspect as inspect_module
+        from porter.mcp.tools import plan as plan_module
 
         assert inspect_module.LIGHT is limits.LIGHT
         assert plan_module.LIGHT is limits.LIGHT
 
     def test_jobs_share_the_heavy_cap(self) -> None:
-        from porter_mcp import limits
-        from porter_mcp.tools import jobs as jobs_module
+        from porter.mcp import limits
+        from porter.mcp.tools import jobs as jobs_module
 
         assert jobs_module._HEAVY_JOBS is limits.HEAVY

@@ -13,8 +13,8 @@ from typing import Any
 
 import pytest
 
-from porter.errors import CapabilityMissingError, MediaError
-from porter.media.ffmpeg import FFmpegRunner, FFmpegTools
+from porter.core.errors import CapabilityMissingError, MediaError
+from porter.core.media.ffmpeg import FFmpegRunner, FFmpegTools
 
 
 @pytest.fixture
@@ -81,7 +81,7 @@ class TestErrorReporting:
         assert excinfo.value.details["exit_code"] == 1
 
     def test_long_stderr_is_truncated_from_the_front(self, runner: FFmpegRunner) -> None:
-        from porter.media.ffmpeg import _tail
+        from porter.core.media.ffmpeg import _tail
 
         tail = _tail("A" * 5000 + "THE_CAUSE")
         assert tail.endswith("THE_CAUSE")
@@ -89,12 +89,12 @@ class TestErrorReporting:
         assert tail.startswith("...")
 
     def test_short_stderr_is_kept_whole(self) -> None:
-        from porter.media.ffmpeg import _tail
+        from porter.core.media.ffmpeg import _tail
 
         assert _tail("short") == "short"
 
     def test_none_stderr_is_empty(self) -> None:
-        from porter.media.ffmpeg import _tail
+        from porter.core.media.ffmpeg import _tail
 
         assert _tail(None) == ""
 

@@ -10,16 +10,16 @@ from __future__ import annotations
 
 import pytest
 
-from porter.errors import UnsupportedPlatformError
-from porter.platforms import identify_platform, registry
-from porter.platforms.base import YtDlpExtractor
-from porter.platforms.bilibili import SPEC as BILIBILI
-from porter.platforms.instagram import SPEC as INSTAGRAM
-from porter.platforms.registry import PlatformRegistry
-from porter.platforms.tiktok import SPEC as TIKTOK
-from porter.platforms.titles import bilibili_title, caption_to_title, tweet_to_title
-from porter.platforms.x import SPEC as X
-from porter.platforms.youtube import SPEC as YOUTUBE
+from porter.core.errors import UnsupportedPlatformError
+from porter.core.platforms import identify_platform, registry
+from porter.core.platforms.base import YtDlpExtractor
+from porter.core.platforms.bilibili import SPEC as BILIBILI
+from porter.core.platforms.instagram import SPEC as INSTAGRAM
+from porter.core.platforms.registry import PlatformRegistry
+from porter.core.platforms.tiktok import SPEC as TIKTOK
+from porter.core.platforms.titles import bilibili_title, caption_to_title, tweet_to_title
+from porter.core.platforms.x import SPEC as X
+from porter.core.platforms.youtube import SPEC as YOUTUBE
 
 BUILTIN_NAMES = ("bilibili", "x", "instagram", "tiktok", "youtube")
 
@@ -134,7 +134,7 @@ class TestRegistry:
         assert reg.names() == ("youtube",)
 
     def test_register_is_idempotent_across_repeated_calls(self) -> None:
-        from porter.platforms.registry import register_builtins
+        from porter.core.platforms.registry import register_builtins
 
         before = registry().names()
         register_builtins()

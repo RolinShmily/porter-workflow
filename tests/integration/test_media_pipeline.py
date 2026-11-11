@@ -15,11 +15,11 @@ from pathlib import Path
 
 import pytest
 
-from porter.config import FFmpegConfig
-from porter.media.enhance import enhance_for_asr
-from porter.media.ffmpeg import FFmpegRunner, FFmpegTools
-from porter.media.probe import dimensions, is_valid_video, probe
-from porter.media.standardize import extract_audio, standardize_video
+from porter.core.config import FFmpegConfig
+from porter.core.media.enhance import enhance_for_asr
+from porter.core.media.ffmpeg import FFmpegRunner, FFmpegTools
+from porter.core.media.probe import dimensions, is_valid_video, probe
+from porter.core.media.standardize import extract_audio, standardize_video
 
 pytestmark = [
     pytest.mark.slow,
@@ -175,7 +175,7 @@ class TestStandardize:
         assert b"moov" in head
 
     def test_unreadable_source_raises(self, runner: FFmpegRunner, tmp_path: Path) -> None:
-        from porter.errors import MediaError
+        from porter.core.errors import MediaError
 
         broken = tmp_path / "broken.mp4"
         broken.write_bytes(b"\x00" * 4096)

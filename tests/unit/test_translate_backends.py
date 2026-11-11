@@ -34,13 +34,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from porter.config import LLMConfig, PorterConfig
-from porter.context import RunContext
-from porter.errors import JobCancelled
-from porter.models.request import JobOptions
-from porter.subtitles.srt import parse_srt
-from porter.translate import base, bing, google, llm, mymemory, videocaptioner
-from porter.translate.base import MAX_ATTEMPTS, TranslationBackendError
+from porter.core.config import LLMConfig, PorterConfig
+from porter.core.context import RunContext
+from porter.core.errors import JobCancelled
+from porter.core.models.request import JobOptions
+from porter.core.subtitles.srt import parse_srt
+from porter.core.translate import base, bing, google, llm, mymemory, videocaptioner
+from porter.core.translate.base import MAX_ATTEMPTS, TranslationBackendError
 
 #: A translator page carrying the three scraped values Bing needs. Copied from
 #: v0.1's ``test_translate_sentences_with_bing_http_mock``.
@@ -127,7 +127,7 @@ def _no_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
     retry test that really waits 1.5 s + 3 s is a test nobody runs, and the
     timing is not what any of these assertions are about.
     """
-    monkeypatch.setattr("porter.translate.base.BACKOFF_BASE_SECONDS", 0.0)
+    monkeypatch.setattr("porter.core.translate.base.BACKOFF_BASE_SECONDS", 0.0)
 
 
 def _block_import(monkeypatch: pytest.MonkeyPatch, name: str) -> None:

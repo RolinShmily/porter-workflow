@@ -1,4 +1,4 @@
-"""Graceful shutdown on a signal — see ``porter_mcp.shutdown``.
+"""Graceful shutdown on a signal — see ``porter.mcp.shutdown``.
 
 The behaviour under test is cooperative cancellation plus an honest record, not
 signal delivery itself: a test that sent itself a real signal would either kill
@@ -12,10 +12,10 @@ import threading
 
 import pytest
 
-from porter.events import JobState
-from porter.jobs import JobStore
-from porter.models.request import JobOptions, JobRequest, JobResult
-from porter_mcp import shutdown
+from porter.core.events import JobState
+from porter.core.jobs import JobStore
+from porter.core.models.request import JobOptions, JobRequest, JobResult
+from porter.mcp import shutdown
 
 
 def _store_with_running_jobs(count: int = 1) -> tuple[JobStore, list[object]]:

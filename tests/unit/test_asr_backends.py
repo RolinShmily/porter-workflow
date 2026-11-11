@@ -1,17 +1,14 @@
-"""The four ASR backends: request shapes, error mapping, availability, cancel.
+"""The ASR backends: request shapes, error mapping, availability, cancel.
 
-Two things are being pinned here. First, the v0.1 behaviour that must survive the
-refactor — Whisper's SRT round-trip, Bcut's chunked upload and poll, Google's
-silence slicing. Those tests are ports of ``tests/test_subtitle.py`` on ``main``,
-with the patch targets moved from ``porter_skill.subtitle.controller`` to the
-module that now owns each engine. Second, the behaviour the refactor exists to
-add: expected failures raise :class:`AsrBackendError` (never a random exception),
+Two things are being pinned here. First, the behaviour that must survive the v0.1
+refactor — Whisper's SRT round-trip, the local engine's segmentation, and the
+external CLI adapter's process boundary. Second, the behaviour the refactor exists
+to add: expected failures raise :class:`AsrBackendError` (never a random exception),
 ``available()`` is total, and cancellation interrupts a poll loop immediately.
 
-The Bcut and Google Web tests deliberately mock the *transport*, not the
-endpoint: both endpoints are reverse-engineered and unverifiable offline, so the
-tests assert the structure (envelope handling, error mapping, slicing) rather
-than pretending the wire format is known good.
+The remote tests deliberately mock the *transport*, not the endpoint: they assert
+the structure (envelope handling, error mapping) rather than pretending a live
+service is reachable from a hermetic test run.
 """
 
 from __future__ import annotations
@@ -26,13 +23,13 @@ from typing import Any
 
 import pytest
 
-from porter import mirrors
-from porter.asr import videocaptioner, whisper_api, whisper_local
-from porter.asr.base import AsrBackend, AsrBackendError
-from porter.config import ASRConfig, PorterConfig
-from porter.context import RunContext
-from porter.errors import JobCancelled
-from porter.models.request import JobOptions
+from porter.core import mirrors
+from porter.core.asr import videocaptioner, whisper_api, whisper_local
+from porter.core.asr.base import AsrBackend, AsrBackendError
+from porter.core.config import ASRConfig, PorterConfig
+from porter.core.context import RunContext
+from porter.core.errors import JobCancelled
+from porter.core.models.request import JobOptions
 
 # ---------------------------------------------------------------------------
 # Fixtures and fakes

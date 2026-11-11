@@ -49,14 +49,13 @@ dependencies = [
 
 [project.optional-dependencies]
 llm = ["openai>=1.0", "json-repair>=0.30"]
-stt = ["SpeechRecognition>=3.10"]
 #: Local speech recognition: no key, no network, no third-party service. MIT and
 #: CTranslate2-backed, so unlike openai-whisper it does not drag in PyTorch.
 asr-local = ["faster-whisper>=1.0"]
 images = ["pillow>=10.0"]
 mcp = ["fastmcp>=2.11"]
 web = ["gradio>=5.0"]
-all = ["porter-workflow[llm,stt,asr-local,images,mcp,web]"]
+all = ["porter-workflow[llm,asr-local,images,mcp,web]"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
@@ -67,15 +66,15 @@ dev = [
 ]
 
 [project.scripts]
-porter = "porter_cli.__main__:main"
-porter-mcp = "porter_mcp.server:main"
-porter-web = "porter_web.app:main"
+porter = "porter.cli.__main__:main"
+porter-mcp = "porter.mcp.server:main"
+porter-web = "porter.webui.app:main"
 
 [project.urls]
 Homepage = "https://github.com/RolinShmily/porter-workflow"
 Repository = "https://github.com/RolinShmily/porter-workflow"
 Issues = "https://github.com/RolinShmily/porter-workflow/issues"
-Documentation = "https://github.com/RolinShmily/porter-workflow/tree/main/docs"
+Documentation = "https://github.com/RolinShmily/porter-workflow/blob/main/docs/README.md"
 Changelog = "https://github.com/RolinShmily/porter-workflow/blob/main/CHANGELOG.md"
 
 [tool.hatch.version]
@@ -83,7 +82,7 @@ Changelog = "https://github.com/RolinShmily/porter-workflow/blob/main/CHANGELOG.
 path = "src/porter/__init__.py"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/porter", "src/porter_cli", "src/porter_mcp", "src/porter_web"]
+packages = ["src/porter"]
 
 # The sdist is the source of record, so it carries the license and the
 # third-party notices that `license-files` already puts into the wheel.
@@ -96,6 +95,8 @@ packages = ["src/porter", "src/porter_cli", "src/porter_mcp", "src/porter_web"]
 include = [
     "/src",
     "/skills",
+    "/scripts",
+    "/docs",
     "/README.md",
     "/LICENSE",
     "/THIRD_PARTY_NOTICES.md",
@@ -112,7 +113,7 @@ line-length = 100
 # and which `UP` rewrites apply. Left at py310 it classified `tomllib` as
 # third-party and flagged the sorted import block as unsorted.
 target-version = "py311"
-src = ["src", "tests", "packaging"]
+src = ["src", "tests", "scripts"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "BLE", "A", "C4", "SIM", "T20", "RUF", "S"]
@@ -127,15 +128,15 @@ select = ["E", "F", "W", "I", "N", "UP", "B", "BLE", "A", "C4", "SIM", "T20", "R
 ignore = ["E501", "UP042"]
 
 [tool.ruff.lint.per-file-ignores]
-"src/porter_cli/**" = ["T20"]
-"src/porter_web/**" = ["RUF001", "B008"]
+"src/porter/cli/**" = ["T20"]
+"src/porter/webui/**" = ["RUF001", "B008"]
 # assert IS the test mechanism, and tests spawn ffmpeg to build fixtures on
 # purpose. Both are meaningful signals in src/, so they stay enabled there.
 "tests/**" = ["T20", "S101", "S603", "S607"]
 # Control-flow signal and guard exception, not faults. Renaming them to satisfy
 # N818 would obscure their meaning and break the documented public API.
-"src/porter/errors.py" = ["N818"]
-"src/porter_mcp/stdout_guard.py" = ["N818"]
+"src/porter/core/errors.py" = ["N818"]
+"src/porter/mcp/stdout_guard.py" = ["N818"]
 
 [tool.mypy]
 python_version = "3.11"
@@ -146,7 +147,7 @@ ignore_missing_imports = true
 # ones, so `ctypes.WinDLL` (Windows-only in typeshed) passed locally while the
 # gate went red. Pinning the platform makes `uv run mypy src` mean what CI means.
 platform = "linux"
-files = ["src", "packaging"]
+files = ["src", "scripts"]
 mypy_path = "src"
 explicit_package_bases = true
 namespace_packages = true
@@ -194,15 +195,23 @@ follow_imports = "skip"
 # ---------------------------------------------------------------------------
 [tool.importlinter]
 root_package = "porter"
-# The forbidden frontends live outside root_package, so they must be treated as
-# external packages for the contract below to see them.
-include_external_packages = true
 
 [[tool.importlinter.contracts]]
 name = "engine must not import frontends"
 type = "forbidden"
-source_modules = ["porter"]
-forbidden_modules = ["porter_cli", "porter_mcp", "porter_web"]
+# The frontends now live inside the same distribution (porter.cli, porter.mcp,
+# porter.webui), so no external-package handling is needed.
+source_modules = ["porter.core"]
+forbidden_modules = ["porter.cli", "porter.mcp", "porter.webui"]
+
+[[tool.importlinter.contracts]]
+name = "frontends are independent"
+type = "independence"
+# The three frontends are siblings: each may import the engine, none may import
+# another. test_architecture.py checks the same rule with a precise message, but
+# the contract is the authoritative gate because it also resolves transitive
+# imports.
+modules = ["porter.cli", "porter.mcp", "porter.webui"]
 
 [[tool.importlinter.contracts]]
 name = "engine layers"
@@ -215,30 +224,30 @@ layers = [
     # plan observes the pipeline, the platform layer and both chains, and reports
     # on them. It builds one via Pipeline.default, so it sits *above* the pipeline
     # in the import sense -- a layer may import what is below it, never above.
-    # Like porter.jobs, it was outside this contract at first, which meant the
-    # module whose whole job is to describe the pipeline accurately could have
-    # imported anything at all.
-    "porter.plan",
-    "porter.pipeline",
+    # Like porter.core.jobs, it was outside this contract at first, which meant
+    # the module whose whole job is to describe the pipeline accurately could
+    # have imported anything at all.
+    "porter.core.plan",
+    "porter.core.pipeline",
     # doctor is a cross-cutting service: it observes the media layer, the
     # platform layer and the ASR/translation chains, and is consumed by the
     # frontends. It sits below the pipeline (the pipeline must not run doctor
     # unconditionally) and above the backends it reports on.
-    "porter.doctor",
-    "porter.asr | porter.translate | porter.platforms",
-    "porter.media | porter.subtitles",
-    "porter.ports",
+    "porter.core.doctor",
+    "porter.core.asr | porter.core.translate | porter.core.platforms | porter.core.refine",
+    "porter.core.media | porter.core.subtitles",
+    "porter.core.ports",
     # Job tracking is a frontend-facing service that needs only models, context
     # and events. It sat outside this contract entirely, which meant the one
     # module both frontends depend on was the one module nothing constrained:
     # it could have imported the pipeline or the media layer and no gate would
     # have said a word. Placed at its true dependency depth instead.
-    "porter.jobs",
-    "porter.context",
-    "porter.models",
-    "porter.config",
-    "porter.events",
-    "porter.logging | porter.errors | porter.utils",
+    "porter.core.jobs",
+    "porter.core.context",
+    "porter.core.models",
+    "porter.core.config",
+    "porter.core.events",
+    "porter.core.logging | porter.core.errors | porter.core.utils | porter.core.mirrors",
 ]
 
 [tool.pytest.ini_options]

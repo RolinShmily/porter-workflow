@@ -1,4 +1,4 @@
-"""Tests for ``packaging/launcher.py``.
+"""Tests for ``scripts/launcher.py``.
 
 The launcher is the thing users actually download, and until now nothing tested
 it. That gap shipped a broken binary: ``_create_venv`` passed ``sys.executable``
@@ -29,13 +29,13 @@ from typing import Any
 
 import pytest
 
-from porter import mirrors
+from porter.core import mirrors
 
-LAUNCHER_PATH = Path(__file__).resolve().parents[2] / "packaging" / "launcher.py"
+LAUNCHER_PATH = Path(__file__).resolve().parents[2] / "scripts" / "launcher.py"
 
 
 def _load_launcher() -> Any:
-    """Import ``packaging/launcher.py`` by path; it is not an installed module.
+    """Import ``scripts/launcher.py`` by path; it is not an installed module.
 
     Each call *re-executes* the file and hands back a fresh module object, so
     everything that patches the launcher must share one instance: patching one
@@ -236,7 +236,7 @@ class TestIndexMirror:
 
 
 class TestTheTwoDetectionCopiesAgree:
-    """``packaging/launcher.py`` cannot import ``porter.mirrors``, so it copies it.
+    """``scripts/launcher.py`` cannot import ``porter.core.mirrors``, so it copies it.
 
     The launcher has to run *before* porter exists -- installing it is the
     launcher's whole job -- so an import is not available to it. Duplication is
@@ -260,7 +260,7 @@ class TestTheTwoDetectionCopiesAgree:
         offset: int,
         language: str | None,
     ) -> tuple[bool, bool]:
-        """``(launcher's answer, porter.mirrors' answer)`` for one machine."""
+        """``(launcher's answer, porter.core.mirrors' answer)`` for one machine."""
         now = datetime(2026, 9, 24, 12, 0, tzinfo=timezone(timedelta(hours=offset), tzname))
         monkeypatch.setattr(launcher, "_local_now", lambda: now)
         monkeypatch.setattr(mirrors, "_local_now", lambda: now)
@@ -300,7 +300,7 @@ class TestTheTwoDetectionCopiesAgree:
             monkeypatch, launcher, tzname=tzname, offset=offset, language=language
         )
         assert from_launcher == from_engine, (
-            f"the launcher and porter.mirrors disagree for "
+            f"the launcher and porter.core.mirrors disagree for "
             f"{tz=} {tzname=} {offset=} {language=}"
         )
 

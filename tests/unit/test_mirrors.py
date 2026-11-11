@@ -1,4 +1,4 @@
-"""Tests for :mod:`porter.mirrors`.
+"""Tests for :mod:`porter.core.mirrors`.
 
 The detection is heuristic, so the tests pin the signals rather than a
 conclusion: each branch is exercised with the input it is supposed to read, and
@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from porter import mirrors
+from porter.core import mirrors
 
 
 @pytest.fixture(autouse=True)

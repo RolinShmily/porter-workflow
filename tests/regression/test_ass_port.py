@@ -11,11 +11,11 @@ Only the import paths and the call form changed:
 v0.1                                v0.2
 ==================================  ===================================
 ``from porter_skill.subtitle.formatter import X``
-                                    ``from porter.subtitles.ass import X``
+                                    ``from porter.core.subtitles.ass import X``
 ``from porter_skill.subtitle.controller import compute_adaptive_subtitle_style``
-                                    ``from porter.subtitles.ass import compute_adaptive_subtitle_style``
+                                    ``from porter.core.subtitles.ass import compute_adaptive_subtitle_style``
 ``SubtitleItem`` / ``TranscriptSentence`` (re-exported by formatter)
-                                    ``from porter.models.subtitle import ...``
+                                    ``from porter.core.models.subtitle import ...``
 ==================================  ===================================
 
 **No assertion was edited.** If one of these fails, behaviour changed.
@@ -31,13 +31,13 @@ from pathlib import Path
 
 import pytest
 
-from porter.models.subtitle import SubtitleItem, TranscriptSentence
-from porter.subtitles.ass import (
+from porter.core.models.subtitle import SubtitleItem, TranscriptSentence
+from porter.core.subtitles.ass import (
     compute_adaptive_subtitle_style,
     generate_bilingual_ass,
     generate_zh_ass,
 )
-from porter.subtitles.transcript import save_transcript_json, save_transcript_txt
+from porter.core.subtitles.transcript import save_transcript_json, save_transcript_txt
 
 
 class TestSaveTranscriptFiles:

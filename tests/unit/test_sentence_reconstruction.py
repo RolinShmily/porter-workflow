@@ -28,9 +28,9 @@ from __future__ import annotations
 
 import pytest
 
-from porter.models.subtitle import SubtitleItem
-from porter.subtitles.phrasing import merge_short_fragments, split_chinese_text_by_phrase
-from porter.subtitles.transcript import (
+from porter.core.models.subtitle import SubtitleItem
+from porter.core.subtitles.phrasing import merge_short_fragments, split_chinese_text_by_phrase
+from porter.core.subtitles.transcript import (
     reconstruct_sentences_from_fragments,
     split_chinese_sentence_into_cues,
 )

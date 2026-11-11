@@ -25,9 +25,9 @@ pytest.importorskip("fastmcp", reason="requires the [mcp] extra")
 
 from fastmcp import Client
 
-from porter.errors import PorterError
-from porter.models.subtitle import SubtitleItem, SubtitleSet
-from porter_mcp.server import create_server
+from porter.core.errors import PorterError
+from porter.core.models.subtitle import SubtitleItem, SubtitleSet
+from porter.mcp.server import create_server
 
 SAMPLE_SRT = """1
 00:00:00,500 --> 00:00:02,500
@@ -93,7 +93,7 @@ def stub_pipeline(monkeypatch: pytest.MonkeyPatch):
         def _default(ctx: Any) -> _FakePipeline:
             return pipeline
 
-        monkeypatch.setattr("porter.pipeline.Pipeline.default", staticmethod(_default))
+        monkeypatch.setattr("porter.core.pipeline.Pipeline.default", staticmethod(_default))
         return pipeline
 
     return _install
@@ -200,7 +200,7 @@ class TestConfigTool:
         def _boom(_explicit: Any) -> Any:
             raise PorterError("config file is not valid JSON")
 
-        monkeypatch.setattr("porter_mcp.tools.config.resolve", _boom)
+        monkeypatch.setattr("porter.mcp.tools.config.resolve", _boom)
 
         async with Client(create_server()) as client:
             data = (await client.call_tool("porter_config", {"action": "list"})).data
@@ -376,7 +376,7 @@ class TestTranslateTool:
                 raise PorterError("every translation backend failed", attempted=3)
 
         monkeypatch.setattr(
-            "porter.pipeline.Pipeline.default", staticmethod(lambda ctx: _FakePipeline(_Failing()))
+            "porter.core.pipeline.Pipeline.default", staticmethod(lambda ctx: _FakePipeline(_Failing()))
         )
 
         async with Client(create_server()) as client:
@@ -454,9 +454,9 @@ class TestBurnTool:
             Path(video_output).write_bytes(b"burned")
             return Path(video_output)
 
-        monkeypatch.setattr("porter.media.burn.burn_hardsub", _fake_burn)
+        monkeypatch.setattr("porter.core.media.burn.burn_hardsub", _fake_burn)
         monkeypatch.setattr(
-            "porter.media.encode.EncoderSelector.select", lambda self: type("P", (), {"name": "cpu"})()
+            "porter.core.media.encode.EncoderSelector.select", lambda self: type("P", (), {"name": "cpu"})()
         )
 
         async with Client(create_server()) as client:
@@ -479,11 +479,11 @@ class TestBurnTool:
         target = tmp_path / "out" / "final.mp4"
 
         monkeypatch.setattr(
-            "porter.media.burn.burn_hardsub",
+            "porter.core.media.burn.burn_hardsub",
             lambda *a, **k: Path(a[3]).write_bytes(b"b") or Path(a[3]),
         )
         monkeypatch.setattr(
-            "porter.media.encode.EncoderSelector.select", lambda self: type("P", (), {"name": "cpu"})()
+            "porter.core.media.encode.EncoderSelector.select", lambda self: type("P", (), {"name": "cpu"})()
         )
 
         async with Client(create_server()) as client:
@@ -499,7 +499,7 @@ class TestBurnTool:
     async def test_a_render_failure_is_reported_as_data(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from porter.errors import RenderError
+        from porter.core.errors import RenderError
 
         video = tmp_path / "movie.mp4"
         video.write_bytes(b"x")
@@ -509,9 +509,9 @@ class TestBurnTool:
         def _fail(*a: Any, **k: Any) -> None:
             raise RenderError("ffmpeg exited 1: No such filter: ass")
 
-        monkeypatch.setattr("porter.media.burn.burn_hardsub", _fail)
+        monkeypatch.setattr("porter.core.media.burn.burn_hardsub", _fail)
         monkeypatch.setattr(
-            "porter.media.encode.EncoderSelector.select", lambda self: type("P", (), {"name": "cpu"})()
+            "porter.core.media.encode.EncoderSelector.select", lambda self: type("P", (), {"name": "cpu"})()
         )
 
         async with Client(create_server()) as client:
@@ -579,7 +579,7 @@ class TestTranscribeTool:
     async def test_recognition_results_come_back_as_cues(
         self, tmp_path: Path, stub_pipeline
     ) -> None:
-        from porter.models.request import JobResult, JobState
+        from porter.core.models.request import JobResult, JobState
 
         media = tmp_path / "clip.mp4"
         media.write_bytes(b"x")
@@ -608,8 +608,8 @@ class TestTranscribeTool:
 
     async def test_it_stops_after_recognition(self, tmp_path: Path, monkeypatch) -> None:
         """Otherwise the tool would translate and encode work nobody asked for."""
-        from porter.events import Phase
-        from porter.models.request import JobResult, JobState
+        from porter.core.events import Phase
+        from porter.core.models.request import JobResult, JobState
 
         media = tmp_path / "clip.mp4"
         media.write_bytes(b"x")
@@ -623,7 +623,7 @@ class TestTranscribeTool:
                 captured["burn"] = request.options.burn
                 return JobResult(job_id="j", state=JobState.FAILED)
 
-        monkeypatch.setattr("porter.pipeline.Pipeline.default", staticmethod(lambda ctx: _P()))
+        monkeypatch.setattr("porter.core.pipeline.Pipeline.default", staticmethod(lambda ctx: _P()))
 
         async with Client(create_server()) as client:
             await client.call_tool("porter_transcribe", {"source": str(media)})
@@ -634,8 +634,8 @@ class TestTranscribeTool:
     async def test_a_failed_run_reports_the_engine_error(
         self, tmp_path: Path, stub_pipeline
     ) -> None:
-        from porter.events import ErrorInfo, Phase
-        from porter.models.request import JobResult, JobState
+        from porter.core.events import ErrorInfo, Phase
+        from porter.core.models.request import JobResult, JobState
 
         media = tmp_path / "clip.mp4"
         media.write_bytes(b"x")
@@ -660,7 +660,7 @@ class TestTranscribeTool:
     async def test_max_cues_truncates_and_says_so(
         self, tmp_path: Path, stub_pipeline
     ) -> None:
-        from porter.models.request import JobResult, JobState
+        from porter.core.models.request import JobResult, JobState
 
         media = tmp_path / "clip.mp4"
         media.write_bytes(b"x")

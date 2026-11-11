@@ -13,22 +13,22 @@ from pathlib import Path
 
 import pytest
 
-from porter.asr.base import AsrBackendError, AsrOutcome, coerce_items
-from porter.asr.chain import (
+from porter.core.asr.base import AsrBackendError, AsrOutcome, coerce_items
+from porter.core.asr.chain import (
     PROVENANCE_NAME,
     SOURCE_SRT_NAME,
     AsrChain,
     _best_audio,
 )
-from porter.config import PorterConfig
-from porter.context import RunContext
-from porter.errors import JobCancelled, PorterError
-from porter.events import Phase
-from porter.models.materials import RawMaterials, TaskLayout
-from porter.models.metadata import VideoMetadata
-from porter.models.request import JobOptions
-from porter.models.subtitle import SubtitleItem
-from porter.subtitles.srt import parse_srt
+from porter.core.config import PorterConfig
+from porter.core.context import RunContext
+from porter.core.errors import JobCancelled, PorterError
+from porter.core.events import Phase
+from porter.core.models.materials import RawMaterials, TaskLayout
+from porter.core.models.metadata import VideoMetadata
+from porter.core.models.request import JobOptions
+from porter.core.models.subtitle import SubtitleItem
+from porter.core.subtitles.srt import parse_srt
 
 # ----------------------------------------------------------------------
 # Fakes
@@ -518,7 +518,7 @@ class TestTranscribeReuse:
         check. An old cache is a normal cache miss and must not be reported as a
         problem.
         """
-        import porter.asr.chain as chain_module
+        import porter.core.asr.chain as chain_module
 
         warnings: list[str] = []
 

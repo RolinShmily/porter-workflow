@@ -13,7 +13,7 @@ v0.1                             v0.2
 ``YouTubeExtractor()._select_chinese_subtitle_lang(subs)``
                                  ``select_chinese_lang(subs)``
 ``from porter_skill.extractors.youtube import _convert_vtt_to_srt``
-                                 ``from porter.subtitles.srt import vtt_to_srt``
+                                 ``from porter.core.subtitles.srt import vtt_to_srt``
 ===============================  ================================
 
 **No assertion was edited.** If one of these fails, behaviour changed.
@@ -21,13 +21,13 @@ v0.1                             v0.2
 
 from __future__ import annotations
 
-from porter.models.subtitle import SubtitleItem
-from porter.subtitles.phrasing import (
+from porter.core.models.subtitle import SubtitleItem
+from porter.core.subtitles.phrasing import (
     align_bilingual_items,
     has_chinese_translation,
     normalize_subtitle_items,
 )
-from porter.subtitles.srt import (
+from porter.core.subtitles.srt import (
     bilibili_json_to_srt,
     generate_bilingual_srt,
     generate_zh_srt,
@@ -234,7 +234,7 @@ class TestTimeConversions:
     """From ``test_subtitle.py::test_time_conversions``. Assertions verbatim."""
 
     def test_round_trips_through_srt_and_ass(self) -> None:
-        from porter.utils.time import ms_to_ass_time, ms_to_srt_time, srt_time_to_ms
+        from porter.core.utils.time import ms_to_ass_time, ms_to_srt_time, srt_time_to_ms
 
         ms = srt_time_to_ms("01:23:45,678")
         assert ms == 5025678
@@ -243,13 +243,13 @@ class TestTimeConversions:
 
     def test_srt_accepts_a_dot_as_the_millisecond_separator(self) -> None:
         """WebVTT and some tools write a period where SRT writes a comma."""
-        from porter.utils.time import srt_time_to_ms
+        from porter.core.utils.time import srt_time_to_ms
 
         assert srt_time_to_ms("00:00:01.500") == 1500
 
     def test_a_malformed_timestamp_is_zero_not_an_exception(self) -> None:
         """This parses remote output; one bad cue must not discard the rest."""
-        from porter.utils.time import srt_time_to_ms
+        from porter.core.utils.time import srt_time_to_ms
 
         assert srt_time_to_ms("garbage") == 0
 

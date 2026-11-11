@@ -13,10 +13,10 @@ import sys
 
 import pytest
 
-from porter.events import Phase, ProgressUpdated, collect
-from porter.logging import configure
-from porter.platforms import ydl
-from porter.platforms.ydl import (
+from porter.core.events import Phase, ProgressUpdated, collect
+from porter.core.logging import configure
+from porter.core.platforms import ydl
+from porter.core.platforms.ydl import (
     JS_RUNTIME_PRIORITY,
     YdlLogRouter,
     YdlPolicy,

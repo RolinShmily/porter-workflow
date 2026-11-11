@@ -9,11 +9,11 @@ from pathlib import Path
 import pytest
 
 from porter import __version__
-from porter.events import JobState
-from porter.jobs import process_marker
-from porter.models.request import BurnMode
-from porter_cli import render
-from porter_cli.app import _inject_run, main
+from porter.cli import render
+from porter.cli.app import _inject_run, main
+from porter.core.events import JobState
+from porter.core.jobs import process_marker
+from porter.core.models.request import BurnMode
 
 URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
@@ -126,6 +126,17 @@ class TestConfigCommand:
         assert main(["config", "set", "llm.model"]) == render.EXIT_MISUSE
         assert "KEY=VALUE" in capsys.readouterr().err
 
+    def test_set_refuses_a_toml_target(self, project_dir, tmp_path, capsys) -> None:
+        target = tmp_path / "porter.toml"
+        original = "[llm]\nmodel = 'keep-me'\n"
+        target.write_text(original, encoding="utf-8")
+
+        code = main(["config", "set", "llm.model=new", "--file", str(target)])
+
+        assert code == render.EXIT_ERROR
+        assert "TOML" in capsys.readouterr().err
+        assert target.read_text(encoding="utf-8") == original
+
 
 class TestInspectCommand:
     """``porter inspect`` — the command that had no implementation until P2.5.
@@ -136,7 +147,7 @@ class TestInspectCommand:
 
     @pytest.fixture
     def result(self):
-        from porter.models.inspection import InspectionResult
+        from porter.core.models.inspection import InspectionResult
 
         return InspectionResult(
             input_url=URL,
@@ -157,7 +168,7 @@ class TestInspectCommand:
 
     def _patch(self, monkeypatch, result):
         monkeypatch.setattr(
-            "porter.platforms.inspector.inspect_url", lambda *a, **k: result
+            "porter.core.platforms.inspector.inspect_url", lambda *a, **k: result
         )
 
     def test_report_goes_to_stdout(self, monkeypatch, result, capsys, project_dir) -> None:
@@ -204,12 +215,12 @@ class TestInspectCommand:
     def test_engine_error_becomes_a_clean_exit_code(
         self, monkeypatch, capsys, project_dir
     ) -> None:
-        from porter.errors import ExtractionError
+        from porter.core.errors import ExtractionError
 
         def boom(*args, **kwargs):
             raise ExtractionError("network is down")
 
-        monkeypatch.setattr("porter.platforms.inspector.inspect_url", boom)
+        monkeypatch.setattr("porter.core.platforms.inspector.inspect_url", boom)
 
         assert main(["inspect", URL]) == render.EXIT_ERROR
         captured = capsys.readouterr()
@@ -225,7 +236,7 @@ class TestInspectCommand:
         ``tests/regression/test_url_cleaning_port.py``; what this pins is that
         the CLI reports the canonical form rather than echoing what was typed.
         """
-        from porter.models.inspection import InspectionResult
+        from porter.core.models.inspection import InspectionResult
 
         seen: list[str] = []
 
@@ -240,7 +251,7 @@ class TestInspectCommand:
                 video_id="dQw4w9WgXcQ",
             )
 
-        monkeypatch.setattr("porter.platforms.inspector.inspect_url", capture)
+        monkeypatch.setattr("porter.core.platforms.inspector.inspect_url", capture)
 
         main(["inspect", f"{URL}&t=15s&utm_source=share"])
 
@@ -254,8 +265,8 @@ class TestDoctorCommand:
 
     @pytest.fixture
     def healthy(self, monkeypatch):
-        from porter.doctor import CapabilityReport
-        from porter.doctor.probes import Finding
+        from porter.core.doctor import CapabilityReport
+        from porter.core.doctor.probes import Finding
 
         report = CapabilityReport(
             findings=[
@@ -263,7 +274,7 @@ class TestDoctorCommand:
                 Finding.passed("libass", "libass (hardsub)", "ass filter present"),
             ]
         )
-        monkeypatch.setattr("porter.doctor.probe_all", lambda *a, **k: report)
+        monkeypatch.setattr("porter.core.doctor.probe_all", lambda *a, **k: report)
         return report
 
     def test_a_healthy_machine_exits_zero(self, healthy, project_dir) -> None:
@@ -285,30 +296,30 @@ class TestDoctorCommand:
         assert payload["findings"][0]["key"] == "ffmpeg"
 
     def test_a_blocker_exits_non_zero(self, monkeypatch, capsys, project_dir) -> None:
-        from porter.doctor import CapabilityReport
-        from porter.doctor.probes import Finding
+        from porter.core.doctor import CapabilityReport
+        from porter.core.doctor.probes import Finding
 
         report = CapabilityReport(
             findings=[
                 Finding.blocked("ffmpeg", "ffmpeg & ffprobe", "not found", "ffmpeg"),
             ]
         )
-        monkeypatch.setattr("porter.doctor.probe_all", lambda *a, **k: report)
+        monkeypatch.setattr("porter.core.doctor.probe_all", lambda *a, **k: report)
 
         assert main(["doctor"]) == render.EXIT_ERROR
         assert "1 blocking issue" in capsys.readouterr().err
 
     def test_a_blocker_shows_its_remediation(self, monkeypatch, capsys, project_dir) -> None:
         """The whole point of the key/text split: the fix must reach the operator."""
-        from porter.doctor import CapabilityReport
-        from porter.doctor.probes import Finding
+        from porter.core.doctor import CapabilityReport
+        from porter.core.doctor.probes import Finding
 
         report = CapabilityReport(
             findings=[
                 Finding.blocked("ffmpeg", "ffmpeg & ffprobe", "not found", "ffmpeg"),
             ]
         )
-        monkeypatch.setattr("porter.doctor.probe_all", lambda *a, **k: report)
+        monkeypatch.setattr("porter.core.doctor.probe_all", lambda *a, **k: report)
         main(["doctor"])
 
         err = capsys.readouterr().err
@@ -319,8 +330,8 @@ class TestDoctorCommand:
         self, monkeypatch, capsys, project_dir
     ) -> None:
         """No GPU must not fail a gate the way no ffmpeg does."""
-        from porter.doctor import CapabilityReport
-        from porter.doctor.probes import Finding
+        from porter.core.doctor import CapabilityReport
+        from porter.core.doctor.probes import Finding
 
         report = CapabilityReport(
             findings=[
@@ -328,7 +339,7 @@ class TestDoctorCommand:
                 Finding.degraded("js_runtime", "JavaScript runtime", "none found", "js_runtime"),
             ]
         )
-        monkeypatch.setattr("porter.doctor.probe_all", lambda *a, **k: report)
+        monkeypatch.setattr("porter.core.doctor.probe_all", lambda *a, **k: report)
 
         assert main(["doctor"]) == render.EXIT_OK
         err = capsys.readouterr().err
@@ -338,8 +349,8 @@ class TestDoctorCommand:
 
     def test_status_markers_are_ascii(self, monkeypatch, capsys, project_dir) -> None:
         """Under LANG=C a non-ASCII glyph raises UnicodeEncodeError."""
-        from porter.doctor import CapabilityReport
-        from porter.doctor.probes import Finding
+        from porter.core.doctor import CapabilityReport
+        from porter.core.doctor.probes import Finding
 
         report = CapabilityReport(
             findings=[
@@ -348,7 +359,7 @@ class TestDoctorCommand:
                 Finding.blocked("c", "C", "d", "ffmpeg"),
             ]
         )
-        monkeypatch.setattr("porter.doctor.probe_all", lambda *a, **k: report)
+        monkeypatch.setattr("porter.core.doctor.probe_all", lambda *a, **k: report)
         main(["doctor"])
 
         assert capsys.readouterr().err.isascii()
@@ -408,7 +419,7 @@ class TestStdoutEncodingSafety:
         """Wiring it into main() is the part that actually protects users."""
         import sys
 
-        from porter_cli import app
+        from porter.cli import app
 
         calls: list[str] = []
         monkeypatch.setattr(render, "make_stdout_safe", lambda: calls.append("called"))
@@ -445,7 +456,7 @@ class TestJsonIsEncodingIndependent:
         assert decoded["path"] == str(Path("/var/porter/x"))
 
     def test_emit_json_serialises_paths_and_enums(self, capsys) -> None:
-        from porter.events import Phase
+        from porter.core.events import Phase
 
         render.emit_json({"phase": Phase.PREPARE, "path": Path("/var/porter/a/b")})
         decoded = json.loads(capsys.readouterr().out)
@@ -468,7 +479,7 @@ class TestRunOptionsReachThePipeline:
     @pytest.fixture
     def captured(self, monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
         """Intercept the pipeline before it runs, capturing the request and context."""
-        import porter_cli.commands.run as run_module
+        import porter.cli.commands.run as run_module
 
         seen: dict[str, object] = {}
 
@@ -480,12 +491,12 @@ class TestRunOptionsReachThePipeline:
 
             def run(self, request: object, ctx: object) -> object:
                 seen["request"] = request
-                from porter.models.request import JobResult
+                from porter.core.models.request import JobResult
 
                 return JobResult(job_id="x", state=JobState.DONE)
 
         monkeypatch.setattr(run_module, "Pipeline", FakePipeline, raising=False)
-        import porter.pipeline as pipeline_module
+        import porter.core.pipeline as pipeline_module
 
         monkeypatch.setattr(pipeline_module, "Pipeline", FakePipeline)
         return seen
@@ -526,7 +537,7 @@ class TestRunOptionsReachThePipeline:
         assert options.force is True
 
     def test_only_phase_lands_on_the_request(self, captured, tmp_path, capsys) -> None:
-        from porter.events import Phase
+        from porter.core.events import Phase
 
         main(["run", URL, "-o", str(tmp_path), "--only-phase", "translate"])
 
@@ -560,12 +571,12 @@ def registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """A job registry in a temp directory.
 
     Patches the *path seam* rather than the class, so the command still builds a
-    real :class:`~porter.jobs.JobRegistry` and every read and write goes through
+    real :class:`~porter.core.jobs.JobRegistry` and every read and write goes through
     the real file. The alternative -- faking the registry -- would test the
     command against an object that behaves nothing like the one it ships with.
     """
-    from porter.jobs import JobRegistry
-    from porter.jobs import records as records_module
+    from porter.core.jobs import JobRegistry
+    from porter.core.jobs import records as records_module
 
     path = tmp_path / "jobs.json"
     monkeypatch.setattr(records_module, "registry_file", lambda: path)
@@ -584,8 +595,8 @@ class TestAnInterruptIsReportedNotRaised:
     @pytest.fixture
     def interrupted(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A pipeline that raises ``KeyboardInterrupt`` where the real one would."""
-        import porter.pipeline as pipeline_module
-        import porter_cli.commands.run as run_module
+        import porter.cli.commands.run as run_module
+        import porter.core.pipeline as pipeline_module
 
         class InterruptedPipeline:
             @staticmethod
@@ -613,7 +624,7 @@ class TestAnInterruptIsReportedNotRaised:
         process notices the PID is gone -- inferring an interruption from a dead
         process when this one could simply have written it down.
         """
-        from porter.jobs import JobRegistry
+        from porter.core.jobs import JobRegistry
 
         main(["run", URL, "-o", str(tmp_path)])
 
@@ -622,7 +633,7 @@ class TestAnInterruptIsReportedNotRaised:
         ]
 
     def test_an_interrupt_outside_a_job_is_reported(self, monkeypatch, capsys) -> None:
-        import porter_cli.app as app_module
+        import porter.cli.app as app_module
 
         def interrupt(args: object) -> int:
             raise KeyboardInterrupt
@@ -644,8 +655,8 @@ class TestJobsCommand:
         self, registry, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """`porter jobs list` answers "what is running", so done jobs are noise."""
-        from porter.events import JobState
-        from porter.jobs import JobRecord
+        from porter.core.events import JobState
+        from porter.core.jobs import JobRecord
 
         registry.publish(JobRecord(job_id="a", source="u", state=JobState.DONE.value))
 
@@ -658,8 +669,8 @@ class TestJobsCommand:
     def test_list_prints_a_running_job(
         self, registry, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        from porter.events import JobState
-        from porter.jobs import JobRecord
+        from porter.core.events import JobState
+        from porter.core.jobs import JobRecord
 
         registry.publish(
             JobRecord(
@@ -679,7 +690,7 @@ class TestJobsCommand:
     def test_list_json_goes_to_stdout(
         self, registry, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        from porter.jobs import JobRecord
+        from porter.core.jobs import JobRecord
 
         registry.publish(JobRecord(job_id="a", source="u"))
 
@@ -691,8 +702,8 @@ class TestJobsCommand:
     def test_status_shows_the_record_and_its_artifacts(
         self, registry, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        from porter.events import JobState
-        from porter.jobs import JobRecord
+        from porter.core.events import JobState
+        from porter.core.jobs import JobRecord
 
         registry.publish(
             JobRecord(
@@ -718,8 +729,8 @@ class TestJobsCommand:
         self, registry, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """The question this command exists for: did it die without saying so."""
-        from porter.events import JobState
-        from porter.jobs import JobRecord
+        from porter.core.events import JobState
+        from porter.core.jobs import JobRecord
 
         registry.publish(
             JobRecord(
@@ -737,8 +748,8 @@ class TestJobsCommand:
     def test_cancel_records_a_request(
         self, registry, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        from porter.events import JobState
-        from porter.jobs import JobRecord
+        from porter.core.events import JobState
+        from porter.core.jobs import JobRecord
 
         registry.publish(
             JobRecord(
@@ -755,8 +766,8 @@ class TestJobsCommand:
     def test_cancelling_a_finished_job_is_an_error(
         self, registry, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        from porter.events import JobState
-        from porter.jobs import JobRecord
+        from porter.core.events import JobState
+        from porter.core.jobs import JobRecord
 
         registry.publish(JobRecord(job_id="a", source="u", state=JobState.DONE.value))
 
@@ -772,8 +783,8 @@ class TestJobsCommand:
     def test_clear_drops_finished_jobs(
         self, registry, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        from porter.events import JobState
-        from porter.jobs import JobRecord
+        from porter.core.events import JobState
+        from porter.core.jobs import JobRecord
 
         registry.publish(JobRecord(job_id="a", source="u", state=JobState.DONE.value))
 
@@ -800,7 +811,7 @@ class TestPlanAcceptsCookies:
     """
 
     def test_the_cookie_flags_parse(self) -> None:
-        from porter_cli.app import build_parser
+        from porter.cli.app import build_parser
 
         args = build_parser().parse_args(
             ["plan", URL, "--cookies-from-browser", "firefox", "--cookies", "c.txt"]
@@ -810,9 +821,9 @@ class TestPlanAcceptsCookies:
         assert args.cookies == "c.txt"
 
     def test_the_flags_reach_the_job_options(self, monkeypatch, tmp_path) -> None:
-        from porter.errors import ExtractionError
-        from porter_cli.app import build_parser
-        from porter_cli.commands import plan as plan_cmd
+        from porter.cli.app import build_parser
+        from porter.cli.commands import plan as plan_cmd
+        from porter.core.errors import ExtractionError
 
         captured: dict[str, object] = {}
 
@@ -822,7 +833,7 @@ class TestPlanAcceptsCookies:
             # which ends the test before it needs a fully-formed plan.
             raise ExtractionError("stop here")
 
-        monkeypatch.setattr("porter.plan.plan_for", fake_plan_for)
+        monkeypatch.setattr("porter.core.plan.plan_for", fake_plan_for)
 
         cfg = tmp_path / "porter.json"
         cfg.write_text('{"asr": {"engine": "whisper-api"}}', encoding="utf-8")

@@ -18,8 +18,8 @@ pytest.importorskip("fastmcp", reason="requires the [mcp] extra")
 
 from fastmcp import Client
 
-from porter_mcp.server import create_server
-from porter_mcp.tools.docs import ARCHITECTURE_URI, CONFIG_URI, PROMPT_NAME
+from porter.mcp.server import create_server
+from porter.mcp.tools.docs import ARCHITECTURE_URI, CONFIG_URI, PROMPT_NAME
 
 
 async def _read(client: Client, uri: str) -> str:
@@ -63,7 +63,7 @@ class TestSurfaceContract:
 
 class TestArchitectureDocument:
     async def test_it_names_every_phase_from_the_enum(self) -> None:
-        from porter.events import Phase
+        from porter.core.events import Phase
 
         async with Client(create_server()) as client:
             doc = await _read(client, ARCHITECTURE_URI)
@@ -73,7 +73,7 @@ class TestArchitectureDocument:
 
     async def test_the_platform_table_tracks_the_registry(self) -> None:
         """The derivation guarantee: a new platform appears without an edit here."""
-        from porter.platforms import registry
+        from porter.core.platforms import registry
 
         async with Client(create_server()) as client:
             doc = await _read(client, ARCHITECTURE_URI)
@@ -83,9 +83,9 @@ class TestArchitectureDocument:
 
     async def test_the_backend_table_tracks_the_assembled_chains(self) -> None:
         """Same guarantee for backends, from the pipeline the engine builds."""
-        from porter.context import RunContext
-        from porter.models.request import JobOptions
-        from porter.pipeline import Pipeline
+        from porter.core.context import RunContext
+        from porter.core.models.request import JobOptions
+        from porter.core.pipeline import Pipeline
 
         ctx = RunContext(job_id="t", options=JobOptions())
         pipeline = Pipeline.default(ctx)
@@ -131,8 +131,8 @@ class TestArchitectureDocument:
         document probed, fetching it to render documentation would have side
         effects -- and would be slow.
         """
-        from porter.asr import chain as asr_chain
-        from porter.translate import chain as translate_chain
+        from porter.core.asr import chain as asr_chain
+        from porter.core.translate import chain as translate_chain
 
         def _boom(*_a: object, **_k: object) -> bool:
             raise AssertionError("the architecture document probed a backend")
@@ -194,12 +194,12 @@ class TestConfigResource:
     async def test_a_broken_config_is_reported_as_json(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from porter.errors import PorterError
+        from porter.core.errors import PorterError
 
         def _boom(_explicit: object) -> object:
             raise PorterError("config file is not valid JSON")
 
-        monkeypatch.setattr("porter_mcp.tools.docs.resolve", _boom)
+        monkeypatch.setattr("porter.mcp.tools.docs.resolve", _boom)
 
         async with Client(create_server()) as client:
             text = await _read(client, CONFIG_URI)

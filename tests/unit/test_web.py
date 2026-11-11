@@ -1,4 +1,4 @@
-"""Unit tests for the Gradio-based web interface frontend (``porter_web``)."""
+"""Unit tests for the Gradio-based web interface frontend (``porter.webui``)."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from porter_web import app
-from porter_web.i18n import TRANSLATIONS_EN, TRANSLATIONS_ZH, create_i18n, translate
+from porter.webui import app, config_io
+from porter.webui.i18n import TRANSLATIONS_EN, TRANSLATIONS_ZH, create_i18n, translate
 
 
 class TestGradioDependencyCheck:
@@ -54,7 +54,7 @@ class TestAppAssemblyWithMockGradio:
 class TestConfigManagement:
     def test_save_and_read_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         target = tmp_path / "custom_config.json"
-        monkeypatch.setattr(app, "get_config_target", lambda: target)
+        monkeypatch.setattr(config_io, "get_config_target", lambda: target)
 
         data = {"llm": {"api_key": "sk-123456", "model": "deepseek-chat"}}
         app.save_config_dict(data, target)
@@ -64,6 +64,20 @@ class TestConfigManagement:
         assert path == target
         assert read_back["llm"]["api_key"] == "sk-123456"
         assert read_back["llm"]["model"] == "deepseek-chat"
+
+    def test_a_toml_project_config_is_never_overwritten(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The settings tab writes JSON; writing it into porter.toml would break it."""
+        project = tmp_path / "porter.toml"
+        original = "[llm]\nmodel = 'x'\n"
+        project.write_text(original, encoding="utf-8")
+        user_config = tmp_path / "user-config.json"
+        monkeypatch.setattr(config_io, "find_project_config", lambda: project)
+        monkeypatch.setattr(config_io, "config_file", lambda: user_config)
+
+        assert config_io.get_config_target() == user_config
+        assert project.read_text(encoding="utf-8") == original
 
 
 class TestCollectTaskMaterials:
@@ -196,7 +210,7 @@ class TestSettingsTabAssembly:
     ) -> None:
         """Verify on_reload_all reloads all config fields including cookies_file, matching outputs."""
         target = tmp_path / "config.json"
-        monkeypatch.setattr(app, "get_config_target", lambda: target)
+        monkeypatch.setattr(config_io, "get_config_target", lambda: target)
         data = {
             "llm": {"api_key": "{{SECRET_8r7j001r}}", "model": "deepseek-chat"},
             "cookies_browser": "chrome",
@@ -207,7 +221,9 @@ class TestSettingsTabAssembly:
         fake_gr = MagicMock()
         handlers: list[tuple[object, list[object]]] = []
 
-        def fake_click(fn: object, inputs: object = None, outputs: list[object] | None = None) -> MagicMock:
+        def fake_click(
+            fn: object, inputs: object = None, outputs: list[object] | None = None
+        ) -> MagicMock:
             handlers.append((fn, outputs or []))
             return MagicMock()
 
@@ -227,4 +243,3 @@ class TestSettingsTabAssembly:
         assert len(res) == len(outputs) == 21
         assert res[-2] == "chrome"
         assert res[-1] == "/path/to/cookies.txt"
-

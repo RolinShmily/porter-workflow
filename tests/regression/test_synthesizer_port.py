@@ -21,19 +21,19 @@ from pathlib import Path
 
 import pytest
 
-from porter.media.burn import (
+from porter.core.media.burn import (
     BILINGUAL_NAME,
     ZH_NAME,
     burn_hardsub,
     escape_ffmpeg_filter_path,
     render_release,
 )
-from porter.media.encode import software_profile_for
-from porter.media.ffmpeg import FFmpegRunner
-from porter.media.probe import probe
-from porter.models.materials import RawMaterials, TaskLayout
-from porter.models.request import BurnMode
-from porter.models.subtitle import SubtitleSet
+from porter.core.media.encode import software_profile_for
+from porter.core.media.ffmpeg import FFmpegRunner
+from porter.core.media.probe import probe
+from porter.core.models.materials import RawMaterials, TaskLayout
+from porter.core.models.request import BurnMode
+from porter.core.models.subtitle import SubtitleSet
 
 _ASS_TEMPLATE = """[Script Info]
 Title: Test
@@ -245,7 +245,7 @@ def test_get_video_dimensions(
     That assertion asserted a bug. The fabricated resolution was indistinguishable
     from a measured one, so a vertical video whose probe had failed was styled
     with a landscape layout and nobody could tell why. v0.2 keeps ``None`` for
-    "not measured" -- see ``porter.media.probe``.
+    "not measured" -- see ``porter.core.media.probe``.
 
     The measurable half of the test is unchanged.
     """

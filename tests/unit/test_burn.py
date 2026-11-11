@@ -19,11 +19,11 @@ from pathlib import Path
 
 import pytest
 
-from porter.config import PorterConfig
-from porter.context import RunContext
-from porter.errors import MediaError, RenderError
-from porter.events import ArtifactReady, Phase, ProgressUpdated, collect
-from porter.media.burn import (
+from porter.core.config import PorterConfig
+from porter.core.context import RunContext
+from porter.core.errors import MediaError, RenderError
+from porter.core.events import ArtifactReady, Phase, ProgressUpdated, collect
+from porter.core.media.burn import (
     BILINGUAL_NAME,
     ZH_NAME,
     FfmpegRenderer,
@@ -33,11 +33,11 @@ from porter.media.burn import (
     escape_ffmpeg_filter_path,
     render_release,
 )
-from porter.media.encode import software_profile_for
-from porter.media.probe import MediaInfo
-from porter.models.materials import RawMaterials, TaskLayout
-from porter.models.request import BurnMode, JobOptions
-from porter.models.subtitle import SubtitleSet
+from porter.core.media.encode import software_profile_for
+from porter.core.media.probe import MediaInfo
+from porter.core.models.materials import RawMaterials, TaskLayout
+from porter.core.models.request import BurnMode, JobOptions
+from porter.core.models.subtitle import SubtitleSet
 
 # ----------------------------------------------------------------------
 # Fakes
@@ -115,7 +115,7 @@ def _stub_probe(monkeypatch: pytest.MonkeyPatch) -> None:
     Tests that need the *real* "unreadable" verdict re-patch ``probe``
     themselves, and monkeypatch applies the innermost patch last.
     """
-    import porter.media.burn as module
+    import porter.core.media.burn as module
 
     monkeypatch.setattr(
         module, "probe", lambda *a, **k: MediaInfo(path=Path("stub.mp4"), video_codec="h264")
@@ -414,7 +414,7 @@ class TestNothingCorruptIsEverPublished:
         This is the check v0.1 performed only on the reuse path -- the path that
         by definition does not produce a file.
         """
-        import porter.media.burn as module
+        import porter.core.media.burn as module
 
         raw, subtitles = _fixture(tmp_path)
         out = tmp_path / "cooked" / "out.mp4"
@@ -656,7 +656,7 @@ class TestReuse:
             calls += 1
             return software_profile_for(4)
 
-        import porter.media.burn as module
+        import porter.core.media.burn as module
 
         original = module.detect_encoder
         module.detect_encoder = lambda *a, **k: counting_selector()  # type: ignore[assignment]
@@ -682,7 +682,7 @@ class TestReuse:
 
 class TestFfmpegRendererPort:
     def test_it_satisfies_the_renderer_protocol(self, tmp_path: Path) -> None:
-        from porter.ports import Renderer
+        from porter.core.ports import Renderer
 
         _, renderer = _runner_and_renderer(tmp_path)
 
@@ -768,7 +768,7 @@ class TestFfmpegRendererPort:
 class TestPipelineAssemblyUsesTheRealRenderer:
     def test_default_wires_the_ffmpeg_renderer(self, tmp_path: Path) -> None:
         """The P4 stub is gone; ``Pipeline.default`` must build the real one."""
-        from porter.pipeline import Pipeline
+        from porter.core.pipeline import Pipeline
 
         pipeline = Pipeline.default(_ctx(tmp_path))
 

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from porter.config import (
+from porter.core.config import (
     ConfigError,
     default_config,
     find_project_config,
@@ -28,6 +28,12 @@ class TestDefaults:
 
     def test_default_config_matches_resolve_without_files(self, project_dir) -> None:
         assert default_config().llm.model == resolve().llm.model
+
+    def test_the_refine_section_is_parsed(self, project_dir, write_config) -> None:
+        write_config({"refine": {"enabled": False, "model": "gpt-4o-mini"}})
+        config = resolve()
+        assert config.refine.enabled is False
+        assert config.refine.model == "gpt-4o-mini"
 
 
 class TestSecrets:
@@ -151,10 +157,10 @@ class TestSaveKey:
     def test_merges_with_existing_content(self, tmp_path) -> None:
         target = tmp_path / "config.json"
         target.write_text(json.dumps({"llm": {"model": "keep-me"}}), encoding="utf-8")
-        save_key("asr.engine", "bcut", target=target)
+        save_key("asr.engine", "whisper-api", target=target)
         data = json.loads(target.read_text(encoding="utf-8"))
         assert data["llm"]["model"] == "keep-me"
-        assert data["asr"]["engine"] == "bcut"
+        assert data["asr"]["engine"] == "whisper-api"
 
     def test_replaces_a_scalar_in_the_middle_of_a_path(self, tmp_path) -> None:
         target = tmp_path / "config.json"
@@ -165,3 +171,13 @@ class TestSaveKey:
     def test_empty_key_is_rejected(self, tmp_path) -> None:
         with pytest.raises(ConfigError, match="empty"):
             save_key("", "x", target=tmp_path / "c.json")
+
+    def test_a_toml_target_is_rejected_without_modifying_it(self, tmp_path) -> None:
+        target = tmp_path / "porter.toml"
+        original = "[llm]\nmodel = 'keep-me'\n"
+        target.write_text(original, encoding="utf-8")
+
+        with pytest.raises(ConfigError, match="TOML"):
+            save_key("llm.model", "new", target=target)
+
+        assert target.read_text(encoding="utf-8") == original

@@ -23,26 +23,26 @@ from typing import Any
 
 import pytest
 
-from porter.context import RunContext
-from porter.errors import ExtractionError, JobCancelled
-from porter.media.ffmpeg import FFmpegRunner, FFmpegTools
-from porter.media.prepare import (
+from porter.core.context import RunContext
+from porter.core.errors import ExtractionError, JobCancelled
+from porter.core.media.ffmpeg import FFmpegRunner, FFmpegTools
+from porter.core.media.prepare import (
     AUDIO_NAME,
     ENHANCED_AUDIO_NAME,
     METADATA_NAME,
     VIDEO_NAME,
 )
-from porter.models.request import JobOptions
-from porter.platforms.base import (
+from porter.core.models.request import JobOptions
+from porter.core.platforms.base import (
     SUBTITLE_NAME,
     SUBTITLE_ZH_NAME,
     YtDlpExtractor,
 )
-from porter.platforms.bilibili import SPEC as BILIBILI
-from porter.platforms.registry import PlatformRegistry
-from porter.platforms.tiktok import SPEC as TIKTOK
-from porter.platforms.x import SPEC as X
-from porter.platforms.youtube import SPEC as YOUTUBE
+from porter.core.platforms.bilibili import SPEC as BILIBILI
+from porter.core.platforms.registry import PlatformRegistry
+from porter.core.platforms.tiktok import SPEC as TIKTOK
+from porter.core.platforms.x import SPEC as X
+from porter.core.platforms.youtube import SPEC as YOUTUBE
 
 URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
@@ -206,7 +206,7 @@ def fake_ydl(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     def fake_build(policy=None, *, logger=None, progress_hook=None, extra=None):
         return FakeYDL(state, policy, progress_hook)
 
-    monkeypatch.setattr("porter.platforms.base.build_ydl", fake_build)
+    monkeypatch.setattr("porter.core.platforms.base.build_ydl", fake_build)
     return state
 
 
@@ -596,7 +596,7 @@ class TestResumption:
         (raw_dir(ctx) / VIDEO_NAME).write_bytes(b"\x00" * 8192)
         # The reuse check lives in the shared PREPARE module now, because the
         # local-file producer needs the same validation.
-        monkeypatch.setattr("porter.media.prepare.is_valid_video", lambda *a, **k: False)
+        monkeypatch.setattr("porter.core.media.prepare.is_valid_video", lambda *a, **k: False)
 
         extractor.fetch(URL, ctx, runner=runner)
 
@@ -786,7 +786,7 @@ class TestFindingTheSubtitleFile:
     """
 
     def test_the_language_tag_is_part_of_the_name(self, tmp_path) -> None:
-        from porter.platforms.base import _find_subtitle_file
+        from porter.core.platforms.base import _find_subtitle_file
 
         (tmp_path / "sub.en.srt").write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n")
 
@@ -794,14 +794,14 @@ class TestFindingTheSubtitleFile:
 
     def test_a_hyphenated_tag_is_handled(self, tmp_path) -> None:
         """``zh-Hans`` produces ``sub.zh-Hans.srt``; a naive split on ``.`` breaks."""
-        from porter.platforms.base import _find_subtitle_file
+        from porter.core.platforms.base import _find_subtitle_file
 
         (tmp_path / "sub.zh-Hans.srt").write_text("x")
 
         assert _find_subtitle_file(tmp_path) == tmp_path / "sub.zh-Hans.srt"
 
     def test_srt_is_preferred_over_vtt_and_json(self, tmp_path) -> None:
-        from porter.platforms.base import _find_subtitle_file
+        from porter.core.platforms.base import _find_subtitle_file
 
         (tmp_path / "sub.en.json").write_text("{}")
         (tmp_path / "sub.en.vtt").write_text("WEBVTT\n")
@@ -810,7 +810,7 @@ class TestFindingTheSubtitleFile:
         assert _find_subtitle_file(tmp_path).suffix == ".srt"
 
     def test_vtt_is_preferred_over_json(self, tmp_path) -> None:
-        from porter.platforms.base import _find_subtitle_file
+        from porter.core.platforms.base import _find_subtitle_file
 
         (tmp_path / "sub.en.json").write_text("{}")
         (tmp_path / "sub.en.vtt").write_text("WEBVTT\n")
@@ -819,19 +819,19 @@ class TestFindingTheSubtitleFile:
 
     def test_an_empty_file_is_not_a_track(self, tmp_path) -> None:
         """A zero-byte caption is worse than none: ASR would be skipped."""
-        from porter.platforms.base import _find_subtitle_file
+        from porter.core.platforms.base import _find_subtitle_file
 
         (tmp_path / "sub.en.srt").write_text("")
 
         assert _find_subtitle_file(tmp_path) is None
 
     def test_an_empty_directory_yields_nothing(self, tmp_path) -> None:
-        from porter.platforms.base import _find_subtitle_file
+        from porter.core.platforms.base import _find_subtitle_file
 
         assert _find_subtitle_file(tmp_path) is None
 
     def test_media_files_are_not_mistaken_for_subtitles(self, tmp_path) -> None:
-        from porter.platforms.base import _find_subtitle_file
+        from porter.core.platforms.base import _find_subtitle_file
 
         (tmp_path / "sub.en.mp4").write_bytes(b"\x00" * 64)
 

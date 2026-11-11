@@ -5,7 +5,9 @@ they exist because the corresponding rules are easy to violate by accident and
 expensive to discover in production:
 
 * a ``print()`` in the engine corrupts the MCP stdio protocol at runtime,
-* an engine module importing a frontend inverts the dependency graph.
+* an engine module importing a frontend inverts the dependency graph,
+* a frontend import written as ``from porter import cli`` says ``porter`` at the
+  top level, so a scan that only looks at top-level package names never sees it.
 
 ``ruff`` (rule ``T20``) and ``lint-imports`` cover most of this, but these tests
 fail with a precise message and run in the normal test suite, so the rule is
@@ -15,45 +17,95 @@ enforced even if someone bypasses the linters.
 from __future__ import annotations
 
 import ast
+import importlib
 from pathlib import Path
 
 import pytest
 
 import porter
 
-ENGINE_ROOT = Path(porter.__file__).parent
-ENGINE_FILES = sorted(ENGINE_ROOT.rglob("*.py"))
+PACKAGE_ROOT = Path(porter.__file__).parent
+ENGINE_ROOT = PACKAGE_ROOT / "core"
+ENGINE_FILES = [PACKAGE_ROOT / "__init__.py", *sorted(ENGINE_ROOT.rglob("*.py"))]
 
-SRC_ROOT = ENGINE_ROOT.parent
-FRONTEND_PACKAGES = {"porter_cli", "porter_mcp", "porter_web"}
+#: Directories that hold the three frontends.
+FRONTEND_DIRS = ("cli", "mcp", "webui")
+#: Import prefixes for the same frontends; ``import porter.cli`` is the engine
+#: boundary, so module names are checked, not top-level package names.
+FRONTEND_MODULES = tuple(f"porter.{name}" for name in FRONTEND_DIRS)
 
 
-def _imported_roots(tree: ast.AST) -> set[str]:
-    """Top-level package names imported by a module."""
-    roots: set[str] = set()
+def _module_and_package(path: Path) -> tuple[str, str]:
+    """Return ``(module_name, package_name)`` for a file under ``PACKAGE_ROOT``.
+
+    ``__init__.py`` *is* its package; every other module's package is its parent
+    directory. Both names start with ``porter``.
+    """
+    relative = path.relative_to(PACKAGE_ROOT.parent)
+    parts = list(relative.with_suffix("").parts)
+    if parts[-1] == "__init__":
+        parts.pop()
+        return ".".join(parts), ".".join(parts)
+    return ".".join(parts), ".".join(parts[:-1])
+
+
+def _imported_modules(tree: ast.AST, package: str) -> set[str]:
+    """Every module name a module imports, with relative imports resolved.
+
+    Collecting full names instead of top-level roots matters: ``import
+    porter.cli``, ``from porter import cli`` and ``from porter.cli import app``
+    all have a root of ``porter``, but only the full names reveal the frontend.
+    """
+    modules: set[str] = set()
+    package_parts = package.split(".")
+
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                roots.add(alias.name.split(".")[0])
+                modules.add(alias.name)
         elif isinstance(node, ast.ImportFrom):
-            if node.level:  # relative import, stays inside the package
-                continue
-            if node.module:
-                roots.add(node.module.split(".")[0])
-    return roots
+            if node.level:
+                # ``from ..mcp import x`` in ``porter.cli.app`` resolves to
+                # ``porter.mcp.x``: level 1 is the current package, each extra
+                # level goes up one package.
+                up = node.level - 1
+                base = package_parts[: len(package_parts) - up] if up else package_parts
+                root = base + (node.module.split(".") if node.module else [])
+                modules.add(".".join(root))
+                for alias in node.names:
+                    if alias.name != "*":
+                        modules.add(".".join([*root, alias.name]))
+            elif node.module:
+                modules.add(node.module)
+                for alias in node.names:
+                    if alias.name != "*":
+                        modules.add(f"{node.module}.{alias.name}")
+    return modules
+
+
+def _frontend_imports(imported: set[str], prefixes: tuple[str, ...]) -> list[str]:
+    """The imported names that fall under any of ``prefixes``."""
+    return sorted(
+        module
+        for module in imported
+        if any(module == prefix or module.startswith(f"{prefix}.") for prefix in prefixes)
+    )
 
 
 def test_engine_package_is_discoverable() -> None:
     """Guard against the tests silently passing because the path was wrong."""
-    assert ENGINE_FILES, f"no engine modules found under {ENGINE_ROOT}"
+    assert (ENGINE_ROOT / "__init__.py").is_file(), f"{ENGINE_ROOT} is not a package"
+    assert len(ENGINE_FILES) > 1, f"no engine modules found under {ENGINE_ROOT}"
 
 
-@pytest.mark.parametrize("path", ENGINE_FILES, ids=lambda p: p.name)
+@pytest.mark.parametrize(
+    "path", ENGINE_FILES, ids=lambda p: str(p.relative_to(PACKAGE_ROOT))
+)
 def test_engine_never_prints(path: Path) -> None:
     """The engine must never write to stdout.
 
     In an MCP stdio server stdout carries the JSON-RPC protocol. Use
-    ``porter.logging.get_logger`` instead.
+    ``porter.core.logging.get_logger`` instead.
     """
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     offenders = [
@@ -64,18 +116,21 @@ def test_engine_never_prints(path: Path) -> None:
         and node.func.id == "print"
     ]
     assert not offenders, (
-        f"{path.relative_to(ENGINE_ROOT)} calls print() on line(s) {offenders}. "
+        f"{path.relative_to(PACKAGE_ROOT)} calls print() on line(s) {offenders}. "
         "Engine code must log to stderr, not stdout."
     )
 
 
-@pytest.mark.parametrize("path", ENGINE_FILES, ids=lambda p: p.name)
+@pytest.mark.parametrize(
+    "path", ENGINE_FILES, ids=lambda p: str(p.relative_to(PACKAGE_ROOT))
+)
 def test_engine_does_not_import_frontends(path: Path) -> None:
     """The dependency arrow points one way: frontends -> engine."""
+    _, package = _module_and_package(path)
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    forbidden = _imported_roots(tree) & FRONTEND_PACKAGES
+    forbidden = _frontend_imports(_imported_modules(tree, package), FRONTEND_MODULES)
     assert not forbidden, (
-        f"{path.relative_to(ENGINE_ROOT)} imports {sorted(forbidden)}. "
+        f"{path.relative_to(PACKAGE_ROOT)} imports {forbidden}. "
         "The engine must not depend on a frontend."
     )
 
@@ -85,12 +140,22 @@ def test_version_is_a_string() -> None:
     assert porter.__version__.count(".") >= 1
 
 
-def test_public_api_is_lazily_exported() -> None:
-    """``import porter`` stays cheap; heavier symbols resolve on first access."""
-    assert porter.JobOptions is not None
-    assert porter.Pipeline is not None
+@pytest.mark.parametrize("name", sorted(porter._LAZY_EXPORTS))
+def test_public_api_is_lazily_exported(name: str) -> None:
+    """Every advertised symbol resolves from the engine and is then cached.
+
+    Iterating the map instead of spot-checking two names means a typo in any
+    entry fails here rather than in a user's first ``from porter import ...``.
+    """
+    module_path = porter._LAZY_EXPORTS[name]
+    assert module_path.startswith("porter.core."), (
+        f"{name} is resolved from {module_path}; the public API must point into "
+        "the engine, not a frontend"
+    )
+    value = getattr(porter, name)
+    assert value is getattr(importlib.import_module(module_path), name)
     # Cached into globals() after the first lookup.
-    assert "JobOptions" in vars(porter)
+    assert name in vars(porter)
 
 
 def test_unknown_attribute_raises_attribute_error() -> None:
@@ -98,26 +163,34 @@ def test_unknown_attribute_raises_attribute_error() -> None:
         _ = porter.this_symbol_does_not_exist
 
 
-@pytest.mark.parametrize("frontend", sorted(FRONTEND_PACKAGES))
-def test_frontends_do_not_import_each_other(frontend: str) -> None:
-    """``porter_cli``, ``porter_mcp``, and ``porter_web`` are siblings, not layers.
+@pytest.mark.parametrize("frontend", FRONTEND_DIRS)
+def test_frontend_packages_are_discoverable(frontend: str) -> None:
+    """Guard against an empty ``rglob`` making the sibling test vacuous."""
+    files = sorted((PACKAGE_ROOT / frontend).rglob("*.py"))
+    assert files, f"no modules found under {PACKAGE_ROOT / frontend}"
 
-    Both depend on ``porter``; neither may depend on the other. This is checked
-    here rather than by an import-linter contract because import-linter can only
-    resolve contract *sources* that live inside ``root_package``.
+
+@pytest.mark.parametrize("frontend", FRONTEND_DIRS)
+def test_frontends_do_not_import_each_other(frontend: str) -> None:
+    """``porter.cli``, ``porter.mcp``, and ``porter.webui`` are siblings, not layers.
+
+    All three depend on the engine; none may depend on another. The
+    ``independence`` import-linter contract is the authoritative gate; this check
+    remains because it runs in the ordinary suite and names the offending file.
     """
-    root = SRC_ROOT / frontend
-    others = FRONTEND_PACKAGES - {frontend}
+    root = PACKAGE_ROOT / frontend
+    others = tuple(f"porter.{name}" for name in FRONTEND_DIRS if name != frontend)
     offenders: list[str] = []
 
     for path in sorted(root.rglob("*.py")):
+        _, package = _module_and_package(path)
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        imported = _imported_roots(tree) & others
+        imported = _frontend_imports(_imported_modules(tree, package), others)
         if imported:
-            offenders.append(f"{path.relative_to(SRC_ROOT)} -> {sorted(imported)}")
+            offenders.append(f"{path.relative_to(PACKAGE_ROOT)} -> {imported}")
 
     assert not offenders, (
-        f"{frontend} must not import {sorted(others)}: " + "; ".join(offenders)
+        f"porter.{frontend} must not import {list(others)}: " + "; ".join(offenders)
     )
 
 
@@ -179,7 +252,11 @@ def _text_writes_without_encoding(tree: ast.AST) -> list[int]:
     return offenders
 
 
-@pytest.mark.parametrize("path", sorted(SRC_ROOT.rglob("*.py")), ids=lambda p: p.name)
+@pytest.mark.parametrize(
+    "path",
+    sorted(PACKAGE_ROOT.rglob("*.py")),
+    ids=lambda p: str(p.relative_to(PACKAGE_ROOT)),
+)
 def test_text_writes_name_their_encoding(path: Path) -> None:
     """No text write may fall back to the *locale* encoding.
 
@@ -199,6 +276,6 @@ def test_text_writes_name_their_encoding(path: Path) -> None:
     offenders = _text_writes_without_encoding(tree)
 
     assert not offenders, (
-        f"{path.relative_to(SRC_ROOT)}: text written without an encoding at line(s) "
+        f"{path.relative_to(PACKAGE_ROOT)}: text written without an encoding at line(s) "
         f"{offenders}; pass encoding='utf-8'"
     )

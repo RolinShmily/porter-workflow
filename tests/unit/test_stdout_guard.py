@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from porter_mcp.stdout_guard import StdoutViolation, guard_stdout, protect, violations
+from porter.mcp.stdout_guard import StdoutViolation, guard_stdout, protect, violations
 
 
 class TestStrictMode:

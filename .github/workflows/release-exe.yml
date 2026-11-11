@@ -4,10 +4,10 @@ name: release-exe
 #
 # The binary is a *launcher*, not a frozen application: it creates
 # `~/.porter/venv`, installs `porter-workflow[all]` into it, keeps yt-dlp
-# reasonably fresh, and then execs the real CLI. See packaging/launcher.py for
+# reasonably fresh, and then execs the real CLI. See scripts/launcher.py for
 # why the engine is deliberately not frozen. Two consequences show up here:
 #
-#   * PyInstaller only ever sees packaging/launcher.py, which imports nothing
+#   * PyInstaller only ever sees scripts/launcher.py, which imports nothing
 #     outside the standard library, so there is no `--collect-all yt_dlp` and no
 #     hidden-import guesswork.
 #   * The result is a few hundred KB per platform instead of ~60 MB.
@@ -57,11 +57,11 @@ jobs:
       # 3.11: a user with only 3.11 on PATH may run `python launcher.py` directly
       # when the binary is unavailable. Compiling under 3.12 catches 3.13+ syntax.
       - name: The launcher must not use 3.13+ syntax
-        run: python -m py_compile packaging/launcher.py
+        run: python -m py_compile scripts/launcher.py
         if: matrix.os == 'ubuntu-latest'
 
       - name: Build the one-file launcher
-        run: pyinstaller --onefile --name porter --distpath dist --workpath build packaging/launcher.py
+        run: pyinstaller --onefile --name porter --distpath dist --workpath build scripts/launcher.py
 
       # A release artifact that cannot even start is worse than no artifact:
       # `--version` is handled by the launcher path only after a successful

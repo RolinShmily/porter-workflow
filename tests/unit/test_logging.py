@@ -16,7 +16,7 @@ import logging
 
 import pytest
 
-from porter.logging import (
+from porter.core.logging import (
     DEFAULT_FORMAT,
     LOG_LEVEL_ENV,
     ROOT_LOGGER_NAME,
@@ -46,7 +46,7 @@ class TestPropagation:
         )
 
     def test_deeply_nested_logger_reaches_the_handler(self, sink: io.StringIO) -> None:
-        get_logger("asr.bcut.internal").warning("nested")
+        get_logger("asr.whisper_local.internal").warning("nested")
         assert "nested" in sink.getvalue()
 
     def test_records_use_the_configured_format(self, sink: io.StringIO) -> None:
@@ -75,7 +75,7 @@ class TestPropagation:
 
 class TestNaming:
     def test_bare_name_is_namespaced(self) -> None:
-        assert get_logger("asr.bcut").name == f"{ROOT_LOGGER_NAME}.asr.bcut"
+        assert get_logger("asr.whisper_local").name == f"{ROOT_LOGGER_NAME}.asr.whisper_local"
 
     def test_already_qualified_name_is_kept(self) -> None:
         assert get_logger(f"{ROOT_LOGGER_NAME}.x").name == f"{ROOT_LOGGER_NAME}.x"

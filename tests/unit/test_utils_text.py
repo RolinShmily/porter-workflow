@@ -1,4 +1,4 @@
-"""``porter.utils.text`` — filename safety and CJK detection.
+"""``porter.core.utils.text`` — filename safety and CJK detection.
 
 The first class holds ``v0.1`` assertions verbatim (from
 ``main:tests/test_extractors.py::test_sanitize_filename``); everything after it is
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from porter.utils.text import is_cjk, sanitize_filename, truncate
+from porter.core.utils.text import is_cjk, sanitize_filename, truncate
 
 
 class TestSanitizeFilenamePorted:

@@ -29,11 +29,11 @@ from __future__ import annotations
 
 import pytest
 
-from porter.errors import UnsupportedPlatformError
-from porter.models.materials import TaskLayout
-from porter.platforms.base import YtDlpExtractor
-from porter.platforms.registry import get_extractor
-from porter.platforms.youtube import SPEC as YOUTUBE
+from porter.core.errors import UnsupportedPlatformError
+from porter.core.models.materials import TaskLayout
+from porter.core.platforms.base import YtDlpExtractor
+from porter.core.platforms.registry import get_extractor
+from porter.core.platforms.youtube import SPEC as YOUTUBE
 
 
 def test_get_extractor_factory_returns_the_right_extractor() -> None:
@@ -51,8 +51,8 @@ def test_get_extractor_factory_rejects_an_unsupported_host() -> None:
         with pytest.raises(ValueError, match="Unsupported URL platform"):
             get_extractor("https://vimeo.com/12345678")
 
-    v0.2 raises :class:`~porter.errors.UnsupportedPlatformError`, which is a
-    :class:`~porter.errors.PorterError` and **not** a ``ValueError``.
+    v0.2 raises :class:`~porter.core.errors.UnsupportedPlatformError`, which is a
+    :class:`~porter.core.errors.PorterError` and **not** a ``ValueError``.
 
     Why: ``ValueError`` means "you passed a malformed argument". An unsupported
     host is a well-formed URL this build has no handler for, and the two need

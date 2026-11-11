@@ -13,10 +13,10 @@ from typing import Any
 
 import pytest
 
-from porter.asr import whisper_local
-from porter.config import PorterConfig
-from porter.doctor import GUIDES, guide_for
-from porter.doctor.probes import (
+from porter.core.asr import whisper_local
+from porter.core.config import PorterConfig
+from porter.core.doctor import GUIDES, guide_for
+from porter.core.doctor.probes import (
     CapabilityReport,
     Finding,
     ProbeContext,
@@ -33,9 +33,9 @@ from porter.doctor.probes import (
     probe_translation_route,
     probe_yt_dlp,
 )
-from porter.errors import MediaError
-from porter.media.encode import HARDWARE_PROFILES, EncoderSelector
-from porter.media.ffmpeg import FFmpegTools
+from porter.core.errors import MediaError
+from porter.core.media.encode import HARDWARE_PROFILES, EncoderSelector
+from porter.core.media.ffmpeg import FFmpegTools
 
 
 class FakeRunner:
@@ -578,7 +578,7 @@ class TestGuides:
         assert guide_for(None) is None
 
     def test_a_guide_can_render_without_optional_fields(self) -> None:
-        from porter.doctor.guides import Remediation
+        from porter.core.doctor.guides import Remediation
 
         assert Remediation(summary="just this").render() == "just this"
 
@@ -598,7 +598,7 @@ class TestProbeSubprocessHygiene:
     """The helper processes must not be able to eat the MCP JSON-RPC stream."""
 
     def test_probes_pass_devnull_stdin(self, monkeypatch) -> None:
-        from porter.doctor import probes
+        from porter.core.doctor import probes
 
         captured: dict[str, Any] = {}
 
@@ -617,7 +617,7 @@ class TestProbeSubprocessHygiene:
 
     def test_a_helper_that_cannot_start_returns_none(self, monkeypatch) -> None:
         """Probes report; they never raise. A broken machine is their subject."""
-        from porter.doctor import probes
+        from porter.core.doctor import probes
 
         def explode(*args, **kwargs):
             raise OSError(2, "No such file or directory")
@@ -626,7 +626,7 @@ class TestProbeSubprocessHygiene:
         assert probes._run_probe(["fc-match", "x"]) is None
 
     def test_a_hanging_helper_times_out_without_raising(self, monkeypatch) -> None:
-        from porter.doctor import probes
+        from porter.core.doctor import probes
 
         def timeout(*args, **kwargs):
             raise subprocess.TimeoutExpired(cmd="fc-match", timeout=10)
@@ -685,14 +685,13 @@ class TestRouteProbes:
         assert "local Whisper" in finding.detail
         assert "falling back to the Whisper API" in finding.detail
 
-    def test_no_keys_and_no_local_extra_reports_that_the_free_path_is_broken(
+    def test_no_keys_and_no_local_extra_reports_that_transcription_will_fail(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Not just "unverified" any more: measured non-functional on 2026-09-22.
+        """No backend exists in that configuration, so the job will fail.
 
-        Google Web returned ``{"result":[]}`` for every request across three
-        speech segments and two language variants, so the message has to say the
-        job will fail rather than implying it might work.
+        The finding stays informational rather than a failure: the environment is
+        as configured, and the message names the way out.
         """
         monkeypatch.setattr(whisper_local, "is_installed", lambda: False)
 

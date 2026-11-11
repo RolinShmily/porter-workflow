@@ -19,18 +19,18 @@ from pathlib import Path
 
 import pytest
 
-from porter.config import PorterConfig
-from porter.context import RunContext
-from porter.errors import ExtractionError
-from porter.events import ArtifactReady, Phase, collect
-from porter.media.prepare import (
+from porter.core.config import PorterConfig
+from porter.core.context import RunContext
+from porter.core.errors import ExtractionError
+from porter.core.events import ArtifactReady, Phase, collect
+from porter.core.media.prepare import (
     AUDIO_NAME,
     COVER_NAME,
     METADATA_NAME,
     VIDEO_NAME,
 )
-from porter.models.request import JobOptions, JobRequest
-from porter.platforms.local import VIDEO_SUFFIXES, LocalFileDownloader, local_video_id
+from porter.core.models.request import JobOptions, JobRequest
+from porter.core.platforms.local import VIDEO_SUFFIXES, LocalFileDownloader, local_video_id
 
 SRC = Path("/tmp/somewhere/My Video.mp4")  # noqa: S108 - a string under test, never touched
 
@@ -85,7 +85,7 @@ class FakeRunner:
     producer, not the stub.
 
     ``probe_streams`` / ``probe_format`` answer ``ffprobe``, so
-    :func:`~porter.media.probe.probe` and therefore ``is_valid_video`` and the
+    :func:`~porter.core.media.probe.probe` and therefore ``is_valid_video`` and the
     metadata step are the real implementations too.
     """
 
@@ -501,7 +501,7 @@ class TestPrepare:
 
     @pytest.mark.usefixtures("runner")
     def test_it_satisfies_the_local_preparer_protocol(self) -> None:
-        from porter.ports import LocalPreparer
+        from porter.core.ports import LocalPreparer
 
         assert isinstance(LocalFileDownloader(), LocalPreparer)
         assert LocalFileDownloader.name == "local"
@@ -568,7 +568,7 @@ class TestPipelineDispatch:
     """PREPARE must route by source kind, and the request is what says which."""
 
     def test_a_local_request_goes_to_the_local_preparer(self, tmp_path: Path) -> None:
-        from porter.pipeline import Pipeline
+        from porter.core.pipeline import Pipeline
 
         seen: list[Path] = []
 
@@ -599,7 +599,7 @@ class TestPipelineDispatch:
         assert seen == [Path("/tmp/v.mp4")]  # noqa: S108
 
     def test_a_url_request_goes_to_the_downloader(self, tmp_path: Path) -> None:
-        from porter.pipeline import Pipeline
+        from porter.core.pipeline import Pipeline
 
         seen: list[str] = []
 
@@ -634,9 +634,9 @@ class TestPipelineDispatch:
         assert seen == ["https://example.com/v"]
 
     def test_default_wires_the_local_preparer(self, tmp_path: Path) -> None:
-        from porter.pipeline import Pipeline
-        from porter.platforms.local import LocalFileDownloader
-        from porter.ports import LocalPreparer
+        from porter.core.pipeline import Pipeline
+        from porter.core.platforms.local import LocalFileDownloader
+        from porter.core.ports import LocalPreparer
 
         ctx = RunContext(
             job_id="d", options=JobOptions(output_dir=tmp_path), config=PorterConfig()

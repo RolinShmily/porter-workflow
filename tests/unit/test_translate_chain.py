@@ -11,23 +11,23 @@ from pathlib import Path
 
 import pytest
 
-from porter.config import PorterConfig
-from porter.context import RunContext
-from porter.errors import JobCancelled, PorterError
-from porter.events import (
+from porter.core.config import PorterConfig
+from porter.core.context import RunContext
+from porter.core.errors import JobCancelled, PorterError
+from porter.core.events import (
     ArtifactKind,
     ArtifactReady,
     Event,
     ProgressUpdated,
     collect,
 )
-from porter.models.request import JobOptions
-from porter.models.subtitle import SubtitleItem, SubtitleSet
-from porter.translate.base import (
+from porter.core.models.request import JobOptions
+from porter.core.models.subtitle import SubtitleItem, SubtitleSet
+from porter.core.translate.base import (
     TranslationBackendError,
     TranslationOutcome,
 )
-from porter.translate.chain import TranslationChain
+from porter.core.translate.chain import TranslationChain
 
 # ----------------------------------------------------------------------
 # Fakes
@@ -101,7 +101,7 @@ def _set(tmp_path: Path, *, count: int = 3, width: int | None = 1920, height: in
     cooked = tmp_path / "out" / "vid1_A_Video" / "cooked"
     cooked.mkdir(parents=True, exist_ok=True)
     # Cues are spaced 1000ms apart and end with a full stop, so each is its own
-    # sentence: translation is now sentence-level (see porter.translate.chain),
+    # sentence: translation is now sentence-level (see porter.core.translate.chain),
     # and the default fixture must therefore yield one sentence per cue for the
     # "N inputs -> N outputs" tests to be about the chain rather than about
     # merging. The merging and splitting behaviour has its own tests below.
