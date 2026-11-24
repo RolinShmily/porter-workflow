@@ -83,10 +83,10 @@ def shared_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return cache
 
 
-def _cli(cache: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    """Run the real CLI in a separate process."""
+def _registry_exec(cache: Path, code: str) -> subprocess.CompletedProcess[str]:
+    """Run a JobRegistry operation in a separate Python process."""
     return subprocess.run(
-        [sys.executable, "-m", "porter.cli", *args],
+        [sys.executable, "-c", code],
         capture_output=True,
         text=True,
         env={**os.environ, "PORTER_CACHE_DIR": str(cache)},
@@ -150,7 +150,11 @@ def test_a_cancel_from_another_process_stops_the_job(
 
         assert job.state is JobState.RUNNING, "the job finished before it could be cancelled"
 
-        cancelled = _cli(shared_cache, "jobs", "cancel", job.job_id)
+        cancelled = _registry_exec(
+            shared_cache,
+            f"from porter.core.jobs import JobRegistry; "
+            f"assert JobRegistry().request_cancel({job.job_id!r})",
+        )
         assert cancelled.returncode == 0, cancelled.stderr
 
         # Cooperative: it stops at the boundary after the phase it is in.
@@ -165,8 +169,14 @@ def test_a_cancel_from_another_process_stops_the_job(
         thread.join(timeout=10)
 
     # And the other process can see that it worked.
-    status = _cli(shared_cache, "jobs", "status", job.job_id)
-    assert "cancelled" in status.stderr
+    status = _registry_exec(
+        shared_cache,
+        f"from porter.core.jobs import JobRegistry; "
+        f"r = JobRegistry().get({job.job_id!r}, reap=True); "
+        f"print(r.state if r else '')",
+    )
+    assert status.returncode == 0, status.stderr
+    assert status.stdout.strip() == "cancelled"
 
 
 def test_the_registry_is_where_the_two_processes_meet(
@@ -182,8 +192,13 @@ def test_the_registry_is_where_the_two_processes_meet(
     store = JobStore(registry=registry)
     job = store.create(JobRequest.from_source(source, JobOptions()))
 
-    listed = _cli(shared_cache, "jobs", "list", "--all", "--json")
+    listed = _registry_exec(
+        shared_cache,
+        "from porter.core.jobs import JobRegistry; "
+        "print([r.job_id for r in JobRegistry().read(reap=True)])",
+    )
 
+    assert listed.returncode == 0, listed.stderr
     assert job.job_id in listed.stdout, (
         f"the subprocess did not resolve the same registry; stdout={listed.stdout!r}"
     )

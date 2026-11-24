@@ -613,6 +613,28 @@ def probe_all(
     return CapabilityReport(findings=findings)
 
 
+def run_doctor(
+    config: PorterConfig | None = None,
+    *,
+    context: ProbeContext | None = None,
+) -> CapabilityReport:
+    """Resolve the active configuration (if omitted) and run every environment probe.
+
+    Single entry point for frontends and skills so diagnostics always inspect
+    the user's effective configuration rather than bare built-in defaults.
+    """
+    from porter.core.config import resolve
+
+    if config is not None:
+        effective = config
+    else:
+        try:
+            effective = resolve(None)
+        except PorterError:
+            effective = PorterConfig()
+    return probe_all(effective, context=context)
+
+
 # ----------------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------------

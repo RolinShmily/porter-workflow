@@ -163,6 +163,17 @@ class TestPolicyOptions:
             pass
         assert policy.extractor_args == {"bilibili": {"x": 1}}
 
+    def test_format_sort_is_passed_for_target_quality(self) -> None:
+        from porter.core.platforms.ydl import format_sort_for_quality
+
+        assert format_sort_for_quality("1080p") == ("res:1080",)
+        assert format_sort_for_quality("720") == ("res:720",)
+        assert format_sort_for_quality("4k") == ("res:2160",)
+        assert format_sort_for_quality("best") == ()
+
+        with build_ydl(YdlPolicy(format_sort=format_sort_for_quality("1080p"))) as ydl:
+            assert _opts(ydl)["format_sort"] == ["res:1080"]
+
 
 class TestLogRouter:
     def test_routes_to_stderr_not_stdout(self, capsys: pytest.CaptureFixture[str]) -> None:

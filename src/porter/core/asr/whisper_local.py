@@ -30,6 +30,7 @@ finally report a feasible ASR route without a caveat.
 
 from __future__ import annotations
 
+import importlib
 import time
 import wave
 from pathlib import Path
@@ -549,7 +550,9 @@ def _load_pcm16_wav_float32(audio: Path) -> Any | None:
     ``numpy`` is unavailable, letting the original PyAV error propagate.
     """
     try:
-        import numpy as np
+        # Dynamic import keeps mypy (python_version = 3.11) from loading numpy's
+        # Python 3.12+ ``type`` syntax stubs when checking this module directly.
+        np: Any = importlib.import_module("numpy")
     except ImportError:
         return None
 

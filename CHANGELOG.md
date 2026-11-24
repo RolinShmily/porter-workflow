@@ -7,65 +7,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-24
+
 ### Added
 
-- **A real workflow model.** `WorkflowPlan` / `WorkflowResult` describe seven
-  stages (`probe`, `acquire`, `normalize`, `transcript`, `translate`, `write`,
-  `render`) and six workflows (`url.subtitled`, `url.asr`, `local.subtitled`,
-  `local.asr`, `subtitle.only`, `audio.asr`). Each stage names exactly one
-  capability; there is no runtime cross-capability fallback. A failure reports
-  `alternatives` and `suggested_workflow`, and changing engines requires
+- **Unified single-capability workflow model.** `WorkflowPlan` / `WorkflowResult`
+  describe seven stages (`probe`, `acquire`, `normalize`, `transcript`,
+  `translate`, `write`, `render`) and six workflows (`url.subtitled`,
+  `url.asr`, `local.subtitled`, `local.asr`, `subtitle.only`, `audio.asr`).
+  Each stage names exactly one capability with no runtime cross-capability
+  fallback; failures report `alternatives` and `suggested_workflow` for explicit
   replanning.
-- **`porter capabilities`.** Lists every stage capability with its availability,
-  cost and data egress (`audio` / `text`). Paid capabilities are never selected
-  automatically unless `--allow-paid` is passed or the capability is named
-  explicitly.
-- **`porter probe`.** Reports the source kind, platform, media facts and listed
-  subtitle tracks for URLs, local video, audio and subtitle files, without
-  planning or downloading media. `porter inspect` remains as a link-only alias.
-- **Plan-based MCP tools.** `porter_capabilities` and `porter_probe` join
-  `porter_plan`; `porter_job_start(plan=...)` executes the plan unchanged and
-  refuses conflicting planning arguments or an infeasible plan.
-  `porter_job_result` returns the full `WorkflowResult`.
-- **Plan-first WebUI workbench.** The workbench resolves and displays the
-  `WorkflowPlan` JSON, invalidates it when a planning control changes, refuses
-  infeasible plans, and executes the same plan the CLI/MCP would.
-- **Workflow public root exports.** `from porter import ...` lazily exports
-  `WorkflowPlan`, `WorkflowResult`, `ExecutionOutcome`, `PlanOverrides`,
-  `PlanIssue`, `StagePlan`, `StageResult`, `StageError`, `SourceProbe`,
-  `CapabilityDescriptor`, `Stage`, `WorkflowId`, `Task`, `SourceKind`,
-  `capability_catalog`, `probe_source`, `resolve_plan`, and `execute_plan`.
+- **Core application facade (`porter` root).** Lazily exported high-level entry
+  points — `plan_source`, `run_plan`, `run_doctor`, `PorterConfig`, `resolve`,
+  `writable_config_path`, `save_key`, `JobRegistry`, `JobStore` — alongside the
+  lower-level workflow models (`WorkflowPlan`, `WorkflowResult`, `PlanOverrides`,
+  `resolve_plan`, `execute_plan`, `probe_source`, `capability_catalog`). Both
+  the WebUI and external scripts/skills consume the same foundation without
+  duplicating config/context assembly.
+- **Target video quality with graceful degradation.** Added `video_quality`
+  (default `1080p`, supporting `best`, `2160p`, `1440p`, `1080p`, `720p`,
+  `480p` and `PORTER_VIDEO_QUALITY`), using yt-dlp's short-side `format_sort`
+  (`res:<N>`) so horizontal (`1920x1080`) and vertical (`1080x1920`) videos
+  share the same anchor and smoothly degrade to the highest available stream
+  with a `QUALITY_DEGRADED` plan warning when unreachable.
+- **Plan-first WebUI workbench.** Resolves and displays `WorkflowPlan` JSON,
+  supports target video quality selection and resolution display, invalidates
+  stale plans when controls change, refuses infeasible plans, and runs through
+  `plan_source` / `execute_plan`.
 
 ### Changed
 
-- **CLI planning flags select one capability.** `--transcript` / `--translate` /
-  `--render` (aliases `--asr-engine` / `--translator`) choose exactly that peer;
-  an unavailable choice blocks the plan instead of falling through a chain.
-- **`--task` replaces `--only-phase`.** `--only-phase` is deprecated and mapped
-  onto `--task` (`prepare`→`audio`, `transcribe`→`transcribe`,
-  `translate`→`subtitle`, `burn`→`release`).
-- **The skill uses Python launchers.** The dual Bash/PowerShell wrappers were
-  replaced by `scripts/bootstrap.py` and `scripts/porter.py`; the SOP treats
-  Python detection and installation as an agent-guided environment step.
-- **MCP and WebUI share the plan model.** Neither frontend has a second pipeline
-  or a fallback chain.
+- **Single-package PyPI distribution (`porter-workflow`, import & command `porter`).**
+  Bundled core workflow capabilities (`yt-dlp`, `requests`, `pydantic`,
+  `platformdirs`, `openai`, `json-repair`, `faster-whisper`, `pillow`) directly
+  into `[project.dependencies]` with `requires-python = ">=3.11,<3.14"`. Only
+  `gradio` stays in the optional `[web]` extra so `import porter` remains pure
+  and lightweight without pulling web frameworks. The console script entry point
+  converges on `porter` (launching the Gradio WebUI, with `--version`, `--host`,
+  `--port`, `--share`).
+- **YouTube HD client priority.** Included `web_safari` and `tv` ahead of
+  `web` / `web_embedded` / `mweb` so cookie-authenticated sessions receive 1080p
+  HLS streams instead of being throttled to 360p under YouTube's SABR
+  experiment, and removed the vertical-breaking `[height<=1080]` hard filter.
+- **WebUI thin delegation to `porter.core`.** `webui/config_io.py`,
+  `webui/doctor_view.py`, `webui/jobs_view.py` and `webui/tabs/workbench.py`
+  now delegate directly to `porter.core` (`writable_config_path`, `run_doctor`,
+  `identify_platform`, `plan_source`).
 
 ### Removed
 
-- **VideoCaptioner adapters and CLI integration.** Removed
+- **Standalone CLI (`porter.cli`), MCP server (`porter.mcp`), and legacy `skills/`.**
+  Archived out of the core distribution so `porter-workflow` ships a pure
+  `porter.core` engine + optional `porter.webui` workbench (`[web]`), enabling
+  future agent skills to wrap the published PyPI package directly against
+  `porter.core`.
+- **VideoCaptioner adapters and legacy predictive plan model.** Removed
   `porter.core.asr.videocaptioner`, `porter.core.translate.videocaptioner`,
-  `config import-videocaptioner`, `Pipeline.default()` VideoCaptioner wiring,
-  and WebUI engine choices. External-tool invocation belongs to the skill, not
-  to a porter backend.
-- **Legacy predictive plan model.** Removed `porter.core.plan` and
-  `porter.core.models.plan` (`Plan`, `BackendPlan`, `SubtitlePlan`,
-  `TranslationPlan`), superseded by `porter.core.workflow` (`WorkflowPlan`).
+  `porter.core.plan`, and `porter.core.models.plan`.
 
 ### Fixed
 
-- **A broken configuration is reported as such.** `porter_plan` distinguishes an
-  unresolvable config from a planning fault instead of treating it as data an
-  agent can plan around.
+- **Auto-generated platform target tracks no longer skip translation.** Only
+  manual target-language tracks trigger `TRANSLATION_SKIPPED`; if a planned
+  target track fails to download at runtime, the executor reports
+  `TARGET_TRACK_MISSING` with available translation `alternatives` instead of
+  `every translation backend failed (attempted=0)`.
+- **WebUI Doctor now probes effective config.** Uses `run_doctor()` instead of
+  an empty `PorterConfig()`, and `writable_config_path()` honours
+  `$PORTER_CONFIG`.
+- **Non-YouTube rate-limit fallback.** Stopped injecting YouTube `player_client`
+  extractor args on Bilibili/TikTok rate-limit retries.
+- **PyAV 19+ local Whisper WAV decoding, empty cookie strings, Windows test
+  portability and mypy 3.11 compatibility** (dynamic `numpy` import in
+  `whisper_local.py`).
 
 ## [0.3.2] - 2026-11-11
 

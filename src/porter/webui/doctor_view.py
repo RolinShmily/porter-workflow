@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-from porter.core.config import PorterConfig
-from porter.core.doctor.probes import probe_all
+from porter.core.doctor import run_doctor
 
 __all__ = ["get_doctor_table_data"]
 
 
 def get_doctor_table_data() -> tuple[str, list[list[str]]]:
-    """Probe system health and format as dataframe rows."""
-    cfg = PorterConfig()
-    report = probe_all(cfg)
+    """Probe system health against the effective config and format as rows."""
+    report = run_doctor()
 
     if not report.ok or len(report.blockers) > 0:
         summary = (

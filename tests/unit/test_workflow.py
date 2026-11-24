@@ -518,6 +518,22 @@ class TestTranslationChoice:
         assert plan.stage(Stage.TRANSLATE) is not None
         assert "TRANSLATION_SKIPPED" not in _codes(plan)
 
+    def test_an_auto_generated_target_track_does_not_skip_translation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Machine auto-translated tracks (e.g. YouTube zh-Hans auto) are not reused silently."""
+        probe = _source_probe(
+            tracks=(
+                TrackInfo(lang="en", role="source"),
+                TrackInfo(lang="zh-Hans", role="target", auto_generated=True),
+            )
+        )
+
+        plan = _resolve(tmp_path, monkeypatch, probe=probe)
+
+        assert plan.stage(Stage.TRANSLATE) is not None
+        assert "TRANSLATION_SKIPPED" not in _codes(plan)
+
 
 # ----------------------------------------------------------------------
 # Capability selection: peers, not a fallback chain
@@ -1285,6 +1301,30 @@ class TestWorkflowEdgeCases:
         assert tr_err.suggested_workflow is None
         assert set(tr_err.alternatives) == {"translate.google", "translate.mymemory"}
 
+        skipped_plan = _plan(
+            workflow=WorkflowId.URL_SUBTITLED,
+            stages=(
+                StagePlan(id="write", stage=Stage.WRITE, capability="write.subtitles"),
+            ),
+        )
+        missing_target = _error_for(
+            skipped_plan,
+            skipped_plan.stage(Stage.WRITE),
+            PorterError(
+                "every translation backend failed",
+                phase="translate",
+                attempted=0,
+                failures=[],
+            ),
+            ctx,
+        )
+        assert missing_target.code == "TARGET_TRACK_MISSING"
+        assert set(missing_target.alternatives) == {
+            "translate.bing",
+            "translate.google",
+            "translate.mymemory",
+        }
+
     def test_empty_string_cookies_in_config_coerce_to_none(self) -> None:
         cfg = PorterConfig.model_validate({"cookies_file": "", "cookies_browser": "   "})
         assert cfg.cookies_file is None
@@ -1304,3 +1344,76 @@ class TestWorkflowEdgeCases:
         req = _request(plan)
         assert req.local_video == sample
         assert req.url is None
+
+    def test_quality_degradation_emits_warning_without_blocking(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When only a lower stream is available, the plan warns and degrades gracefully."""
+        probe = _source_probe().model_copy(update={"width": 854, "height": 480})
+        plan = _resolve(tmp_path, monkeypatch, probe=probe, quality="1080p")
+
+        assert plan.feasible is True
+        assert "QUALITY_DEGRADED" in _codes(plan)
+        acquire = plan.stage(Stage.ACQUIRE)
+        assert acquire is not None
+        assert acquire.params["quality"] == "1080p"
+
+    def test_vertical_1080p_video_is_not_marked_degraded(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Short side of 1080x1920 is 1080p, matching the target anchor."""
+        probe = _source_probe().model_copy(
+            update={"width": 1080, "height": 1920, "is_vertical": True}
+        )
+        plan = _resolve(tmp_path, monkeypatch, probe=probe, quality="1080p")
+
+        assert plan.feasible is True
+        assert "QUALITY_DEGRADED" not in _codes(plan)
+
+    def test_plan_source_facade_merges_config_defaults(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from porter import plan_source
+
+        probe = _source_probe()
+        monkeypatch.setattr(
+            "porter.core.workflow.resolver.probe_source", lambda _s, _c: probe
+        )
+        monkeypatch.setattr(
+            "porter.core.workflow.resolver.capability_catalog",
+            lambda _c: _catalog(),
+        )
+        cfg = PorterConfig(
+            output_dir=tmp_path / "out",
+            video_quality="720p",
+            cookies_browser="firefox",
+        )
+        plan = plan_source("https://youtu.be/abc", config=cfg)
+        acquire = plan.stage(Stage.ACQUIRE)
+        assert acquire is not None
+        assert acquire.params["cookies_browser"] == "firefox"
+        assert acquire.params["quality"] == "720p"
+        assert plan.runtime.output_dir == str(tmp_path / "out")
+
+    def test_run_plan_facade_tracks_job_in_store(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from porter import JobRegistry, JobStore, run_plan
+
+        subtitle = tmp_path / "in.srt"
+        subtitle.write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n", encoding="utf-8")
+        plan = _resolve(
+            tmp_path,
+            monkeypatch,
+            source=str(subtitle),
+            probe=_source_probe(kind=SourceKind.SUBTITLE, source=str(subtitle)),
+            task=Task.PROBE,
+        )
+        registry = JobRegistry(tmp_path / "jobs.json")
+        store = JobStore(registry=registry)
+
+        outcome = run_plan(plan, config=PorterConfig(), store=store, job_id="facade-1")
+        assert outcome.workflow.ok is True
+        recorded = registry.get("facade-1")
+        assert recorded is not None
+        assert recorded.state == "done"

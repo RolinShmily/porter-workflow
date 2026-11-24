@@ -12,8 +12,9 @@ from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import url2pathname
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from porter.core.config import DEFAULT_VIDEO_QUALITY, normalize_video_quality
 from porter.core.events import ErrorInfo, JobState, Phase
 from porter.core.models.materials import RawMaterials
 from porter.core.models.subtitle import SubtitleSet
@@ -60,6 +61,14 @@ class JobOptions(BaseModel):
 
     cookies_file: Path | None = None
     cookies_browser: str | None = None
+    video_quality: str = DEFAULT_VIDEO_QUALITY
+
+    @field_validator("video_quality", mode="before")
+    @classmethod
+    def _validate_video_quality(cls, value: object) -> str:
+        if isinstance(value, (str, int)) or value is None:
+            return normalize_video_quality(value)
+        raise ValueError(f"invalid video quality {value!r}")
 
     #: An existing subtitle file to use as the source track, instead of the
     #: platform's track or speech recognition. ``.srt`` and ``.vtt``.

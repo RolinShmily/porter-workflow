@@ -28,9 +28,9 @@ PACKAGE_ROOT = Path(porter.__file__).parent
 ENGINE_ROOT = PACKAGE_ROOT / "core"
 ENGINE_FILES = [PACKAGE_ROOT / "__init__.py", *sorted(ENGINE_ROOT.rglob("*.py"))]
 
-#: Directories that hold the three frontends.
-FRONTEND_DIRS = ("cli", "mcp", "webui")
-#: Import prefixes for the same frontends; ``import porter.cli`` is the engine
+#: Directories that hold bundled frontends.
+FRONTEND_DIRS = ("webui",)
+#: Import prefixes for bundled frontends; ``import porter.webui`` is the engine
 #: boundary, so module names are checked, not top-level package names.
 FRONTEND_MODULES = tuple(f"porter.{name}" for name in FRONTEND_DIRS)
 

@@ -21,6 +21,7 @@ Callers that need a non-standard location (an agent skill, a container) set
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import json
 import os
@@ -35,9 +36,14 @@ import platformdirs
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from porter.core.errors import ConfigError
+from porter.core.logging import get_logger
 from porter.core.utils.text import sanitize_filename
 
+_logger = get_logger(__name__)
+
 __all__ = [
+    "DEFAULT_VIDEO_QUALITY",
+    "VIDEO_QUALITY_CHOICES",
     "ASRConfig",
     "FFmpegConfig",
     "LLMConfig",
@@ -51,11 +57,71 @@ __all__ = [
     "find_project_config",
     "load_config_file",
     "mask_secret",
+    "normalize_video_quality",
+    "read_config_mapping",
     "resolve",
     "save_key",
+    "target_resolution",
+    "writable_config_path",
+    "write_config_mapping",
 ]
 
 APP_NAME = "porter"
+
+#: Target video resolution anchor for URL downloads (shortest side).
+#: Platforms degrade gracefully to the highest available stream below this cap.
+DEFAULT_VIDEO_QUALITY = "1080p"
+
+VIDEO_QUALITY_CHOICES: tuple[str, ...] = (
+    "best",
+    "2160p",
+    "1440p",
+    "1080p",
+    "720p",
+    "480p",
+)
+
+_QUALITY_ALIASES: dict[str, str] = {
+    "best": "best",
+    "source": "best",
+    "max": "best",
+    "4k": "2160p",
+    "2160": "2160p",
+    "2160p": "2160p",
+    "2k": "1440p",
+    "1440": "1440p",
+    "1440p": "1440p",
+    "fhd": "1080p",
+    "1080": "1080p",
+    "1080p": "1080p",
+    "hd": "720p",
+    "720": "720p",
+    "720p": "720p",
+    "480": "480p",
+    "480p": "480p",
+}
+
+
+def normalize_video_quality(value: str | int | None) -> str:
+    """Normalise a user-supplied video quality string to a canonical choice."""
+    if value is None:
+        return DEFAULT_VIDEO_QUALITY
+    text = str(value).strip().lower()
+    if not text:
+        return DEFAULT_VIDEO_QUALITY
+    canonical = _QUALITY_ALIASES.get(text)
+    if canonical is None:
+        choices = ", ".join(VIDEO_QUALITY_CHOICES)
+        raise ValueError(f"invalid video quality {value!r}; choose from {choices}")
+    return canonical
+
+
+def target_resolution(quality: str) -> int | None:
+    """Short-side pixel target for ``quality``, or ``None`` for ``best``."""
+    canonical = normalize_video_quality(quality)
+    if canonical == "best":
+        return None
+    return int(canonical[:-1])
 
 #: Recognised file names for project-level config, in priority order.
 PROJECT_CONFIG_NAMES = ("porter.json", "porter.toml", "config.json")
@@ -206,10 +272,16 @@ class PorterConfig(BaseModel):
     ffmpeg: FFmpegConfig = Field(default_factory=FFmpegConfig)
     style: SubtitleStyleConfig = Field(default_factory=SubtitleStyleConfig)
     output_dir: Path = Path("./porter_output")
+    video_quality: str = DEFAULT_VIDEO_QUALITY
     cookies_file: Path | None = None
     cookies_browser: str | None = None
     #: Where the values came from, for ``porter config list`` and bug reports.
     source: str = "built-in defaults"
+
+    @field_validator("video_quality", mode="before")
+    @classmethod
+    def _validate_video_quality(cls, value: Any) -> str:
+        return normalize_video_quality(value)
 
     @field_validator("cookies_file", "cookies_browser", mode="before")
     @classmethod
@@ -402,6 +474,11 @@ def _from_mapping(data: dict[str, Any], *, source: str) -> PorterConfig:
     )
 
     output_dir = _first_env("PORTER_OUTPUT_DIR") or data.get("output_dir") or "./porter_output"
+    video_quality = (
+        _first_env("PORTER_VIDEO_QUALITY")
+        or data.get("video_quality")
+        or DEFAULT_VIDEO_QUALITY
+    )
     cookies_file = data.get("cookies_file") or data.get("cookies")
     cookies_browser = data.get("cookies_browser") or data.get("cookies_from_browser")
 
@@ -412,6 +489,7 @@ def _from_mapping(data: dict[str, Any], *, source: str) -> PorterConfig:
         ffmpeg=ffmpeg,
         style=style,
         output_dir=Path(str(output_dir)),
+        video_quality=normalize_video_quality(video_quality),
         cookies_file=Path(str(cookies_file)) if cookies_file else None,
         cookies_browser=str(cookies_browser) if cookies_browser else None,
         source=source,
@@ -421,6 +499,57 @@ def _from_mapping(data: dict[str, Any], *, source: str) -> PorterConfig:
 # ---------------------------------------------------------------------------
 # Mutation
 # ---------------------------------------------------------------------------
+
+
+def writable_config_path() -> Path:
+    """Resolve the JSON config file frontends and skills should edit.
+
+    Honours ``$PORTER_CONFIG`` first (when it points at JSON), then the nearest
+    project-level JSON config, falling back to the user-level ``config.json``.
+    TOML files are never overwritten with JSON.
+    """
+    env_path = os.environ.get(ENV_CONFIG_PATH, "").strip()
+    if env_path:
+        candidate = Path(env_path).expanduser()
+        if candidate.suffix.lower() != ".toml":
+            return candidate
+        _logger.warning(
+            "$%s points at TOML (%s); falling back to user JSON config",
+            ENV_CONFIG_PATH,
+            candidate,
+        )
+
+    found = find_project_config()
+    if found is not None:
+        if found.suffix.lower() == ".json":
+            return found
+        _logger.warning(
+            "project config %s is not JSON; falling back to user JSON config",
+            found,
+        )
+    return config_file()
+
+
+def read_config_mapping(target: Path | None = None) -> tuple[dict[str, Any], Path]:
+    """Read the writable JSON config as a mapping, or return built-in defaults."""
+    dest = Path(target) if target else writable_config_path()
+    if dest.is_file():
+        try:
+            return load_config_file(dest), dest
+        except (ConfigError, OSError) as exc:
+            _logger.warning("Failed to parse config %s: %s", dest, exc)
+    return default_config().model_dump(mode="json"), dest
+
+
+def write_config_mapping(data: dict[str, Any], target: Path | None = None) -> Path:
+    """Write ``data`` as UTF-8 JSON with owner-only permissions where supported."""
+    dest = Path(target) if target else writable_config_path()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+    dest.write_text(text, encoding="utf-8")
+    with contextlib.suppress(OSError):
+        dest.chmod(0o600)
+    return dest
 
 
 def save_key(key_path: str, value: Any, target: Path | None = None) -> Path:

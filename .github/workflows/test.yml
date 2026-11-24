@@ -74,10 +74,10 @@ jobs:
       # -- importing only the core would let `openai`/`fastmcp` typing drift.
       # `[dev]` carries the four gate commands themselves.
       - name: Install the locked environment
-        run: uv sync --python ${{ matrix.python-version }} --extra all --extra dev --locked
+        run: uv sync --python ${{ matrix.python-version }} --extra web --extra dev --locked
 
       - name: ruff
-        run: uv run ruff check src tests scripts skills
+        run: uv run ruff check src tests scripts
 
       - name: mypy
         run: uv run mypy src scripts
@@ -117,7 +117,7 @@ jobs:
           sudo apt-get install -y -qq ffmpeg
 
       - name: Install the locked environment
-        run: uv sync --extra all --extra dev --locked
+        run: uv sync --extra web --extra dev --locked
 
       - name: Hide ffmpeg and re-run the suite
         run: |
@@ -143,25 +143,6 @@ jobs:
           # real-ffmpeg tier (see test_burn.py's _stub_probe docstring) and runs
           # in the gate job above, where ffmpeg is installed.
           uv run pytest -m "not slow" --deselect tests/regression/test_synthesizer_port.py
-
-  windows-skill:
-    name: native Windows skill host preflight
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      # The wrapper is one Python file, so the same offline tests run here and
-      # on Linux. This job covers what Linux cannot: PATH resolution of a
-      # uvx.cmd shim and the COMSPEC invocation that CreateProcess requires.
-      - name: Install pytest
-        run: python -m pip install pytest
-
-      - name: Test the wrapper with a fake uvx
-        run: python -m pytest tests/unit/test_skill_launchers.py -q
 
   build:
     name: build sdist + wheel
@@ -190,16 +171,12 @@ jobs:
           z = zipfile.ZipFile(w);
           names = set(z.namelist());
           required = {'porter/__init__.py', 'porter/py.typed',
-          'porter/core/__init__.py', 'porter/cli/__init__.py',
-          'porter/cli/__main__.py', 'porter/mcp/__init__.py',
-          'porter/mcp/server.py', 'porter/webui/__init__.py',
-          'porter/webui/app.py'};
+          'porter/core/__init__.py',
+          'porter/webui/__init__.py', 'porter/webui/app.py'};
           missing = sorted(required - names);
           ep = [n for n in names if n.endswith('.dist-info/entry_points.txt')][0];
           text = z.read(ep).decode('utf-8');
-          expected = ['porter = porter.cli.__main__:main',
-          'porter-mcp = porter.mcp.server:main',
-          'porter-web = porter.webui.app:main'];
+          expected = ['porter = porter.webui.app:main'];
           bad = [e for e in expected if e not in text];
           sys.exit(f'{w} is missing: {missing}; bad entry points: {bad}') if missing or bad else print(f'{w}: layout and entry points verified')"
 

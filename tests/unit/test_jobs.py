@@ -164,8 +164,9 @@ def _a_definitely_dead_pid() -> int:
     comparison would catch it anyway.
     """
     import subprocess
+    import sys
 
-    proc = subprocess.Popen(["true"])
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])
     proc.wait()
     return proc.pid
 

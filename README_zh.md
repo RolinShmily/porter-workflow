@@ -99,50 +99,50 @@ RENDER      输出双语 / 纯中文硬字幕 MP4
 | **Deno**（推荐） | YouTube 下载 | yt-dlp ≥ 2025.11.12 需要外部 JS 运行时；Node ≥ 20 亦可 |
 
 ```bash
-# 核心安装：下载、平台字幕、免费翻译、压制
-uvx --from porter-workflow porter "<URL>"
+# 核心工作流引擎（含下载、本地离线 Whisper、免 Key / LLM 翻译、FFmpeg 压制）
+pip install porter-workflow
 
-# 增加本地、免 Key、可离线的语音识别
-uvx --from "porter-workflow[asr-local]" porter "<URL>"
+# 安装并启动交互式 WebUI 工作台
+uv tool install "porter-workflow[web]"
+porter                  # 启动 http://127.0.0.1:7860
 
-# 全部能力，含 MCP 服务端与 WebUI
-uvx --from "porter-workflow[all]" porter "<URL>"
-
-# 首次运行前检查环境
-uvx --from porter-workflow porter doctor
+# 或无需永久安装，直接拉起 WebUI
+uvx --from "porter-workflow[web]" porter
 ```
 
-| Extra | 引入 | 用途 |
-| --- | --- | --- |
-| `[asr-local]` | `faster-whisper` | `transcript.whisper-local`——免 Key、可离线 |
-| `[llm]` | `openai`、`json-repair` | `translate.llm` + `transcript.whisper-api` |
-| `[images]` | `pillow` | 封面图处理 |
-| `[mcp]` | `fastmcp` | `porter-mcp` 服务端 |
-| `[web]` | `gradio` | `porter-web` 工作台 |
-| `[all]` | 以上全部 | —— |
-
-核心安装已经可以处理带平台字幕轨的链接：免费翻译并压制。Extra 只是增加能力，
-不改变工作流模型。当前环境实际能跑什么，以 `porter doctor` 与
-`porter capabilities` 为准。
+所有视频本地化能力（含免 Key 离线 `faster-whisper` 以及可选付费的 LLM / Whisper
+API 适配器）均内置于基础包 `porter-workflow` 中。仅 `gradio` 保留在可选扩展
+`[web]` 里，以保证 `import porter` 在脚本、服务和智能体技能中被导入时足够纯净。
 
 ## 用法
 
+### WebUI 工作台（`porter`）
+
 ```bash
-porter capabilities                 # 当前安装能执行哪些能力？
-porter probe "<URL>"                # 只看源事实，不规划、不下载
-porter plan "<URL>"                 # 解析工作流、能力与阻塞项
-porter plan "<URL>" --json > plan.json
-porter run --plan plan.json         # 严格执行这份计划
-porter run "<URL>"                  # 一步完成解析与执行
-porter run "<URL>" -o ./output      # 指定输出目录
-porter run "<URL>" --task subtitle  # 只出字幕，不编码视频
-porter doctor                       # 环境诊断
-porter config list                  # 查看生效配置（密钥脱敏）
+porter                  # 启动 http://127.0.0.1:7860
+porter --port 8080      # 指定端口
+porter --version        # 查看版本
 ```
 
-`porter plan` 是权威入口：它探测源、探测本机能力，报告每个阶段将要执行的唯一
-能力、成本与数据出口，以及带 `fix` 的阻塞项。计划可复现，所以
-`plan --json` → `run --plan` 是推荐给智能体与脚本的契约。
+在工作台中输入视频链接或本地路径，可选择任务范围、目标画质（默认 `1080p`，源片
+达不到时平滑降级）、压制模式与各阶段能力；预检后可查看完整的 `WorkflowPlan` JSON，
+执行时实时追踪进度、预览硬字幕成片并打包下载 `raw.zip` / `cooked.zip`。
+
+### Python 核心 API（`import porter`）
+
+```python
+from porter import plan_source, run_doctor, run_plan
+
+report = run_doctor()
+plan = plan_source("https://www.youtube.com/watch?v=...", quality="1080p", burn="zh_only")
+if plan.feasible:
+    outcome = run_plan(plan)
+    print(outcome.workflow.artifacts)
+```
+
+`plan_source()` 负责探测源、自动合并生效配置（cookies、输出目录、目标画质、音频
+降噪）并生成不可变、可序列化的 `WorkflowPlan`；`run_plan()` 严格按该计划执行，并
+统一接入跨进程 `JobRegistry` 与协作式取消。
 
 ### 输出目录
 
@@ -164,65 +164,37 @@ porter config list                  # 查看生效配置（密钥脱敏）
 └── .tmp/                         临时目录，可在两次运行之间删除
 ```
 
-### 前端入口
-
-| 前端 | 命令 | 面向 |
-| --- | --- | --- |
-| CLI | `porter` | 人类、脚本，以及权威的计划契约 |
-| MCP | `uvx --from "porter-workflow[mcp]" porter-mcp` | 通过 stdio JSON-RPC 接入的智能体 |
-| WebUI | `uvx --from "porter-workflow[web]" porter-web` | 使用计划工作台与人机协同的人类 |
-| Agent Skill | `npx skills add RolinShmily/porter-workflow` | 按 SOP 执行的智能体 |
-
-四者使用同一份 `WorkflowPlan` / `WorkflowResult` 模型。MCP 用 `porter_plan`
-生成计划、用 `porter_job_start(plan=...)` 启动；WebUI 展示计划 JSON 并执行同一份
-计划。没有任何入口保留第二条流水线或运行期回退链。配置细节见：
-
-- [`skills/porter-skill/SKILL.md`](skills/porter-skill/SKILL.md)——SOP
-- [`skills/porter-skill/references/PLAN.md`](skills/porter-skill/references/PLAN.md)——计划/结果字段与问题码
-- [`skills/porter-skill/references/MCP.md`](skills/porter-skill/references/MCP.md)——MCP 工具与调用顺序
-- [`skills/porter-skill/references/WEBUI.md`](skills/porter-skill/references/WEBUI.md)——WebUI 工作台
-
 ## 配置
 
 按以下顺序解析，优先级由高到低：
 
-1. `--config <path>`
+1. 显式传入 `resolve(path)` 的路径
 2. `$PORTER_CONFIG`
 3. 环境变量（覆盖所选文件中的对应键）
 4. 最近的项目配置：`porter.json` → `porter.toml` → `config.json`
-5. 用户级配置目录（仅当没有项目配置）
+5. 用户级配置目录（`porter/config.json`，仅当没有项目配置）
 6. 内置默认值
 
 | 配置段 | 键 | 作用 |
 | --- | --- | --- |
-| 顶层 | `output_dir`、`cookies_file`、`cookies_browser` | 输出位置与受限媒体访问 |
+| 顶层 | `output_dir`、`video_quality`、`cookies_file`、`cookies_browser` | 输出位置、目标画质（默认 `1080p`）与受限媒体访问 |
 | `llm` | `api_key`、`api_base`、`model` | 显式选择 `translate.llm` 与 `transcript.whisper-api` 时使用 |
 | `asr` | `engine`、`language`、`audio_denoise`、`whisper_local_model`、`whisper_local_device`、`whisper_local_compute_type`、`whisper_api_key`、`whisper_api_base`、`whisper_model` | 识别默认值与偏好 |
 | `refine` | `enabled`、`model` | 可选的 LLM 转录校对 |
 | `ffmpeg` | `ffmpeg_path`、`ffprobe_path`、`video_codec`、`preset`、`crf`、`pixel_format`、`audio_codec`、`audio_bitrate`、`audio_sample_rate`、`wav_sample_rate`、`auto_tune` | 编码与硬件调优 |
 | `style` | `zh_font`、`en_font`、字号、颜色、`outline_*`、`shadow`、`margin_*`、`fade_*` | ASS 字幕外观 |
 
-`asr.engine` 只是自动选择时的**偏好**，不是付费授权，也不强制运行 ASR。是否
-运行语音识别由计划决定。
-
-```bash
-porter config list                     # 生效值 + 来源，密钥脱敏
-porter config get llm                  # 查看某一段
-porter config set llm.model=deepseek-chat
-porter config set llm.api_key=sk-...   # 默认写入用户级配置
-```
-
-完整键表、默认值与示例见
-[`skills/porter-skill/references/CONFIG.md`](skills/porter-skill/references/CONFIG.md)。
+`asr.engine` 只是自动选择时的**偏好**，不是付费授权，也不强制运行 ASR。配置可直接在
+WebUI「配置文件与首选项」页修改，或通过 `porter.save_key(...)` /
+`porter.writable_config_path()` 读写。
 
 ## 构建与开发
 
 开发需要 **Python 3.11–3.13**、**uv**、**FFmpeg + libass**，以及 **Deno** 或
-**Node ≥ 20**。运行时依赖只有 `yt-dlp[default]`、`requests`、`pydantic` 和
-`platformdirs`，其余引擎能力都是可选 extra。
+**Node ≥ 20**。
 
 ```bash
-uv sync --extra all --extra dev      # 严格按 uv.lock 安装
+uv sync --extra web --extra dev     # 严格按 uv.lock 安装
 
 ruff check src tests scripts        # 含 T20：引擎禁止 print()
 mypy src scripts                    # strict 类型检查
@@ -236,11 +208,8 @@ pytest -m "not network"             # 离线测试
 src/porter/
 ├── __init__.py       稳定公开 API（懒加载）与 __version__
 ├── core/             引擎——全部业务逻辑
-│   └── workflow/     计划模型、解析器、探测与执行器
-├── cli/              CLI 前端
-├── mcp/              MCP 前端
-└── webui/            Gradio WebUI 前端
-skills/porter-skill/  Agent Skill 资产（SKILL.md、Python 脚本、references）
+│   └── workflow/     计划模型、解析器、探测、执行器与统一门面
+└── webui/            可选 Gradio WebUI 工作台（[web]）
 scripts/              开发/发布辅助脚本
 docs/                 开发、架构、参考、设计、图片
 tests/{unit,regression,integration}/
@@ -249,7 +218,6 @@ tests/{unit,regression,integration}/
 - [文档中心](docs/README.md)
 - [架构总览](docs/architecture/overview.md)
 - [开发门禁](docs/development/gate.md)
-- [CLI 参考](docs/reference/cli.md)
 - [参与贡献](CONTRIBUTING.md)
 
 ## 许可证

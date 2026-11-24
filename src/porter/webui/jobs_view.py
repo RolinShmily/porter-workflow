@@ -6,6 +6,7 @@ from pathlib import Path
 
 from porter.core.events import JobState
 from porter.core.jobs.records import JobRecord, JobRegistry
+from porter.core.platforms import identify_platform
 
 __all__ = [
     "format_source_label",
@@ -37,23 +38,29 @@ def get_active_job_details(registry: JobRegistry) -> tuple[bool, str, str, str, 
     return True, job.job_id, phase_label, status_label, msg_label, job.percent
 
 
+_PLATFORM_LABELS: dict[str, str] = {
+    "youtube": "YouTube",
+    "instagram": "Instagram",
+    "bilibili": "Bilibili",
+    "tiktok": "TikTok",
+    "x": "X/Twitter",
+}
+
+
 def format_source_label(source: str) -> str:
     """Format long source URL into concise text label."""
     if not source:
         return "-"
-    if "youtube.com" in source or "youtu.be" in source:
+    platform = identify_platform(source)
+    if platform == "youtube":
         vid = ""
         if "v=" in source:
             vid = source.split("v=")[1].split("&")[0]
         elif "youtu.be/" in source:
             vid = source.split("youtu.be/")[1].split("?")[0]
         return f"YouTube ({vid})" if vid else "YouTube"
-    if "instagram.com" in source:
-        return "Instagram"
-    if "bilibili.com" in source:
-        return "Bilibili"
-    if "x.com" in source or "twitter.com" in source:
-        return "X/Twitter"
+    if platform in _PLATFORM_LABELS:
+        return _PLATFORM_LABELS[platform]
     if source.startswith("file://"):
         return f"Local: {Path(source).name}"
 

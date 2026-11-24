@@ -69,15 +69,26 @@ class TestConfigManagement:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The settings tab writes JSON; writing it into porter.toml would break it."""
+        from porter.core import config as core_config
+
         project = tmp_path / "porter.toml"
         original = "[llm]\nmodel = 'x'\n"
         project.write_text(original, encoding="utf-8")
         user_config = tmp_path / "user-config.json"
-        monkeypatch.setattr(config_io, "find_project_config", lambda: project)
-        monkeypatch.setattr(config_io, "config_file", lambda: user_config)
+        monkeypatch.delenv("PORTER_CONFIG", raising=False)
+        monkeypatch.setattr(core_config, "find_project_config", lambda: project)
+        monkeypatch.setattr(core_config, "config_file", lambda: user_config)
 
         assert config_io.get_config_target() == user_config
         assert project.read_text(encoding="utf-8") == original
+
+    def test_porter_config_env_json_is_honoured_by_writable_config_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        env_cfg = tmp_path / "env-config.json"
+        monkeypatch.setenv("PORTER_CONFIG", str(env_cfg))
+
+        assert config_io.get_config_target() == env_cfg
 
 
 class TestCollectTaskMaterials:
@@ -181,6 +192,7 @@ class TestJobsTableFormatting:
         assert app.format_source_label(url) == "YouTube (abc)"
         assert app.format_source_link(url) == "[YouTube (abc)](https://www.youtube.com/watch?v=abc)"
         assert "Instagram" in app.format_source_label("https://www.instagram.com/p/123/")
+        assert "TikTok" in app.format_source_label("https://www.tiktok.com/@u/video/123")
         assert "Local" in app.format_source_label("file:///tmp/video.mp4")
 
     def test_get_jobs_dataframe_rows_and_choices(self) -> None:
@@ -286,6 +298,7 @@ class TestWorkbenchPlanHelpers:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         from porter.core.config import PorterConfig
+        from porter.core.workflow import resolver
         from porter.webui.tabs import workbench
 
         cookies = tmp_path / "cookies.txt"
@@ -304,7 +317,7 @@ class TestWorkbenchPlanHelpers:
             captured["ctx"] = ctx
             return MagicMock()
 
-        monkeypatch.setattr(workbench, "resolve_plan", fake_resolve_plan)
+        monkeypatch.setattr(resolver, "resolve_plan", fake_resolve_plan)
 
         workbench._resolve_plan(
             "https://youtu.be/x",

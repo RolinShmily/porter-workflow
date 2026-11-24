@@ -105,52 +105,53 @@ System dependencies (not Python packages, must be on `PATH`):
 | **Deno** (recommended) | YouTube downloads | yt-dlp ≥ 2025.11.12 needs an external JS runtime; Node ≥ 20 also works |
 
 ```bash
-# Core: download, platform subtitles, free translation, hardsub
-uvx --from porter-workflow porter "<URL>"
+# Core workflow engine (download, local offline Whisper, LLM/free translation, hardsub)
+pip install porter-workflow
 
-# Add local, key-free, offline speech recognition
-uvx --from "porter-workflow[asr-local]" porter "<URL>"
+# Interactive Gradio WebUI workbench
+uv tool install "porter-workflow[web]"
+porter                  # opens http://127.0.0.1:7860
 
-# Everything, including the MCP server and the WebUI
-uvx --from "porter-workflow[all]" porter "<URL>"
-
-# Check the environment before the first job
-uvx --from porter-workflow porter doctor
+# Or run the WebUI directly without permanent install
+uvx --from "porter-workflow[web]" porter
 ```
 
-| Extra | Adds | Enables |
-| --- | --- | --- |
-| `[asr-local]` | `faster-whisper` | `transcript.whisper-local` — key-free and offline |
-| `[llm]` | `openai`, `json-repair` | `translate.llm` + `transcript.whisper-api` |
-| `[images]` | `pillow` | Cover image handling |
-| `[mcp]` | `fastmcp` | The `porter-mcp` server |
-| `[web]` | `gradio` | The `porter-web` workbench |
-| `[all]` | all of the above | — |
-
-The core install can localize a URL with a platform subtitle track, translate it
-with a key-free endpoint, and burn it. Extras add capabilities; they do not
-change the workflow model. `porter doctor` and `porter capabilities` report what
-the current environment can actually run.
+All localization capabilities — including local offline Whisper (`faster-whisper`)
+and optional paid LLM/Whisper API adapters — ship in the base `porter-workflow`
+package. Only `gradio` is isolated in the `[web]` extra so `import porter` stays
+pure for scripts, services and agent skills.
 
 ## Usage
 
+### WebUI Workbench (`porter`)
+
 ```bash
-porter capabilities                 # what can this installation execute?
-porter probe "<URL>"                # source facts, no plan, no download
-porter plan "<URL>"                 # resolved workflow, capabilities, blockers
-porter plan "<URL>" --json > plan.json
-porter run --plan plan.json         # execute exactly that plan
-porter run "<URL>"                  # resolve and execute in one step
-porter run "<URL>" -o ./output      # choose the output directory
-porter run "<URL>" --task subtitle  # subtitles only, no video encode
-porter doctor                       # diagnose the environment
-porter config list                  # show resolved config (secrets masked)
+porter                  # http://127.0.0.1:7860
+porter --port 8080      # custom port
+porter --version        # print installed version
 ```
 
-`porter plan` is authoritative: it probes the source, probes the machine, and
-reports which single capability would run each stage, its cost and egress, and
-any blocker with a `fix`. Plans are reproducible, so `plan --json` followed by
-`run --plan` is the recommended contract for agents and scripts.
+The workbench lets you paste a URL or local path, choose task scope, target
+video quality (`1080p` default, degrading gracefully when unavailable), burn
+mode and capabilities, inspect the resolved `WorkflowPlan` JSON, monitor live
+progress, preview hard-subbed MP4s and download `raw.zip` / `cooked.zip`.
+
+### Python Core API (`import porter`)
+
+```python
+from porter import plan_source, run_doctor, run_plan
+
+report = run_doctor()
+plan = plan_source("https://www.youtube.com/watch?v=...", quality="1080p", burn="zh_only")
+if plan.feasible:
+    outcome = run_plan(plan)
+    print(outcome.workflow.artifacts)
+```
+
+`plan_source()` probes the source, merges your effective `PorterConfig` defaults
+(cookies, output directory, target video quality, audio denoise), and returns an
+immutable, JSON-serialisable `WorkflowPlan`. `run_plan()` executes that exact
+plan with shared `JobRegistry` tracking and cooperative cancellation.
 
 ### Output layout
 
@@ -172,39 +173,20 @@ any blocker with a `fix`. Plans are reproducible, so `plan --json` followed by
 └── .tmp/                         scratch, safe to delete between runs
 ```
 
-### Frontends
-
-| Frontend | Command | For |
-| --- | --- | --- |
-| CLI | `porter` | Humans, scripts, and the canonical plan contract |
-| MCP | `uvx --from "porter-workflow[mcp]" porter-mcp` | Agents over stdio JSON-RPC |
-| WebUI | `uvx --from "porter-workflow[web]" porter-web` | Humans using the plan workbench and HITL |
-| Agent Skill | `npx skills add RolinShmily/porter-workflow` | Agents following the SOP |
-
-All four use the same `WorkflowPlan` / `WorkflowResult` model. MCP resolves a
-plan with `porter_plan` and starts it with `porter_job_start(plan=...)`; the
-WebUI displays the plan JSON and executes the same plan. None of them has a
-second pipeline or a runtime fallback chain. Setup details:
-
-- [`skills/porter-skill/SKILL.md`](skills/porter-skill/SKILL.md) — the SOP
-- [`skills/porter-skill/references/PLAN.md`](skills/porter-skill/references/PLAN.md) — plan/result fields and issue codes
-- [`skills/porter-skill/references/MCP.md`](skills/porter-skill/references/MCP.md) — MCP tools and call order
-- [`skills/porter-skill/references/WEBUI.md`](skills/porter-skill/references/WEBUI.md) — WebUI workbench
-
 ## Configuration
 
 Resolved in this order, highest priority first:
 
-1. `--config <path>`
+1. Explicit config path passed to `resolve(path)`
 2. `$PORTER_CONFIG`
 3. Environment variables (they override the selected file)
 4. Nearest project config: `porter.json` → `porter.toml` → `config.json`
-5. User config under `platformdirs` (only if there is no project config)
+5. User config under `platformdirs` (`porter/config.json`)
 6. Built-in defaults
 
 | Section | Keys | Purpose |
 | --- | --- | --- |
-| top level | `output_dir`, `cookies_file`, `cookies_browser` | Output location and gated-media access |
+| top level | `output_dir`, `video_quality`, `cookies_file`, `cookies_browser` | Output location, target resolution (`1080p` default) and gated-media access |
 | `llm` | `api_key`, `api_base`, `model` | Explicit `translate.llm` and `transcript.whisper-api` |
 | `asr` | `engine`, `language`, `audio_denoise`, `whisper_local_model`, `whisper_local_device`, `whisper_local_compute_type`, `whisper_api_key`, `whisper_api_base`, `whisper_model` | Recognition defaults and preferences |
 | `refine` | `enabled`, `model` | Optional LLM transcript cleanup |
@@ -212,28 +194,16 @@ Resolved in this order, highest priority first:
 | `style` | `zh_font`, `en_font`, sizes, colors, `outline_*`, `shadow`, `margin_*`, `fade_*` | ASS subtitle appearance |
 
 `asr.engine` is a *preference* for automatic selection, not a paid consent and
-not a requirement to run ASR. A workflow only runs recognition when the plan
-says so.
-
-```bash
-porter config list                     # Effective values + source, secrets masked
-porter config get llm                  # Show one section
-porter config set llm.model=deepseek-chat
-porter config set llm.api_key=sk-...   # Writes user-level config by default
-```
-
-The complete key table, defaults and examples are in
-[`skills/porter-skill/references/CONFIG.md`](skills/porter-skill/references/CONFIG.md).
+not a requirement to run ASR. You can edit configuration in the WebUI Settings
+tab or via `porter.save_key(...)` / `porter.writable_config_path()`.
 
 ## Build and develop
 
 Development needs **Python 3.11–3.13**, **uv**, **FFmpeg + libass**, and
-**Deno** or **Node ≥ 20**. The runtime dependencies are `yt-dlp[default]`,
-`requests`, `pydantic` and `platformdirs`; every other engine capability is an
-optional extra.
+**Deno** or **Node ≥ 20**.
 
 ```bash
-uv sync --extra all --extra dev      # Install exactly what uv.lock pins
+uv sync --extra web --extra dev     # Install exactly what uv.lock pins
 
 ruff check src tests scripts        # Lint; T20 enforces no print() in the engine
 mypy src scripts                    # Strict type checking
@@ -247,11 +217,8 @@ Repository layout:
 src/porter/
 ├── __init__.py       stable public API (lazy exports), __version__
 ├── core/             engine — all business logic
-│   └── workflow/     plan model, resolver, probe, executor
-├── cli/              CLI frontend
-├── mcp/              MCP frontend
-└── webui/            Gradio WebUI frontend
-skills/porter-skill/  Agent Skill assets (SKILL.md, Python scripts, references)
+│   └── workflow/     plan model, resolver, probe, executor, facade
+└── webui/            optional Gradio WebUI workbench ([web])
 scripts/              developer / release helper scripts
 docs/                 development, architecture, reference, design, images
 tests/{unit,regression,integration}/
@@ -260,7 +227,6 @@ tests/{unit,regression,integration}/
 - [Documentation index](docs/README.md)
 - [Architecture overview](docs/architecture/overview.md)
 - [Development gate](docs/development/gate.md)
-- [CLI reference](docs/reference/cli.md)
 - [Contributing](CONTRIBUTING.md)
 
 ## License

@@ -15,6 +15,7 @@ from porter.core.workflow.capabilities import (
     capability_for,
     normalize_capability,
 )
+from porter.core.workflow.executor import ExecutionOutcome, execute_plan, run_plan
 from porter.core.workflow.model import (
     CapabilityDescriptor,
     Cost,
@@ -34,7 +35,7 @@ from porter.core.workflow.model import (
     WorkflowResult,
 )
 from porter.core.workflow.probe import probe_source
-from porter.core.workflow.resolver import PlanOverrides, resolve_plan
+from porter.core.workflow.resolver import PlanOverrides, plan_source, resolve_plan
 
 __all__ = [
     "CAPABILITY_ALIASES",
@@ -42,6 +43,7 @@ __all__ = [
     "CapabilityDescriptor",
     "Cost",
     "Egress",
+    "ExecutionOutcome",
     "PlanIssue",
     "PlanOverrides",
     "PlanRuntime",
@@ -58,7 +60,10 @@ __all__ = [
     "WorkflowResult",
     "capability_catalog",
     "capability_for",
+    "execute_plan",
     "normalize_capability",
+    "plan_source",
     "probe_source",
     "resolve_plan",
+    "run_plan",
 ]

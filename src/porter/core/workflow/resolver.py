@@ -25,8 +25,17 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from porter import __version__
+from porter.core.config import (
+    DEFAULT_VIDEO_QUALITY,
+    PorterConfig,
+    normalize_video_quality,
+    target_resolution,
+)
+from porter.core.config import (
+    resolve as resolve_config,
+)
 from porter.core.context import RunContext
-from porter.core.models.request import BurnMode
+from porter.core.models.request import BurnMode, JobOptions
 from porter.core.workflow.capabilities import (
     ACQUIRE_LOCAL,
     ACQUIRE_YTDLP_VIDEO,
@@ -64,7 +73,7 @@ from porter.core.workflow.model import (
 )
 from porter.core.workflow.probe import probe_source
 
-__all__ = ["PlanOverrides", "config_fingerprint", "resolve_plan"]
+__all__ = ["PlanOverrides", "config_fingerprint", "plan_source", "resolve_plan"]
 
 #: Translation backends tried by default, in preference order. All are key-free
 #: network calls; ``translate.llm`` is appended only when the caller opted into
@@ -93,11 +102,86 @@ class PlanOverrides(BaseModel):
     subtitle_file: Path | None = None
     cookies_file: Path | None = None
     cookies_browser: str | None = None
+    quality: str = DEFAULT_VIDEO_QUALITY
     llm_model: str | None = None
     force: bool = False
     audio_denoise: bool = True
     allow_paid: bool = False
     force_translate: bool = False
+
+
+def plan_source(
+    source: str | Path,
+    *,
+    config: PorterConfig | None = None,
+    task: Task | str = Task.RELEASE,
+    output_dir: Path | str | None = None,
+    target_lang: str = "zh-Hans",
+    burn: BurnMode | str = BurnMode.DUAL,
+    quality: str | None = None,
+    transcript: str | None = None,
+    translate: str | None = None,
+    render: str | None = None,
+    subtitle_file: Path | str | None = None,
+    cookies_file: Path | str | None = None,
+    cookies_browser: str | None = None,
+    llm_model: str | None = None,
+    force: bool = False,
+    audio_denoise: bool | None = None,
+    allow_paid: bool = False,
+    force_translate: bool = False,
+    job_id: str = "plan",
+) -> WorkflowPlan:
+    """Resolve a :class:`WorkflowPlan` using ``config`` for every omitted setting.
+
+    Single canonical planning entry point for the WebUI, skills and Python
+    callers: every interface merges ``PorterConfig`` defaults (cookies, output
+    directory, video quality, audio denoise) through this function so they
+    cannot drift apart.
+    """
+    cfg = config if config is not None else resolve_config(None)
+    resolved_task = task if isinstance(task, Task) else Task(task)
+    resolved_burn = (
+        burn
+        if isinstance(burn, BurnMode)
+        else BurnMode(str(burn).strip().lower().replace("-", "_"))
+    )
+    resolved_quality = normalize_video_quality(quality) if quality else cfg.video_quality
+    resolved_out = Path(output_dir) if output_dir else Path(cfg.output_dir)
+    resolved_cookies_file = Path(cookies_file) if cookies_file else cfg.cookies_file
+    resolved_cookies_browser = cookies_browser or cfg.cookies_browser
+    resolved_subtitle = Path(subtitle_file) if subtitle_file else None
+    resolved_denoise = cfg.asr.audio_denoise if audio_denoise is None else audio_denoise
+
+    overrides = PlanOverrides(
+        task=resolved_task,
+        output_dir=resolved_out,
+        target_lang=target_lang or "zh-Hans",
+        burn=resolved_burn,
+        transcript=transcript or None,
+        translate=translate or None,
+        render=render or None,
+        subtitle_file=resolved_subtitle,
+        cookies_file=resolved_cookies_file,
+        cookies_browser=resolved_cookies_browser,
+        quality=resolved_quality,
+        llm_model=llm_model or None,
+        force=force,
+        audio_denoise=resolved_denoise,
+        allow_paid=allow_paid,
+        force_translate=force_translate,
+    )
+    ctx = RunContext(
+        job_id=job_id,
+        options=JobOptions(
+            output_dir=resolved_out,
+            cookies_file=resolved_cookies_file,
+            cookies_browser=resolved_cookies_browser,
+            video_quality=resolved_quality,
+        ),
+        config=cfg,
+    )
+    return resolve_plan(source, overrides, ctx)
 
 
 def resolve_plan(
@@ -360,6 +444,7 @@ def _build_media_stages(
     issues: list[PlanIssue],
 ) -> None:
     if probe.kind is SourceKind.URL:
+        quality = normalize_video_quality(options.quality)
         stages.append(
             StagePlan(
                 id="acquire",
@@ -373,10 +458,33 @@ def _build_media_stages(
                 params={
                     "cookies_file": str(options.cookies_file) if options.cookies_file else None,
                     "cookies_browser": options.cookies_browser,
+                    "quality": quality,
                 },
                 produces=("source_media", "platform_subtitles"),
             )
         )
+        wanted_res = target_resolution(quality)
+        if wanted_res is not None and probe.width and probe.height:
+            available_res = min(probe.width, probe.height)
+            if available_res < wanted_res:
+                issues.append(
+                    PlanIssue(
+                        code="QUALITY_DEGRADED",
+                        severity="warning",
+                        stage=Stage.ACQUIRE,
+                        capability=ACQUIRE_YTDLP_VIDEO,
+                        message=(
+                            f"target quality is {quality}, but the best available "
+                            f"stream is {available_res}p ({probe.width}x{probe.height}); "
+                            f"downloading {available_res}p instead"
+                        ),
+                        fix=(
+                            "configure platform cookies (--cookies / "
+                            "--cookies-from-browser) if higher quality requires login, "
+                            "or lower --quality"
+                        ),
+                    )
+                )
     else:
         stages.append(
             StagePlan(
@@ -423,14 +531,16 @@ def _build_media_stages(
         return
 
     target_track = probe.track("target")
-    # Only skip translation when the plan actually uses the platform subtitle
-    # track AND the caller did not ask for a specific translator or force
-    # translation. An ASR or supplied-subtitle workflow never loads the
-    # platform's Chinese track, so skipping translation there would crash the
-    # executor with zero translation backends.
+    # Only skip translation when the plan actually uses a manual platform
+    # subtitle track AND the caller did not ask for a specific translator or
+    # force translation. Auto-generated target tracks (such as YouTube's
+    # machine-translated automatic captions) are frequently unavailable at
+    # download time, and an ASR or supplied-subtitle workflow never loads the
+    # platform's Chinese track at all.
     reuses_platform_target = (
         transcript == TRANSCRIPT_PLATFORM
         and target_track is not None
+        and not target_track.auto_generated
         and not options.force_translate
         and not options.translate
     )

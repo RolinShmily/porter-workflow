@@ -30,6 +30,10 @@ These are declared in `[project.dependencies]` and installed with every copy of
 | [requests](https://github.com/psf/requests) | Apache-2.0 | HTTP for platform inspection, link resolution and the key-free translation backends. |
 | [pydantic](https://github.com/pydantic/pydantic) | MIT | Configuration schema and the typed pipeline models. |
 | [platformdirs](https://github.com/platformdirs/platformdirs) | MIT | Locating the per-user configuration directory. |
+| [openai](https://github.com/openai/openai-python) | Apache-2.0 | Optional paid Whisper API transcription and LLM-based translation/subtitle repair. |
+| [json-repair](https://github.com/mangiucugna/json_repair) | MIT | Recovering JSON from imperfect LLM output. |
+| [faster-whisper](https://github.com/SYSTRAN/faster-whisper) | MIT | Local Whisper inference with no API key and no network. |
+| [pillow](https://github.com/python-pillow/Pillow) | MIT-CMU (HPND) | Cover image handling. |
 
 ### 1.1 What `yt-dlp[default]` pulls in
 
@@ -52,17 +56,12 @@ selection, and it transitively installs:
 
 ## 2. Optional dependencies
 
-Declared as extras. None of these is installed unless the user asks for it, and
-none is imported unless the corresponding capability is used.
+Declared as extras. `gradio` is kept optional so `import porter` and headless
+agent/library installs stay pure without pulling web UI frameworks.
 
 | Extra | Component | License | Used for |
 | --- | --- | --- | --- |
-| `llm` | [openai](https://github.com/openai/openai-python) | Apache-2.0 | Whisper API transcription and LLM-based translation/subtitle repair. |
-| `llm` | [json-repair](https://github.com/mangiucugna/json_repair) | MIT | Recovering JSON from imperfect LLM output. |
-| `asr-local` | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) | MIT | Local Whisper inference with no API key and no network. |
-| `images` | [pillow](https://github.com/python-pillow/Pillow) | MIT-CMU (HPND) | Cover image handling. |
-| `mcp` | [fastmcp](https://github.com/jlowin/fastmcp) | Apache-2.0 | The `porter-mcp` server. |
-| `web` | [gradio](https://github.com/gradio-app/gradio) | Apache-2.0 | The `porter-web` interactive Human-in-the-Loop workbench. |
+| `web` | [gradio](https://github.com/gradio-app/gradio) | Apache-2.0 | The `porter` interactive Gradio workbench. |
 
 ### 2.1 What `faster-whisper` pulls in
 
@@ -75,13 +74,7 @@ none is imported unless the corresponding capability is used.
 | [PyAV](https://github.com/PyAV-Org/PyAV) | BSD-3-Clause |
 | [numpy](https://github.com/numpy/numpy) | BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 |
 
-### 2.2 What `fastmcp` pulls in
-
-| Component | License |
-| --- | --- |
-| [mcp](https://github.com/modelcontextprotocol/python-sdk) | MIT |
-
-### 2.3 What `gradio` pulls in
+### 2.2 What `gradio` pulls in
 
 | Component | License |
 | --- | --- |
@@ -155,8 +148,8 @@ Porter stands on the shoulders of these projects, and is grateful to them:
   rendering.
 * **[Pydantic](https://github.com/pydantic/pydantic)** — the typed configuration
   and model layer that keeps the pipeline honest.
-* **[Model Context Protocol](https://modelcontextprotocol.io/)** and
-  **[FastMCP](https://github.com/jlowin/fastmcp)** — the agent-facing frontend.
+* **[Gradio](https://github.com/gradio-app/gradio)** — the optional interactive
+  workbench (`[web]`).
 
 ---
 
@@ -166,7 +159,7 @@ The dependency list is generated from `pyproject.toml`, which is the single
 source of truth. To audit the installed tree with licences resolved:
 
 ```bash
-uv venv && uv pip install -e ".[all,dev]"
+uv venv && uv pip install -e ".[web,dev]"
 uv pip install pip-licenses
 uv run pip-licenses --format=markdown --with-urls --order=license
 ```

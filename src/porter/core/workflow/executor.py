@@ -34,16 +34,27 @@ from porter.core.asr.chain import (
     ZH_SRT_NAME,
     AsrChain,
 )
+from porter.core.config import (
+    DEFAULT_VIDEO_QUALITY,
+    PorterConfig,
+    normalize_video_quality,
+)
+from porter.core.config import (
+    resolve as resolve_config,
+)
 from porter.core.context import RunContext
 from porter.core.errors import JobCancelled, PorterError
 from porter.core.events import (
     ErrorInfo,
+    EventSink,
     JobState,
     Phase,
     PhaseCompleted,
     PhaseFailed,
     PhaseStarted,
+    null_sink,
 )
+from porter.core.jobs import JobRegistry, JobStore
 from porter.core.logging import get_logger
 from porter.core.models.materials import RawMaterials, TaskLayout
 from porter.core.models.request import BurnMode, BurnResult, JobOptions, JobRequest, JobResult
@@ -73,7 +84,7 @@ from porter.core.workflow.model import (
 )
 from porter.core.workflow.resolver import config_fingerprint
 
-__all__ = ["ExecutionOutcome", "execute_plan"]
+__all__ = ["ExecutionOutcome", "execute_plan", "run_plan"]
 
 _logger = get_logger(__name__)
 
@@ -98,6 +109,53 @@ class ExecutionOutcome:
 
     workflow: WorkflowResult
     job: JobResult
+
+
+def run_plan(
+    plan: WorkflowPlan,
+    *,
+    config: PorterConfig | None = None,
+    store: JobStore | None = None,
+    events: EventSink | None = None,
+    job_id: str | None = None,
+) -> ExecutionOutcome:
+    """Execute ``plan`` with standard config resolution and :class:`JobStore` tracking.
+
+    Higher-level counterpart to :func:`execute_plan` for frontends, skills and
+    scripts that want shared registry visibility and cancellation support
+    without assembling :class:`RunContext` / :class:`JobStore` boilerplate.
+    """
+    cfg = config if config is not None else resolve_config(None)
+    active_store = store if store is not None else JobStore(registry=JobRegistry())
+    request = _request(plan)
+    job = active_store.create(request, job_id=job_id)
+    ctx = RunContext(
+        job_id=job.job_id,
+        options=request.options,
+        config=cfg,
+        events=events if events is not None else null_sink,
+    )
+    active_store.attach(job, ctx)
+
+    try:
+        outcome = execute_plan(plan, ctx)
+    except (JobCancelled, PorterError) as exc:
+        cancelled = isinstance(exc, JobCancelled)
+        active_store.finish(
+            job,
+            JobResult(
+                job_id=ctx.job_id,
+                state=JobState.CANCELLED if cancelled else JobState.FAILED,
+                error=None if cancelled else ErrorInfo.from_exception(exc),
+            ),
+        )
+        raise
+    except KeyboardInterrupt:
+        active_store.finish(job, JobResult(job_id=ctx.job_id, state=JobState.CANCELLED))
+        raise
+
+    active_store.finish(job, outcome.job)
+    return outcome
 
 
 def execute_plan(plan: WorkflowPlan, ctx: RunContext) -> ExecutionOutcome:
@@ -538,6 +596,7 @@ def _job_options(plan: WorkflowPlan) -> JobOptions:
 
     cookies_file = None
     cookies_browser = None
+    video_quality = DEFAULT_VIDEO_QUALITY
     if acquire is not None:
         raw_cookies = acquire.params.get("cookies_file")
         cookies_file = Path(str(raw_cookies)) if raw_cookies else None
@@ -546,6 +605,9 @@ def _job_options(plan: WorkflowPlan) -> JobOptions:
             if acquire.params.get("cookies_browser")
             else None
         )
+        raw_quality = acquire.params.get("quality")
+        if raw_quality:
+            video_quality = normalize_video_quality(str(raw_quality))
 
     llm_model = None
     if translate is not None and translate.params.get("llm_model"):
@@ -563,6 +625,7 @@ def _job_options(plan: WorkflowPlan) -> JobOptions:
         llm_model=llm_model,
         cookies_file=cookies_file,
         cookies_browser=cookies_browser,
+        video_quality=video_quality,
         subtitle_file=subtitle_file,
         audio_denoise=plan.runtime.audio_denoise,
         force=plan.runtime.force,
@@ -814,6 +877,25 @@ def _error_for(
     exc: PorterError,
     ctx: RunContext | None = None,
 ) -> StageError:
+    if (
+        plan.stage(Stage.TRANSLATE) is None
+        and exc.details.get("phase") == Phase.TRANSLATE.value
+        and exc.details.get("attempted") == 0
+    ):
+        translate_peers = _available_translators(ctx) if ctx is not None else ()
+        return StageError(
+            code="TARGET_TRACK_MISSING",
+            message=(
+                "the plan skipped translation expecting the platform target-language "
+                "track, but it was not downloaded; replan with --force-translate or "
+                "select a translator"
+            ),
+            retryable=False,
+            alternatives=translate_peers,
+            suggested_workflow=None,
+            details=dict(exc.details),
+        )
+
     issue: PlanIssue | None = None
     if stage is not None:
         issue = next(
@@ -842,6 +924,19 @@ def _error_for(
         alternatives=alternatives,
         suggested_workflow=suggested_workflow,
         details=dict(exc.details),
+    )
+
+
+def _available_translators(ctx: RunContext) -> tuple[str, ...]:
+    """Available translation capabilities for replanning after a missing target track."""
+    from porter.core.workflow.capabilities import capability_catalog
+
+    try:
+        catalog = capability_catalog(ctx)
+    except Exception:  # noqa: BLE001 - error enrichment must never mask the real failure
+        return ()
+    return tuple(
+        cap.id for cap in catalog if cap.stage is Stage.TRANSLATE and cap.available
     )
 
 

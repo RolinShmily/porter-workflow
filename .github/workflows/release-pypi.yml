@@ -48,7 +48,7 @@ jobs:
           ffmpeg -version | head -1
 
       - name: Install the locked environment
-        run: uv sync --extra all --extra dev --locked
+        run: uv sync --extra web --extra dev --locked
 
       - name: ruff
         run: uv run ruff check src tests scripts

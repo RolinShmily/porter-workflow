@@ -28,10 +28,15 @@ SPEC = PlatformSpec(
     url_hosts=("youtube.com", "youtu.be"),
     video_id_group="id",
     default_vertical=False,
-    format_selector="bestvideo*[height<=1080]+bestaudio/best[height<=1080]/best",
+    format_selector="bestvideo*+bestaudio/best",
+    # ``web_safari`` and ``tv`` serve HLS streams with cookies when YouTube's
+    # SABR experiment strips high-resolution HTTPS streams from ``web`` /
+    # ``web_embedded`` / ``mweb`` (leaving only 360p format 18).
     player_clients=(
-        "web_embedded",
+        "web_safari",
+        "tv",
         "web",
+        "web_embedded",
         "mweb",
         "android_vr",
         "ios",

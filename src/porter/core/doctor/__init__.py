@@ -42,6 +42,7 @@ from porter.core.doctor.probes import (
     ProbeContext,
     Severity,
     probe_all,
+    run_doctor,
 )
 
 __all__ = [
@@ -54,4 +55,5 @@ __all__ = [
     "guide_for",
     "probe_all",
     "report_payload",
+    "run_doctor",
 ]

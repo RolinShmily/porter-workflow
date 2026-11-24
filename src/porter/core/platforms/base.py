@@ -51,6 +51,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from porter.core.config import DEFAULT_VIDEO_QUALITY
 from porter.core.context import RunContext
 from porter.core.errors import CapabilityMissingError, ExtractionError, JobCancelled
 from porter.core.events import ArtifactKind, ArtifactReady, Phase
@@ -75,6 +76,7 @@ from porter.core.platforms.ydl import (
     YdlPolicy,
     build_ydl,
     download_progress_hook,
+    format_sort_for_quality,
     has_video_stream,
     translate_ydl_errors,
 )
@@ -287,16 +289,23 @@ class YtDlpExtractor:
     def policy_for(self, ctx: RunContext | None) -> YdlPolicy:
         """Build the yt-dlp policy from a run context.
 
-        Cookies come from the job options because they are per-job; the format
-        selector and player clients come from the spec because they are
-        per-platform.
+        Cookies and target video quality come from the job options (which are
+        populated from the resolved plan or config); the format selector and
+        player clients come from the platform spec.
         """
         options: JobOptions | None = ctx.options if ctx is not None else None
+        quality = (
+            options.video_quality
+            if options is not None
+            else (ctx.config.video_quality if ctx is not None else DEFAULT_VIDEO_QUALITY)
+        )
         return YdlPolicy(
             cookies_file=str(options.cookies_file) if options and options.cookies_file else None,
             cookies_browser=options.cookies_browser if options else None,
             player_clients=self.spec.player_clients,
             extractor_args=self.spec.extractor_args,
+            format=self.spec.format_selector,
+            format_sort=format_sort_for_quality(quality),
         )
 
     @staticmethod
@@ -598,12 +607,17 @@ class YtDlpExtractor:
             )
         ]
         if self.spec.retries_on_rate_limit:
+            fallback_args = (
+                {**self.spec.extractor_args, "youtube": {"player_client": ["android"]}}
+                if self.spec.name == "youtube"
+                else dict(self.spec.extractor_args)
+            )
             attempts.append(
                 (
                     "rate-limit fallback",
                     replace(
                         attempts[0][1],
-                        extractor_args={**self.spec.extractor_args, "youtube": {"player_client": ["android"]}},
+                        extractor_args=fallback_args,
                         concurrent_fragments=1,
                     ),
                 )

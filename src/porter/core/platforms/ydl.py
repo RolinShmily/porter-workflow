@@ -41,6 +41,7 @@ from typing import Any
 
 import yt_dlp
 
+from porter.core.config import target_resolution
 from porter.core.errors import ExtractionError
 from porter.core.events import EventSink, Phase, ProgressUpdated
 from porter.core.logging import get_logger
@@ -68,6 +69,7 @@ __all__ = [
     "available_js_runtimes",
     "build_ydl",
     "download_progress_hook",
+    "format_sort_for_quality",
     "has_audio_stream",
     "has_video_stream",
     "translate_ydl_errors",
@@ -155,6 +157,10 @@ class YdlPolicy:
     extractor_args: Mapping[str, Any] = field(default_factory=dict)
     #: yt-dlp ``format`` selector. ``None`` lets the platform spec decide.
     format: str | None = None
+    #: yt-dlp ``format_sort`` criteria (e.g. ``("res:1080",)``). Anchors
+    #: selection on a target short-side resolution and degrades gracefully when
+    #: the platform only offers lower streams.
+    format_sort: Sequence[str] = ()
     #: Output template. The pipeline points this at a scratch directory.
     outtmpl: str | None = None
     #: Container for merged video+audio streams.
@@ -279,6 +285,20 @@ def available_js_runtimes(which: Callable[[str], str | None] | None = None) -> d
     return {name: {} for name in JS_RUNTIME_PRIORITY if lookup(name)}
 
 
+def format_sort_for_quality(quality: str) -> tuple[str, ...]:
+    """Return yt-dlp ``format_sort`` criteria anchored at ``quality``.
+
+    Sorting by ``res:<N>`` compares the stream's *shortest* side, so 1080p
+    covers both ``1920x1080`` horizontal video and ``1080x1920`` vertical
+    shorts/reels, while naturally degrading to the highest available stream
+    below ``N`` rather than rejecting the video or falling back to 360p.
+    """
+    res = target_resolution(quality)
+    if res is None:
+        return ()
+    return (f"res:{res}",)
+
+
 def build_ydl(
     policy: YdlPolicy | None = None,
     *,
@@ -323,6 +343,8 @@ def build_ydl(
 
     if policy.format:
         opts["format"] = policy.format
+    if policy.format_sort:
+        opts["format_sort"] = list(policy.format_sort)
     if policy.outtmpl:
         opts["outtmpl"] = policy.outtmpl
     if policy.merge_output_format:

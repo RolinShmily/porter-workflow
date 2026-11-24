@@ -22,7 +22,7 @@ from collections.abc import Generator
 from pathlib import Path
 from typing import Any
 
-from porter.core.config import resolve
+from porter.core.config import DEFAULT_VIDEO_QUALITY, resolve
 from porter.core.context import RunContext
 from porter.core.errors import PorterError
 from porter.core.events import (
@@ -39,10 +39,10 @@ from porter.core.events import (
 from porter.core.jobs.records import JobRegistry
 from porter.core.jobs.store import JobStore
 from porter.core.logging import get_logger
-from porter.core.models.request import BurnMode, JobOptions, JobRequest, JobResult
+from porter.core.models.request import JobOptions, JobRequest, JobResult
 from porter.core.workflow.executor import execute_plan
-from porter.core.workflow.model import Task, WorkflowPlan, WorkflowResult
-from porter.core.workflow.resolver import PlanOverrides, config_fingerprint, resolve_plan
+from porter.core.workflow.model import WorkflowPlan, WorkflowResult
+from porter.core.workflow.resolver import config_fingerprint, plan_source
 from porter.webui.i18n import resolve_translator
 from porter.webui.materials import collect_task_materials
 
@@ -70,6 +70,7 @@ def _resolve_plan(
     allow_paid: bool,
     force_translate: bool = False,
     force: bool = False,
+    quality: str = "",
 ) -> WorkflowPlan:
     """Resolve the plan this tab would execute.
 
@@ -79,31 +80,21 @@ def _resolve_plan(
     """
     config = resolve(None)
     cleaned_srt = _clean_path_input(subtitle_file) if subtitle_file else ""
-    overrides = PlanOverrides(
-        task=Task(task),
-        output_dir=Path(config.output_dir),
+    return plan_source(
+        source,
+        config=config,
+        task=task,
         target_lang=target_lang or "zh-Hans",
-        burn=BurnMode(burn),
+        burn=burn,
+        quality=quality or None,
         transcript=transcript or None,
         translate=translate or None,
         subtitle_file=Path(cleaned_srt) if cleaned_srt else None,
-        cookies_file=config.cookies_file,
-        cookies_browser=config.cookies_browser,
         force=force,
-        audio_denoise=config.asr.audio_denoise,
         allow_paid=allow_paid,
         force_translate=force_translate,
-    )
-    ctx = RunContext(
         job_id="web-plan",
-        options=JobOptions(
-            output_dir=overrides.output_dir,
-            cookies_file=config.cookies_file,
-            cookies_browser=config.cookies_browser,
-        ),
-        config=config,
     )
-    return resolve_plan(source, overrides, ctx)
 
 
 def _plan_key(
@@ -117,6 +108,7 @@ def _plan_key(
     allow_paid: bool,
     force_translate: bool = False,
     force: bool = False,
+    quality: str = DEFAULT_VIDEO_QUALITY,
 ) -> tuple[Any, ...]:
     return (
         url,
@@ -129,6 +121,7 @@ def _plan_key(
         allow_paid,
         force_translate,
         force,
+        quality,
     )
 
 
@@ -211,6 +204,22 @@ def build_workbench_tab(gr: Any, store: JobStore, registry: JobRegistry, i18n: A
                         value="zh-Hans",
                         label=t("target_lang_label"),
                         lines=1,
+                    )
+                    try:
+                        initial_quality = resolve(None).video_quality
+                    except (PorterError, ValueError, OSError):
+                        initial_quality = DEFAULT_VIDEO_QUALITY
+                    quality_choice = gr.Dropdown(
+                        choices=[
+                            ("1080p", "1080p"),
+                            ("2160p (4K)", "2160p"),
+                            ("1440p (2K)", "1440p"),
+                            ("720p", "720p"),
+                            ("480p", "480p"),
+                            (t("quality_best"), "best"),
+                        ],
+                        value=initial_quality,
+                        label=t("quality_label"),
                     )
                 with gr.Row():
                     transcript_choice = gr.Dropdown(
@@ -331,6 +340,7 @@ def build_workbench_tab(gr: Any, store: JobStore, registry: JobRegistry, i18n: A
             allow_paid,
             force_translate,
             force_rerun,
+            quality_choice,
         ]
 
         def on_controls_changed(
@@ -344,11 +354,22 @@ def build_workbench_tab(gr: Any, store: JobStore, registry: JobRegistry, i18n: A
             paid: bool,
             f_translate: bool,
             f_rerun: bool,
+            quality: str,
         ) -> str:
             if current["plan"] is None:
                 return f"ℹ️ {t('plan_idle')}"
             key = _plan_key(
-                url.strip(), task, burn, transcript, translate, lang, srt, paid, f_translate, f_rerun
+                url.strip(),
+                task,
+                burn,
+                transcript,
+                translate,
+                lang,
+                srt,
+                paid,
+                f_translate,
+                f_rerun,
+                quality,
             )
             if current["key"] == key:
                 label = t("plan_ready") if current["plan"].feasible else t("plan_blocked")
@@ -361,11 +382,12 @@ def build_workbench_tab(gr: Any, store: JobStore, registry: JobRegistry, i18n: A
             probe = plan.source_probe
             title = probe.title or "未知标题"
             platform = probe.platform or probe.kind.value
-            duration = (
-                f"{probe.duration_seconds:.1f}s"
-                if probe.duration_seconds is not None
-                else "-"
-            )
+            parts: list[str] = []
+            if probe.duration_seconds is not None:
+                parts.append(f"{probe.duration_seconds:.1f}s")
+            if probe.width and probe.height:
+                parts.append(f"{probe.width}x{probe.height}")
+            duration = " · ".join(parts) if parts else "-"
             tracks = (
                 ", ".join(
                     f"{track.role}={track.lang}"
@@ -392,12 +414,23 @@ def build_workbench_tab(gr: Any, store: JobStore, registry: JobRegistry, i18n: A
             paid: bool,
             f_translate: bool,
             f_rerun: bool,
+            quality: str,
         ) -> tuple[str, str, str, str, str, str]:
             if not url or not url.strip():
                 return "⚠️ 未输入链接或路径", "-", "-", "-", "**计划未生成**", ""
             source = url.strip()
             key = _plan_key(
-                source, task, burn, transcript, translate, lang, srt, paid, f_translate, f_rerun
+                source,
+                task,
+                burn,
+                transcript,
+                translate,
+                lang,
+                srt,
+                paid,
+                f_translate,
+                f_rerun,
+                quality,
             )
             try:
                 plan = _resolve_plan(
@@ -411,6 +444,7 @@ def build_workbench_tab(gr: Any, store: JobStore, registry: JobRegistry, i18n: A
                     allow_paid=paid,
                     force_translate=f_translate,
                     force=f_rerun,
+                    quality=quality,
                 )
             except (PorterError, ValueError, OSError) as exc:
                 current["plan"] = None
@@ -465,6 +499,7 @@ def build_workbench_tab(gr: Any, store: JobStore, registry: JobRegistry, i18n: A
             paid: bool,
             f_translate: bool,
             f_rerun: bool,
+            quality: str,
             progress: Any = None,
         ) -> Generator[tuple[str, str], None, None]:
             prog = progress or (gr.Progress(track_tqdm=False) if hasattr(gr, "Progress") else None)
@@ -477,7 +512,17 @@ def build_workbench_tab(gr: Any, store: JobStore, registry: JobRegistry, i18n: A
 
             source = url.strip()
             key = _plan_key(
-                source, task, burn, transcript, translate, lang, srt, paid, f_translate, f_rerun
+                source,
+                task,
+                burn,
+                transcript,
+                translate,
+                lang,
+                srt,
+                paid,
+                f_translate,
+                f_rerun,
+                quality,
             )
             try:
                 config = resolve(None)
@@ -507,6 +552,7 @@ def build_workbench_tab(gr: Any, store: JobStore, registry: JobRegistry, i18n: A
                         allow_paid=paid,
                         force_translate=f_translate,
                         force=f_rerun,
+                        quality=quality,
                     )
                 except (PorterError, ValueError, OSError) as exc:
                     yield (f"❌ **计划失败**: {exc}", "无法生成计划")

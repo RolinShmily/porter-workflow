@@ -13,7 +13,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from porter.core.config import PorterConfig
+from porter import __version__
+from porter.core.config import PorterConfig, resolve
+from porter.core.errors import PorterError
 from porter.core.jobs.records import JobRegistry
 from porter.core.jobs.store import JobStore
 from porter.core.logging import configure as configure_logging
@@ -54,7 +56,7 @@ def check_gradio_installed() -> Any:
         )
         sys.stderr.write(
             "Error: Gradio is required for the web interface.\n"
-            "Run: pip install 'porter-workflow[web]' or uv pip install 'porter-workflow[web]'\n"
+            "Run: uv tool install 'porter-workflow[web]' or pip install 'porter-workflow[web]'\n"
         )
         sys.exit(1)
 
@@ -86,8 +88,13 @@ def create_app(
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Entry point for the ``porter-web`` CLI command."""
+    """Entry point for the ``porter`` WebUI command."""
     parser = argparse.ArgumentParser(description="Porter Workflow Web Interface")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"porter {__version__}",
+    )
     parser.add_argument(
         "--host", default="127.0.0.1", help="Host interface to bind (default: 127.0.0.1)"
     )
@@ -100,7 +107,10 @@ def main(argv: list[str] | None = None) -> int:
     i18n = create_i18n(gr)
     app = create_app()
 
-    cfg = PorterConfig()
+    try:
+        cfg = resolve(None)
+    except PorterError:
+        cfg = PorterConfig()
     allowed_dirs = [
         str(Path.cwd().resolve()),
         str(cfg.output_dir.resolve()),

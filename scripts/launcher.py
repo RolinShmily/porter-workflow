@@ -93,7 +93,7 @@ _TZ_MARKERS = (
 )
 
 #: Release requirement. Overridable so an offline install can point at a wheel.
-DEFAULT_SPEC = "porter-workflow[all]"
+DEFAULT_SPEC = "porter-workflow[web]"
 
 #: Refresh yt-dlp at most this often. It ships weekly fixes, and a stale copy is
 #: the single most common cause of "the download stopped working", but doing
