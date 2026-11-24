@@ -89,8 +89,8 @@ tmp/
 !skills/**/*.srt
 !skills/**/*.ass
 
-# Documentation images are source media, not pipeline output.
-!/docs/images/**
+# Repository media assets are source media, not pipeline output.
+!/assets/**
 
 # ---------------------------------------------------------------------------
 # Agent / editor / OS
