@@ -1,9 +1,9 @@
 # Changelog — Porter Workflow Skill
 
 All notable changes to the self-contained `skills/porter-workflow/` Agent Skill are
-documented here and tracked via `SKILL.md` `metadata.version` (distributed directly from
-`main` via `npx skills add`). Core engine & WebUI releases (`pypi-v*` tags) are tracked
-separately in the root [`CHANGELOG.md`](../../CHANGELOG.md).
+documented here and tracked via `SKILL.md` `metadata.version` and lightweight `skill-v*`
+tags (distributed directly from `main` via `npx skills add`). Main repository releases
+(`v*` tags) are tracked in the root [`CHANGELOG.md`](../../CHANGELOG.md).
 
 ## [0.4.0] - 2026-11-24
 
