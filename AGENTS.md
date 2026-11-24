@@ -29,7 +29,7 @@ Keep core/package changes and Agent Skill changes strictly separated:
 
 ## 3. Release & Tag Conventions
 
-- `vX.Y.Z` — primary repository release tag; triggers `.github/workflows/release-pypi.yml` (runs gates, publishes `porter-workflow` to PyPI, and creates GitHub Release `porter-workflow vX.Y.Z` aggregating root `CHANGELOG.md` + new Skill changelog entries).
+- `vX.Y.Z` — primary repository release tag; triggers `.github/workflows/publish.yml` (runs gates and publishes `porter-workflow` to PyPI), which then calls `.github/workflows/release.yml` (`workflow_call`) to create GitHub Release `porter-workflow vX.Y.Z` aggregating root `CHANGELOG.md` + new Skill changelog entries.
 - `skill-vX.Y.Z` — lightweight git tag only for Skill version snapshots (paired with `skills/porter-workflow/CHANGELOG.md`); triggers **no** workflow.
 
 ## 4. Verification Gates

@@ -55,7 +55,9 @@ The English heading above is kept stable for GitHub issue template anchors (`doc
 
 1. 更新 [`CHANGELOG.md`](../CHANGELOG.md) 与 `src/porter/__init__.py` 的 `__version__`。
 2. 跑通第 2 节全部四道门禁，确认 `uv build` 产物（wheel 仅含 `porter` 与 `porter = porter.webui.app:main`；sdist 含 `src/`、`skills/`、`docs/`，不含 `tests/`）。
-3. 提交并推送 tag：`git tag vX.Y.Z && git push origin main vX.Y.Z`，由 `.github/workflows/release-pypi.yml` 自动跑门禁、发布至 PyPI，并以 `porter-workflow vX.Y.Z` 为标题创建 GitHub Release（自动聚合根 `CHANGELOG.md` 与自上一版本以来新增的 Skill Changelog）。
+3. 提交并推送 tag：`git tag vX.Y.Z && git push origin main vX.Y.Z`：
+   - `.github/workflows/publish.yml` 自动跑门禁并发布 `porter-workflow` 至 PyPI；
+   - PyPI 上传成功后自动通过 `workflow_call` 调用 `.github/workflows/release.yml`，以 `porter-workflow vX.Y.Z` 为标题创建 GitHub Release（自动聚合根 `CHANGELOG.md` 与自上一版本以来新增的 Skill Changelog；也可手动 `workflow_dispatch` 补建 Release）。
 
 ### 5.2 附属 Skill 版本标记（`skill-v*`）
 

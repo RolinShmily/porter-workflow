@@ -1,0 +1,122 @@
+name: publish
+
+# Publishes `porter-workflow` to PyPI on a `v*` version tag, then invokes
+# `.github/workflows/release.yml` (`workflow_call`) to create the matching
+# GitHub Release (`porter-workflow v<version>`).
+#
+# Note: PyPI Trusted Publishing (OIDC) cannot be executed inside a reusable
+# workflow (`pypi/warehouse#11096`), so the PyPI publish job stays directly in
+# this top-level workflow while GitHub Release is decoupled into `release.yml`.
+#
+# One-time setup on PyPI -> Publishing -> Trusted Publishers:
+#   Owner:            RolinShmily
+#   Repository:       porter-workflow
+#   Workflow name:    publish.yml
+#   Environment:      pypi
+
+on:
+  push:
+    tags:
+      - "v*"
+  # Lets a PyPI publish be retried after an outage without re-tagging.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          ffmpeg -version | head -1
+
+      - name: Install the locked environment
+        run: uv sync --extra web --extra dev --locked
+
+      - name: ruff
+        run: uv run ruff check src tests skills
+
+      - name: mypy
+        run: uv run mypy src
+
+      - name: import-linter
+        run: uv run lint-imports
+
+      - name: pytest
+        run: uv run pytest -m "not network"
+
+      - name: The tag must match porter.__version__
+        if: github.ref_type == 'tag'
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(uv run python -c 'import porter; print(porter.__version__)')"
+          if [ "$tag" != "$version" ]; then
+            echo "tag v$tag does not match porter.__version__ = $version" >&2
+            exit 1
+          fi
+          echo "tag and version agree: $version"
+
+  build:
+    name: build
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Build sdist + wheel
+        run: uv build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/porter-workflow
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+
+  release:
+    name: GitHub Release
+    needs: publish
+    if: github.ref_type == 'tag'
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ github.ref_name }}
+    permissions:
+      contents: write
