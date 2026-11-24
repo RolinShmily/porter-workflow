@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-11-24
+
+### Changed
+
+- **Decoupled PyPI publish and GitHub Release workflows.** Split release automation into
+  `.github/workflows/publish.yml` (triggered by `v*` tags; runs gates, builds, and publishes
+  to PyPI via Trusted Publishing) and reusable `.github/workflows/release.yml` (called via
+  `workflow_call` after PyPI upload succeeds to create GitHub Release `porter-workflow v<version>`
+  aggregating root and Skill changelogs).
+
 ## [0.4.1] - 2026-11-24
 
 ### Added
