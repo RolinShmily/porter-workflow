@@ -18,6 +18,40 @@ from porter.core.models.request import BurnMode
 URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
 
+def _canned_plan(tmp_path: Path):
+    """A valid plan for tests that need ``run`` to reach its executor seam.
+
+    No ``config_fingerprint``: the fake executor never preflights, and leaving it
+    empty keeps the fixture independent of the machine's configuration.
+    """
+    from porter.core.workflow.model import (
+        PlanRuntime,
+        SourceKind,
+        SourceProbe,
+        Stage,
+        StagePlan,
+        Task,
+        WorkflowId,
+        WorkflowPlan,
+    )
+
+    return WorkflowPlan(
+        workflow=WorkflowId.URL_ASR,
+        task=Task.RELEASE,
+        source=URL,
+        runtime=PlanRuntime(output_dir=str(tmp_path / "out")),
+        source_probe=SourceProbe(
+            kind=SourceKind.URL,
+            source=URL,
+            platform="youtube",
+            has_video=True,
+        ),
+        stages=(
+            StagePlan(id="probe", stage=Stage.PROBE, capability="probe.ytdlp"),
+        ),
+    ).sealed()
+
+
 class TestBareUrlShorthand:
     """``porter <URL>`` must keep working — it is documented and in use."""
 
@@ -59,22 +93,6 @@ class TestDispatch:
         assert main([]) == render.EXIT_MISUSE
         assert "usage:" in capsys.readouterr().out
 
-    def test_unimplemented_command_reports_misuse(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """Skeleton commands fail loudly rather than silently doing nothing.
-
-        ``config import-videocaptioner`` is the last stub. ``run`` and ``jobs``
-        were the examples here while they were stubs, which is why this test names
-        a stub rather than asserting that some stub exists.
-        """
-        assert main(["config", "import-videocaptioner"]) == render.EXIT_MISUSE
-        err = capsys.readouterr().err
-        assert "not implemented" in err
-        # The message must be actionable on its own: it used to point the user at
-        # an internal refactor section number, which is meaningless to them.
-        assert "github.com/RolinShmily/porter-workflow/issues" in err
-
     def test_jobs_is_no_longer_a_stub(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Regression guard: `porter jobs` must read the registry, not a stub."""
         assert main(["jobs"]) == render.EXIT_OK
@@ -82,13 +100,22 @@ class TestDispatch:
         assert "not implemented" not in err
         assert "no running jobs" in err
 
-    def test_run_is_no_longer_a_stub(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """Regression guard: `porter run` must reach the pipeline, not a stub.
+    def test_run_is_no_longer_a_stub(
+        self, monkeypatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Regression guard: `porter run` must attempt a real execution plan.
 
-        A bad URL that fails fast is enough -- the point is that the command
-        attempts real work and reports a real failure instead of returning
-        EXIT_MISUSE.
+        Resolution is the first real step and it is the seam the command owns.
+        A bad source that fails there is enough -- the point is that the command
+        reaches it and reports a real failure instead of returning EXIT_MISUSE.
         """
+        from porter.core.errors import ExtractionError
+
+        def fail(source, overrides, ctx):
+            raise ExtractionError("not a video")
+
+        monkeypatch.setattr("porter.core.workflow.resolver.resolve_plan", fail)
+
         code = main(["run", "https://example.com/not-a-video", "--burn", "skip"])
 
         assert code == render.EXIT_ERROR
@@ -295,6 +322,27 @@ class TestDoctorCommand:
         assert payload["ok"] is True
         assert payload["findings"][0]["key"] == "ffmpeg"
 
+    def test_json_mode_carries_remediation_for_a_blocker(
+        self, monkeypatch, capsys, project_dir
+    ) -> None:
+        """An agent reading --json must get the fix in the same response."""
+        from porter.core.doctor import CapabilityReport
+        from porter.core.doctor.probes import Finding
+
+        report = CapabilityReport(
+            findings=[
+                Finding.blocked("ffmpeg", "ffmpeg & ffprobe", "not found", "ffmpeg"),
+            ]
+        )
+        monkeypatch.setattr("porter.core.doctor.probe_all", lambda *a, **k: report)
+
+        assert main(["doctor", "--json"]) == render.EXIT_ERROR
+
+        payload = json.loads(capsys.readouterr().out)
+        guidance = payload["guidance"]["ffmpeg"]
+        assert guidance["summary"]
+        assert any("apt install ffmpeg" in step for step in guidance["steps"])
+
     def test_a_blocker_exits_non_zero(self, monkeypatch, capsys, project_dir) -> None:
         from porter.core.doctor import CapabilityReport
         from porter.core.doctor.probes import Finding
@@ -465,61 +513,54 @@ class TestJsonIsEncodingIndependent:
         assert decoded["phase"] == "prepare"
 
 
-class TestRunOptionsReachThePipeline:
-    """Every flag must land on the object the pipeline actually reads.
+class TestRunOptionsReachThePlan:
+    """Every flag must land on the object the resolver actually reads.
 
-    This is the guard for a real bug: ``JobOptions`` exists on both ``JobRequest``
-    and ``RunContext``, and the pipeline read phase selection from one and the
-    renderer's settings from the other. The CLI happened to pass the *same object*
-    to both, which is exactly why the bug was invisible here and only a real
-    end-to-end run found it. These tests pin that the flags reach the request,
-    which is the object that now wins.
+    The old version of these tests pinned that flags reached ``JobOptions`` on the
+    request, because the pipeline read phase selection from one object and render
+    settings from another. The refactor removes that class of bug: the CLI now
+    builds ``PlanOverrides``, and the executor rebuilds ``JobOptions`` *from the
+    plan*. These tests pin the first half of that chain.
     """
 
     @pytest.fixture
     def captured(self, monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
-        """Intercept the pipeline before it runs, capturing the request and context."""
-        import porter.cli.commands.run as run_module
+        """Intercept resolution before it probes or executes anything."""
+        from porter.core.errors import ExtractionError
 
         seen: dict[str, object] = {}
 
-        class FakePipeline:
-            @staticmethod
-            def default(ctx: object) -> FakePipeline:
-                seen["ctx"] = ctx
-                return FakePipeline()
+        def fake_resolve(source, overrides, ctx):
+            seen["source"] = source
+            seen["overrides"] = overrides
+            seen["ctx"] = ctx
+            raise ExtractionError("stop here")
 
-            def run(self, request: object, ctx: object) -> object:
-                seen["request"] = request
-                from porter.core.models.request import JobResult
-
-                return JobResult(job_id="x", state=JobState.DONE)
-
-        monkeypatch.setattr(run_module, "Pipeline", FakePipeline, raising=False)
-        import porter.core.pipeline as pipeline_module
-
-        monkeypatch.setattr(pipeline_module, "Pipeline", FakePipeline)
+        monkeypatch.setattr("porter.core.workflow.resolver.resolve_plan", fake_resolve)
         return seen
 
-    def test_burn_lands_on_the_request(self, captured, tmp_path, capsys) -> None:
-
+    def test_burn_lands_on_the_overrides(self, captured, tmp_path, capsys) -> None:
         main(["run", URL, "-o", str(tmp_path), "--burn", "zh_only"])
 
-        request = captured["request"]
-        assert request.options.burn is BurnMode.ZH_ONLY  # type: ignore[attr-defined]
+        assert captured["overrides"].burn is BurnMode.ZH_ONLY  # type: ignore[attr-defined]
+
+    def test_a_hyphenated_burn_mode_is_accepted(self, captured, tmp_path, capsys) -> None:
+        """The old parser offered ``zh-only`` but the enum value is ``zh_only``.
+
+        Passing the advertised form raised ``ValueError`` inside the command, so
+        this pins both spellings.
+        """
+        main(["run", URL, "-o", str(tmp_path), "--burn", "zh-only"])
+
+        assert captured["overrides"].burn is BurnMode.ZH_ONLY  # type: ignore[attr-defined]
 
     def test_denoise_falls_back_to_the_config_key(self, captured, tmp_path, capsys) -> None:
-        """``asr.audio_denoise`` used to be parsed and read by nobody.
-
-        The flag is tri-state on purpose: ``--no-denoise`` is an explicit no, and
-        leaving it out defers to the config instead of hard-coding ``True``.
-        """
         cfg = tmp_path / "porter.json"
         cfg.write_text('{"asr": {"audio_denoise": false}}', encoding="utf-8")
 
         main(["--config", str(cfg), "run", URL, "-o", str(tmp_path)])
 
-        assert captured["request"].options.audio_denoise is False  # type: ignore[attr-defined]
+        assert captured["overrides"].audio_denoise is False  # type: ignore[attr-defined]
 
     def test_no_denoise_flag_wins_over_the_config(self, captured, tmp_path, capsys) -> None:
         cfg = tmp_path / "porter.json"
@@ -527,38 +568,45 @@ class TestRunOptionsReachThePipeline:
 
         main(["--config", str(cfg), "run", URL, "-o", str(tmp_path), "--no-denoise"])
 
-        assert captured["request"].options.audio_denoise is False  # type: ignore[attr-defined]
+        assert captured["overrides"].audio_denoise is False  # type: ignore[attr-defined]
 
-    def test_target_lang_and_force_land_on_the_request(self, captured, tmp_path, capsys) -> None:
+    def test_target_lang_and_force_land_on_the_overrides(
+        self, captured, tmp_path, capsys
+    ) -> None:
         main(["run", URL, "-o", str(tmp_path), "--target-lang", "zh-Hant", "--force"])
 
-        options = captured["request"].options  # type: ignore[attr-defined]
-        assert options.target_lang == "zh-Hant"
-        assert options.force is True
+        overrides = captured["overrides"]
+        assert overrides.target_lang == "zh-Hant"  # type: ignore[attr-defined]
+        assert overrides.force is True  # type: ignore[attr-defined]
 
-    def test_only_phase_lands_on_the_request(self, captured, tmp_path, capsys) -> None:
-        from porter.core.events import Phase
+    def test_a_capability_request_lands_on_the_overrides(
+        self, captured, tmp_path, capsys
+    ) -> None:
+        main(
+            [
+                "run",
+                URL,
+                "-o",
+                str(tmp_path),
+                "--transcript",
+                "whisper-api",
+                "--translate",
+                "llm",
+                "--allow-paid",
+            ]
+        )
+
+        overrides = captured["overrides"]
+        assert overrides.transcript == "whisper-api"  # type: ignore[attr-defined]
+        assert overrides.translate == "llm"  # type: ignore[attr-defined]
+        assert overrides.allow_paid is True  # type: ignore[attr-defined]
+
+    def test_only_phase_is_mapped_onto_a_task(self, captured, tmp_path, capsys) -> None:
+        from porter.core.workflow.model import Task
 
         main(["run", URL, "-o", str(tmp_path), "--only-phase", "translate"])
 
-        assert captured["request"].options.only_phase is Phase.TRANSLATE  # type: ignore[attr-defined]
-
-    def test_the_cli_does_not_depend_on_the_two_options_objects_matching(
-        self, captured, tmp_path, capsys
-    ) -> None:
-        """The request is authoritative, so even a mismatched context is safe.
-
-        Asserted by construction: the CLI passes one object to both, and the
-        pipeline rebinds from the request. A frontend that passes different
-        objects is now also correct.
-        """
-
-        main(["run", URL, "-o", str(tmp_path), "--burn", "bilingual_only"])
-
-        ctx = captured["ctx"]
-        request = captured["request"]
-        assert request.options.burn is BurnMode.BILINGUAL_ONLY  # type: ignore[attr-defined]
-        assert ctx.options is request.options or ctx.options.burn is BurnMode.BILINGUAL_ONLY  # type: ignore[attr-defined]
+        assert captured["overrides"].task is Task.SUBTITLE  # type: ignore[attr-defined]
 
 
 # ----------------------------------------------------------------------
@@ -583,6 +631,173 @@ def registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     return JobRegistry(path)
 
 
+class TestRunFromAPlanFile:
+    """``run --plan`` executes the approved document, not a re-resolution.
+
+    The plan is the agent-facing contract: it was computed once, shown to the
+    user, and is now handed back. Only execution settings (output directory,
+    ``--force``) may change; a capability choice may not, because doing so would
+    run a pipeline nobody approved.
+    """
+
+    @pytest.fixture
+    def saved(self, tmp_path: Path) -> Path:
+        path = tmp_path / "plan.json"
+        path.write_text(_canned_plan(tmp_path).model_dump_json(), encoding="utf-8")
+        return path
+
+    @pytest.fixture
+    def executed(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, object]:
+        from porter.core.events import JobState
+        from porter.core.models.request import JobResult
+        from porter.core.workflow.executor import ExecutionOutcome
+        from porter.core.workflow.model import WorkflowResult
+
+        seen: dict[str, object] = {}
+
+        def fake_execute(plan, ctx):
+            seen["plan"] = plan
+            result = WorkflowResult(
+                job_id=ctx.job_id,
+                state=JobState.DONE,
+                plan_id=plan.plan_id,
+                workflow=plan.workflow,
+                task=plan.task,
+                task_dir=str(tmp_path / "task"),
+                artifacts={"video": str(tmp_path / "task" / "video.mp4")},
+            )
+            return ExecutionOutcome(
+                workflow=result,
+                job=JobResult(job_id=ctx.job_id, state=JobState.DONE),
+            )
+
+        monkeypatch.setattr("porter.core.workflow.executor.execute_plan", fake_execute)
+        return seen
+
+    def test_the_saved_plan_is_executed_unchanged(
+        self, saved, executed, capsys
+    ) -> None:
+        assert main(["run", "--plan", str(saved)]) == render.EXIT_OK
+
+        plan = executed["plan"]
+        assert plan.plan_id == _canned_plan(  # type: ignore[attr-defined]
+            Path(saved).parent
+        ).plan_id
+        assert "video.mp4" in capsys.readouterr().out
+
+    def test_output_and_force_are_runtime_overrides(
+        self, saved, executed, tmp_path
+    ) -> None:
+        assert (
+            main(
+                [
+                    "run",
+                    "--plan",
+                    str(saved),
+                    "-o",
+                    str(tmp_path / "elsewhere"),
+                    "--force",
+                ]
+            )
+            == render.EXIT_OK
+        )
+
+        plan = executed["plan"]
+        assert plan.runtime.output_dir == str(tmp_path / "elsewhere")  # type: ignore[attr-defined]
+        assert plan.runtime.force is True  # type: ignore[attr-defined]
+        # The reseal makes the changed execution settings part of the identity.
+        assert plan.plan_id != _canned_plan(tmp_path).plan_id  # type: ignore[attr-defined]
+
+    def test_capability_flags_are_reported_as_ignored(
+        self, saved, executed, capsys
+    ) -> None:
+        assert main(["run", "--plan", str(saved), "--burn", "skip"]) == render.EXIT_OK
+
+        assert "ignored with --plan" in capsys.readouterr().err
+
+    def test_a_malformed_plan_file_is_an_error(self, tmp_path, capsys) -> None:
+        path = tmp_path / "plan.json"
+        path.write_text("{not json", encoding="utf-8")
+
+        assert main(["run", "--plan", str(path)]) == render.EXIT_ERROR
+        assert "invalid plan file" in capsys.readouterr().err
+
+    def test_neither_source_nor_plan_is_misuse(self, capsys) -> None:
+        assert main(["run"]) == render.EXIT_MISUSE
+        assert "needs a SOURCE" in capsys.readouterr().err
+
+
+class TestCapabilitiesCommand:
+    @pytest.fixture
+    def catalog(self, monkeypatch: pytest.MonkeyPatch):
+        from porter.core.workflow.model import CapabilityDescriptor, Stage
+
+        descriptors = (
+            CapabilityDescriptor(
+                id="transcript.whisper-local",
+                stage=Stage.TRANSCRIPT,
+                available=True,
+                cost="free",
+            ),
+            CapabilityDescriptor(
+                id="transcript.whisper-api",
+                stage=Stage.TRANSCRIPT,
+                available=False,
+                cost="paid",
+            ),
+        )
+        monkeypatch.setattr(
+            "porter.core.workflow.capabilities.capability_catalog",
+            lambda ctx: descriptors,
+        )
+        return descriptors
+
+    def test_json_lists_every_capability_including_missing_ones(
+        self, catalog, capsys
+    ) -> None:
+        assert main(["capabilities", "--json"]) == render.EXIT_OK
+
+        payload = json.loads(capsys.readouterr().out)
+        assert [item["id"] for item in payload] == [
+            "transcript.whisper-local",
+            "transcript.whisper-api",
+        ]
+        assert payload[1]["available"] is False
+
+    def test_available_filters_the_catalog(self, catalog, capsys) -> None:
+        assert main(["capabilities", "--available", "--json"]) == render.EXIT_OK
+
+        payload = json.loads(capsys.readouterr().out)
+        assert [item["id"] for item in payload] == ["transcript.whisper-local"]
+
+    def test_stage_filters_the_catalog(self, catalog, capsys) -> None:
+        assert main(["capabilities", "--stage", "translate", "--json"]) == render.EXIT_OK
+
+        assert json.loads(capsys.readouterr().out) == []
+
+
+class TestProbeCommand:
+    def test_a_subtitle_file_is_reported_without_touching_the_network(
+        self, tmp_path, capsys
+    ) -> None:
+        source = tmp_path / "captions.srt"
+        source.write_text(
+            "1\n00:00:00,000 --> 00:00:01,000\nHello\n", encoding="utf-8"
+        )
+
+        assert main(["probe", str(source), "--json"]) == render.EXIT_OK
+
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["kind"] == "subtitle"
+        assert payload["tracks"][0]["verified"] is True
+
+    def test_an_unusable_source_exits_non_zero(self, tmp_path, capsys) -> None:
+        assert main(["probe", str(tmp_path / "gone.mp3"), "--json"]) == render.EXIT_ERROR
+
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["warnings"][0]["code"] == "SOURCE_NOT_FOUND"
+
+
 class TestAnInterruptIsReportedNotRaised:
     """Ctrl+C must produce a sentence, not a traceback ending in socket internals.
 
@@ -593,21 +808,24 @@ class TestAnInterruptIsReportedNotRaised:
     """
 
     @pytest.fixture
-    def interrupted(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A pipeline that raises ``KeyboardInterrupt`` where the real one would."""
-        import porter.cli.commands.run as run_module
-        import porter.core.pipeline as pipeline_module
+    def interrupted(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """A resolved plan whose executor raises ``KeyboardInterrupt``.
 
-        class InterruptedPipeline:
-            @staticmethod
-            def default(ctx: object) -> InterruptedPipeline:
-                return InterruptedPipeline()
+        The interrupt is injected at the executor seam rather than inside the
+        pipeline: ``run`` now owns the job record and the handler under test, and
+        resolving a real plan would probe the network.
+        """
 
-            def run(self, request: object, ctx: object) -> object:
-                raise KeyboardInterrupt
+        def interrupted_execute(plan: object, ctx: object) -> object:
+            raise KeyboardInterrupt
 
-        monkeypatch.setattr(run_module, "Pipeline", InterruptedPipeline, raising=False)
-        monkeypatch.setattr(pipeline_module, "Pipeline", InterruptedPipeline)
+        monkeypatch.setattr(
+            "porter.core.workflow.resolver.resolve_plan",
+            lambda source, overrides, ctx: _canned_plan(tmp_path),
+        )
+        monkeypatch.setattr(
+            "porter.core.workflow.executor.execute_plan", interrupted_execute
+        )
 
     def test_an_interrupt_in_a_run_exits_cancelled(
         self, interrupted, tmp_path, capsys
@@ -820,20 +1038,21 @@ class TestPlanAcceptsCookies:
         assert args.cookies_from_browser == "firefox"
         assert args.cookies == "c.txt"
 
-    def test_the_flags_reach_the_job_options(self, monkeypatch, tmp_path) -> None:
+    def test_the_flags_reach_the_resolver(self, monkeypatch, tmp_path) -> None:
         from porter.cli.app import build_parser
         from porter.cli.commands import plan as plan_cmd
         from porter.core.errors import ExtractionError
 
         captured: dict[str, object] = {}
 
-        def fake_plan_for(source, options=None, ctx=None):
+        def fake_resolve(source, overrides, ctx):
             captured["ctx"] = ctx
-            # A ``PorterError`` is caught by ``run`` and returned as a status,
+            captured["overrides"] = overrides
+            # A ``PorterError`` is caught by the command and returned as a status,
             # which ends the test before it needs a fully-formed plan.
             raise ExtractionError("stop here")
 
-        monkeypatch.setattr("porter.core.plan.plan_for", fake_plan_for)
+        monkeypatch.setattr("porter.core.workflow.resolver.resolve_plan", fake_resolve)
 
         cfg = tmp_path / "porter.json"
         cfg.write_text('{"asr": {"engine": "whisper-api"}}', encoding="utf-8")
@@ -852,15 +1071,18 @@ class TestPlanAcceptsCookies:
 
         assert plan_cmd.run(args) == render.EXIT_ERROR
 
+        overrides = captured["overrides"]
+        assert overrides.cookies_browser == "firefox"  # type: ignore[attr-defined]
+        assert overrides.cookies_file == Path("c.txt")  # type: ignore[attr-defined]
         ctx = captured["ctx"]
         assert ctx is not None, "the CLI must pass a context, not just the options"
         assert ctx.options.cookies_browser == "firefox"
         # ``cookies_file`` is a ``Path`` on the model, not a ``str``.
         assert ctx.options.cookies_file == Path("c.txt")
-        # And the resolved config must reach the plan. Passing only ``options``
-        # made ``plan_for`` re-resolve the config itself, which silently dropped
-        # ``--config`` -- so the plan described a different run from the one the
-        # same command line would perform.
+        # And the resolved config must reach the resolver. Passing only ``options``
+        # made it re-resolve the config itself, which silently dropped ``--config``
+        # -- so the plan described a different run from the one the same command
+        # line would perform.
         assert ctx.config.asr.engine == "whisper-api"
 
 

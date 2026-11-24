@@ -1,10 +1,10 @@
 """The ASR backends: request shapes, error mapping, availability, cancel.
 
-Two things are being pinned here. First, the behaviour that must survive the v0.1
-refactor — Whisper's SRT round-trip, the local engine's segmentation, and the
-external CLI adapter's process boundary. Second, the behaviour the refactor exists
-to add: expected failures raise :class:`AsrBackendError` (never a random exception),
-``available()`` is total, and cancellation interrupts a poll loop immediately.
+Two things are being pinned here. First, the behaviour that must survive
+refactors — Whisper API's SRT round-trip and the local engine's segmentation.
+Second, the reliability contract: expected failures raise :class:`AsrBackendError`
+(never a random exception), ``available()`` is total, and cancellation interrupts
+work immediately.
 
 The remote tests deliberately mock the *transport*, not the endpoint: they assert
 the structure (envelope handling, error mapping) rather than pretending a live
@@ -13,9 +13,6 @@ service is reachable from a hermetic test run.
 
 from __future__ import annotations
 
-import sys
-import threading
-import time
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,7 +21,7 @@ from typing import Any
 import pytest
 
 from porter.core import mirrors
-from porter.core.asr import videocaptioner, whisper_api, whisper_local
+from porter.core.asr import whisper_api, whisper_local
 from porter.core.asr.base import AsrBackend, AsrBackendError
 from porter.core.config import ASRConfig, PorterConfig
 from porter.core.context import RunContext
@@ -241,159 +238,6 @@ class TestWhisperApi:
         monkeypatch.setattr(whisper_api, "_load_openai", _boom)
         ctx = _ctx(tmp_path, whisper_api_key="sk-test")
         assert whisper_api.WhisperApiBackend().available(ctx) is False
-
-
-# ---------------------------------------------------------------------------
-# VideoCaptioner CLI (tier 1 — external subprocess adapter)
-# ---------------------------------------------------------------------------
-
-
-_VC_SCRIPT = """#!/bin/sh
-printf '%s\\n' "$@" > "$0.args"
-out=""
-while [ $# -gt 0 ]; do
-  case "$1" in
-    -o) out="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-printf '1\\n00:00:00,000 --> 00:00:02,000\\nHello from VideoCaptioner CLI\\n' > "$out"
-"""
-
-
-_VC_GARBAGE_SCRIPT = """#!/bin/sh
-out=""
-while [ $# -gt 0 ]; do
-  case "$1" in
-    -o) out="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-printf 'not an srt' > "$out"
-"""
-
-
-def _write_script(tmp_path: Path, body: str, name: str = "videocaptioner") -> Path:
-    script = tmp_path / name
-    script.write_text(body, encoding="utf-8")
-    script.chmod(0o755)
-    return script
-
-
-def _executable(script: Path) -> str:
-    """What to hand the backend as ``binary`` for ``script``.
-
-    POSIX runs the shell script directly. Windows cannot: CreateProcess refuses a
-    shebang script with ``ERROR_BAD_EXE_FORMAT``, so all five VideoCaptioner tests
-    failed at "could not be started" instead of testing what they are about. A
-    ``.cmd`` shim that hands the body to ``sh`` is the same arrangement a real
-    install uses when its entry point is a shell script.
-
-    The shim is kept beside the script rather than replacing it, because the fakes
-    write their argv to ``"$0.args"`` and ``$0`` is the script's path.
-    """
-    if sys.platform != "win32":
-        return str(script)
-    shim = script.with_suffix(".cmd")
-    # ``%*`` forwards the arguments; the path reaches ``sh`` in the POSIX form it
-    # understands (``C:/...``), not the Windows one. The CRLF is deliberate: a
-    # ``.cmd`` is read by the command processor, which wants it.
-    shim.write_text(f'@sh "{script.as_posix()}" %*\r\n', encoding="ascii")
-    return str(shim)
-
-
-class TestVideoCaptioner:
-    def test_transcribe_runs_cli_and_parses_srt(
-        self, tmp_path: Path, audio: Path
-    ) -> None:
-        script = _write_script(tmp_path, _VC_SCRIPT)
-        backend = videocaptioner.VideoCaptionerBackend(binary=_executable(script))
-
-        outcome = backend.transcribe(audio, _ctx(tmp_path))
-
-        assert outcome.used_asr is True
-        assert outcome.origin == "videocaptioner:jianying"
-        assert [item.source_text for item in outcome.items] == ["Hello from VideoCaptioner CLI"]
-        args = Path(f"{script}.args").read_text(encoding="utf-8").splitlines()
-        assert args[0] == "transcribe"
-        assert "--format" in args and "srt" in args
-        assert "--asr" in args and "jianying" in args
-
-    def test_configured_engine_and_language_reach_the_cli(
-        self, tmp_path: Path, audio: Path
-    ) -> None:
-        script = _write_script(tmp_path, _VC_SCRIPT)
-        backend = videocaptioner.VideoCaptionerBackend(binary=_executable(script))
-
-        outcome = backend.transcribe(audio, _ctx(tmp_path, engine="bijian", language="zh"))
-
-        assert outcome.origin == "videocaptioner:bijian"
-        args = Path(f"{script}.args").read_text(encoding="utf-8").splitlines()
-        assert "bijian" in args
-        assert "--language" in args and "zh" in args
-
-    def test_nonzero_exit_raises_backend_error(self, tmp_path: Path, audio: Path) -> None:
-        script = _write_script(tmp_path, "#!/bin/sh\nexit 3\n")
-        backend = videocaptioner.VideoCaptionerBackend(binary=_executable(script))
-        with pytest.raises(AsrBackendError, match="every videocaptioner engine failed"):
-            backend.transcribe(audio, _ctx(tmp_path))
-
-    def test_unparseable_output_raises_backend_error(self, tmp_path: Path, audio: Path) -> None:
-        script = _write_script(tmp_path, _VC_GARBAGE_SCRIPT)
-        backend = videocaptioner.VideoCaptionerBackend(binary=_executable(script))
-        with pytest.raises(AsrBackendError, match="every videocaptioner engine failed"):
-            backend.transcribe(audio, _ctx(tmp_path))
-
-    def test_missing_audio_raises(self, tmp_path: Path) -> None:
-        script = _write_script(tmp_path, _VC_SCRIPT)
-        backend = videocaptioner.VideoCaptionerBackend(binary=_executable(script))
-        with pytest.raises(AsrBackendError, match="does not exist"):
-            backend.transcribe(tmp_path / "nope.wav", _ctx(tmp_path))
-
-    def test_cancellation_kills_the_child(
-        self, tmp_path: Path, audio: Path
-    ) -> None:
-        script = _write_script(tmp_path, "#!/bin/sh\nexec sleep 30\n")
-        backend = videocaptioner.VideoCaptionerBackend(binary=_executable(script))
-        ctx = _ctx(tmp_path)
-        timer = threading.Timer(0.3, ctx.request_cancel)
-        timer.start()
-        started = time.monotonic()
-        try:
-            with pytest.raises(JobCancelled):
-                backend.transcribe(audio, ctx)
-        finally:
-            timer.cancel()
-        assert time.monotonic() - started < 10.0
-
-    def test_available_with_explicit_binary(self, tmp_path: Path) -> None:
-        backend = videocaptioner.VideoCaptionerBackend(binary="/usr/local/bin/videocaptioner")
-        assert backend.available(_ctx(tmp_path)) is True
-
-    def test_available_false_without_binary(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(videocaptioner.shutil, "which", lambda _name: None)
-        monkeypatch.setattr(videocaptioner, "_user_bin_dir", lambda: tmp_path / "empty")
-        assert videocaptioner.VideoCaptionerBackend().available(_ctx(tmp_path)) is False
-
-    def test_available_never_raises_when_probe_fails(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        def _boom(_name: str) -> Any:
-            raise OSError("PATH exploded")
-
-        monkeypatch.setattr(videocaptioner.shutil, "which", _boom)
-        assert videocaptioner.VideoCaptionerBackend().available(_ctx(tmp_path)) is False
-
-    def test_available_never_raises_on_unexpected_error(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        def _boom(_name: str) -> Any:
-            raise RuntimeError("something odd")
-
-        monkeypatch.setattr(videocaptioner.shutil, "which", _boom)
-        assert videocaptioner.VideoCaptionerBackend().available(_ctx(tmp_path)) is False
 
 
 # ---------------------------------------------------------------------------
@@ -656,6 +500,41 @@ class TestWhisperLocal:
 
         assert outcome.origin == "faster-whisper:large-v3:cpu"
 
+    def test_pyav_metadata_errors_falls_back_to_decoded_wav_samples(
+        self, tmp_path: Path
+    ) -> None:
+        """PyAV 19+ removed ``metadata_errors`` from ``av.open()``; fall back to WAV PCM."""
+        import struct
+        import wave
+
+        wav_path = tmp_path / "pcm16.wav"
+        with wave.open(str(wav_path), "wb") as handle:
+            handle.setnchannels(1)
+            handle.setsampwidth(2)
+            handle.setframerate(16000)
+            handle.writeframes(struct.pack("<1600h", *([0] * 1600)))
+
+        seen_inputs: list[Any] = []
+
+        class _PyAvBrokenModel:
+            def transcribe(self, audio_input: Any, **kwargs: Any) -> Any:
+                seen_inputs.append(audio_input)
+                if isinstance(audio_input, str):
+                    raise TypeError("open() got an unexpected keyword argument 'metadata_errors'")
+                return iter([_FakeSegment(0.0, 1.0, "decoded wav ok")]), SimpleNamespace(
+                    language="en", duration=0.1
+                )
+
+        backend = whisper_local.WhisperLocalBackend(
+            model="small", loader=_FakeLoader(_PyAvBrokenModel())  # type: ignore[arg-type]
+        )
+        outcome = backend.transcribe(wav_path, _ctx(tmp_path, whisper_local_device="cpu"))
+
+        assert [item.source_text for item in outcome.items] == ["decoded wav ok"]
+        assert isinstance(seen_inputs[0], str)
+        assert not isinstance(seen_inputs[1], str)
+        assert len(seen_inputs[1]) == 1600
+
 
 class TestWhisperLocalModelCache:
     """``model_is_cached`` answers "could this run offline?" and never raises.
@@ -726,7 +605,6 @@ def test_backends_satisfy_the_protocol() -> None:
     backends = [
         whisper_local.WhisperLocalBackend(),
         whisper_api.WhisperApiBackend(),
-        videocaptioner.VideoCaptionerBackend(),
     ]
     for backend in backends:
         assert isinstance(backend, AsrBackend)

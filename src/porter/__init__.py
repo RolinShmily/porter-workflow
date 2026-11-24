@@ -74,6 +74,25 @@ _LAZY_EXPORTS: dict[str, str] = {
     "VideoMetadata": "porter.core.models",
     # orchestration
     "Pipeline": "porter.core.pipeline",
+    # workflow (plan-driven public API)
+    "CapabilityDescriptor": "porter.core.workflow.model",
+    "ExecutionOutcome": "porter.core.workflow.executor",
+    "PlanIssue": "porter.core.workflow.model",
+    "PlanOverrides": "porter.core.workflow.resolver",
+    "SourceKind": "porter.core.workflow.model",
+    "SourceProbe": "porter.core.workflow.model",
+    "Stage": "porter.core.workflow.model",
+    "StageError": "porter.core.workflow.model",
+    "StagePlan": "porter.core.workflow.model",
+    "StageResult": "porter.core.workflow.model",
+    "Task": "porter.core.workflow.model",
+    "WorkflowId": "porter.core.workflow.model",
+    "WorkflowPlan": "porter.core.workflow.model",
+    "WorkflowResult": "porter.core.workflow.model",
+    "capability_catalog": "porter.core.workflow.capabilities",
+    "execute_plan": "porter.core.workflow.executor",
+    "probe_source": "porter.core.workflow.probe",
+    "resolve_plan": "porter.core.workflow.resolver",
 }
 
 if TYPE_CHECKING:  # pragma: no cover - import-time only, for type checkers
@@ -100,6 +119,24 @@ if TYPE_CHECKING:  # pragma: no cover - import-time only, for type checkers
         VideoMetadata,
     )
     from porter.core.pipeline import Pipeline
+    from porter.core.workflow.capabilities import capability_catalog
+    from porter.core.workflow.executor import ExecutionOutcome, execute_plan
+    from porter.core.workflow.model import (
+        CapabilityDescriptor,
+        PlanIssue,
+        SourceKind,
+        SourceProbe,
+        Stage,
+        StageError,
+        StagePlan,
+        StageResult,
+        Task,
+        WorkflowId,
+        WorkflowPlan,
+        WorkflowResult,
+    )
+    from porter.core.workflow.probe import probe_source
+    from porter.core.workflow.resolver import PlanOverrides, resolve_plan
 
 
 def __getattr__(name: str) -> Any:
@@ -126,10 +163,12 @@ __all__ = [
     "AwaitingUserAction",
     "BurnMode",
     "BurnResult",
+    "CapabilityDescriptor",
     "CapabilityMissingError",
     "ConfigError",
     "Event",
     "EventSink",
+    "ExecutionOutcome",
     "ExtractionError",
     "JobCancelled",
     "JobOptions",
@@ -139,19 +178,35 @@ __all__ = [
     "MediaError",
     "Phase",
     "Pipeline",
+    "PlanIssue",
+    "PlanOverrides",
     "PorterError",
     "RawMaterials",
     "RenderError",
     "RunContext",
+    "SourceKind",
+    "SourceProbe",
+    "Stage",
+    "StageError",
+    "StagePlan",
+    "StageResult",
     "SubtitleError",
     "SubtitleItem",
     "SubtitleSet",
+    "Task",
     "TaskLayout",
     "TranscriptSentence",
     "TranslationError",
     "UnsupportedPlatformError",
     "VideoMetadata",
+    "WorkflowId",
+    "WorkflowPlan",
+    "WorkflowResult",
     "__version__",
+    "capability_catalog",
     "configure_logging",
+    "execute_plan",
     "get_logger",
+    "probe_source",
+    "resolve_plan",
 ]

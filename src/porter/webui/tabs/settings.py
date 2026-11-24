@@ -5,10 +5,23 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from porter.core.config import default_en_font, default_zh_font
 from porter.webui.config_io import read_config_dict, save_config_dict
 from porter.webui.i18n import resolve_translator
 
 __all__ = ["build_settings_tab"]
+
+_COOKIE_BROWSER_CHOICES = [
+    "",
+    "chrome",
+    "chromium",
+    "firefox",
+    "edge",
+    "brave",
+    "opera",
+    "vivaldi",
+    "safari",
+]
 
 
 def build_settings_tab(gr: Any, i18n: Any = None) -> None:
@@ -57,10 +70,8 @@ def build_settings_tab(gr: Any, i18n: Any = None) -> None:
                                 (t("asr_auto"), ""),
                                 (t("asr_local"), "whisper-local"),
                                 (t("asr_api"), "whisper-api"),
-                                (t("asr_videocaptioner"), "videocaptioner"),
                             ],
                             value=init_data.get("asr", {}).get("engine") or "",
-                            allow_custom_value=True,
                             label=t("asr_default_engine"),
                         )
                         asr_local_model_cfg = gr.Dropdown(
@@ -88,11 +99,11 @@ def build_settings_tab(gr: Any, i18n: Any = None) -> None:
                     with gr.Row():
                         style_zh_font = gr.Textbox(
                             label=t("style_zh_font"),
-                            value=init_data.get("style", {}).get("zh_font") or "Microsoft YaHei",
+                            value=init_data.get("style", {}).get("zh_font") or default_zh_font(),
                         )
                         style_en_font = gr.Textbox(
                             label=t("style_en_font"),
-                            value=init_data.get("style", {}).get("en_font") or "Arial",
+                            value=init_data.get("style", {}).get("en_font") or default_en_font(),
                         )
                     with gr.Row():
                         style_zh_size = gr.Slider(
@@ -128,10 +139,12 @@ def build_settings_tab(gr: Any, i18n: Any = None) -> None:
                             label=t("style_margin_en"),
                         )
 
-                with gr.Accordion(t("accordion_cookies"), open=False), gr.Row():
-                    cookies_browser = gr.Textbox(
-                        label=t("cookies_browser"),
+                with gr.Accordion(t("accordion_cookies"), open=True), gr.Row():
+                    cookies_browser = gr.Dropdown(
+                        choices=_COOKIE_BROWSER_CHOICES,
                         value=init_data.get("cookies_browser") or "",
+                        allow_custom_value=True,
+                        label=t("cookies_browser"),
                     )
                     cookies_file = gr.Textbox(
                         label=t("cookies_file"),
@@ -201,8 +214,8 @@ def build_settings_tab(gr: Any, i18n: Any = None) -> None:
             asr_dict["whisper_api_base"] = w_base.strip() or None
 
             style_dict = current.setdefault("style", {})
-            style_dict["zh_font"] = zh_font.strip() or "Microsoft YaHei"
-            style_dict["en_font"] = en_font.strip() or "Arial"
+            style_dict["zh_font"] = zh_font.strip() or default_zh_font()
+            style_dict["en_font"] = en_font.strip() or default_en_font()
             style_dict["zh_font_size"] = int(zh_size)
             style_dict["en_font_size"] = int(en_size)
             style_dict["outline_width"] = float(outline)
@@ -210,8 +223,8 @@ def build_settings_tab(gr: Any, i18n: Any = None) -> None:
             style_dict["bilingual_zh_margin_v"] = int(margin_zh)
             style_dict["bilingual_en_margin_v"] = int(margin_en)
 
-            current["cookies_browser"] = c_browser.strip() or ""
-            current["cookies_file"] = c_file.strip() or ""
+            current["cookies_browser"] = c_browser.strip() or None
+            current["cookies_file"] = c_file.strip() or None
 
             try:
                 save_config_dict(current, dest)
@@ -312,8 +325,8 @@ def build_settings_tab(gr: Any, i18n: Any = None) -> None:
                 asr_d.get("audio_denoise", True),
                 asr_d.get("whisper_api_key") or "",
                 asr_d.get("whisper_api_base") or "https://api.openai.com/v1",
-                style_d.get("zh_font") or "Microsoft YaHei",
-                style_d.get("en_font") or "Arial",
+                style_d.get("zh_font") or default_zh_font(),
+                style_d.get("en_font") or default_en_font(),
                 style_d.get("zh_font_size", 52),
                 style_d.get("en_font_size", 34),
                 style_d.get("outline_width", 3.5),

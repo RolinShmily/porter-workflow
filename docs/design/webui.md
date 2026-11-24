@@ -15,9 +15,14 @@
 
 ### 工作台
 
-- 输入 URL 后可先 `inspect`，显示标题、平台、时长、字幕轨情况，而不下载。
-- 参数：烧录模式、ASR 引擎、目标语言；提交后创建 `JobStore` 作业。
-- 右侧实时显示阶段、百分比、日志摘要；完成后的两个成片放在子 Tab 中预览。
+- 输入 URL 或本地路径后点“预检并生成计划”：调用 `probe_source` + `resolve_plan`，
+  显示标题、平台、时长、字幕轨，以及完整 `WorkflowPlan`。
+- 规划选项：任务范围、转录能力、翻译能力、目标语言、供字幕文件、付费许可、
+  压制模式。每个能力是**单选**，留空表示自动选择；没有回退链选择器。
+- 规划选项变化会使已展示的计划失效；执行时重新解析，或拒绝不可行计划并列出
+  blocker 与 `fix`。
+- 执行阶段把这份计划原样交给 `execute_plan`；右侧实时显示阶段、百分比、日志。
+  完成后的成片从 `WorkflowResult.artifacts` 取 `video_bilingual` / `video_zh`。
 - 素材区提供 `raw.zip` 与 `cooked.zip`，以及单个文件下载。
 
 ### 任务（HITL）
@@ -45,17 +50,19 @@
 ## 设计不变量
 
 1. **一个引擎，第四个前端。** 不复制视频处理或翻译逻辑。
-2. **延迟加载。** `import porter.webui` 不要求安装 `[web]`；Gradio 在
+2. **同一份计划。** 工作台展示并执行 `WorkflowPlan`；它不重新推导路线，也没有
+   运行期能力回退。计划 JSON 可以交给 CLI `run --plan` 或 MCP `job_start(plan=...)`。
+3. **延迟加载。** `import porter.webui` 不要求安装 `[web]`；Gradio 在
    `create_app()` 内部 import。缺少依赖时给出明确的安装提示，而不是 traceback。
-3. **与 Agent 解耦。** 富媒体展示（视频播放器、完整字幕列表）留在 WebUI；
+4. **与 Agent 解耦。** 富媒体展示（视频播放器、完整字幕列表）留在 WebUI；
    回传给 Agent 会话的只有简洁状态。
-4. **不阻塞事件循环。** 长作业在后台线程/作业层执行，Gradio 只轮询状态。
-5. **受限路径。** `launch()` 的 `allowed_paths` 限于当前工作目录和配置的
+5. **不阻塞事件循环。** 长作业在后台线程/作业层执行，Gradio 只轮询状态。
+6. **受限路径。** `launch()` 的 `allowed_paths` 限于当前工作目录和配置的
    `output_dir`；不要为了方便放开整个文件系统。
-6. **双语。** 只支持 `zh` 与 `en`，两套字典必须键一致；`test_web.py` 有
+7. **双语。** 只支持 `zh` 与 `en`，两套字典必须键一致；`test_web.py` 有
    parity 测试。
-7. **可测试。** `create_app(store=..., registry=...)` 接受注入的作业层，
-   `tests/unit/test_web.py` 用假 Gradio 模块验证四个 Tab 的组装。
+8. **可测试。** `create_app(store=..., registry=...)` 接受注入的作业层，
+   `tests/unit/test_web.py` 用假 Gradio 模块验证四个 Tab 的组装与计划辅助函数。
 
 ## 模块划分
 

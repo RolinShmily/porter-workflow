@@ -14,7 +14,7 @@ def build_doctor_tab(gr: Any, i18n: Any = None) -> None:
     """Tab 4: Hardware & Environment Diagnostics with balanced, full-width layout."""
     t = resolve_translator(i18n)
 
-    with gr.Tab(t("tab_doctor")):
+    with gr.Tab(t("tab_doctor")) as doctor_tab:
         init_summary, init_rows = get_doctor_table_data()
 
         with gr.Row(equal_height=False):
@@ -38,3 +38,5 @@ def build_doctor_tab(gr: Any, i18n: Any = None) -> None:
             return get_doctor_table_data()
 
         refresh_doctor_btn.click(on_refresh_doctor, outputs=[doc_summary_box, doctor_table])
+        if hasattr(doctor_tab, "select"):
+            doctor_tab.select(on_refresh_doctor, outputs=[doc_summary_box, doctor_table])

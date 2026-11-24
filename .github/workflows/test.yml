@@ -77,7 +77,7 @@ jobs:
         run: uv sync --python ${{ matrix.python-version }} --extra all --extra dev --locked
 
       - name: ruff
-        run: uv run ruff check src tests scripts
+        run: uv run ruff check src tests scripts skills
 
       - name: mypy
         run: uv run mypy src scripts
@@ -145,15 +145,23 @@ jobs:
           uv run pytest -m "not slow" --deselect tests/regression/test_synthesizer_port.py
 
   windows-skill:
-    name: native PowerShell skill host preflight
+    name: native Windows skill host preflight
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      # No Python packages or uv needed: mock uvx and test preflight plus
-      # argument forwarding before attempting a dependency resolve.
-      - name: Smoke native launcher with fake uvx
-        shell: pwsh
-        run: ./tests/windows/skill-launcher-smoke.ps1 -Launcher ./skills/porter-skill/scripts/porter.ps1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The wrapper is one Python file, so the same offline tests run here and
+      # on Linux. This job covers what Linux cannot: PATH resolution of a
+      # uvx.cmd shim and the COMSPEC invocation that CreateProcess requires.
+      - name: Install pytest
+        run: python -m pip install pytest
+
+      - name: Test the wrapper with a fake uvx
+        run: python -m pytest tests/unit/test_skill_launchers.py -q
 
   build:
     name: build sdist + wheel

@@ -21,7 +21,7 @@ def build_jobs_tab(gr: Any, registry: JobRegistry, i18n: Any = None) -> None:
     """Tab 2: Responsive two-column Job overview with native components."""
     t = resolve_translator(i18n)
 
-    with gr.Tab(t("tab_jobs")):
+    with gr.Tab(t("tab_jobs")) as jobs_tab:
         # Top: Active Agent Task Monitor (Visible ONLY when a task is running)
         is_act, j_id, ph, st, msg, pct = get_active_job_details(registry)
         with gr.Group(visible=is_act) as active_agent_group:
@@ -130,20 +130,26 @@ def build_jobs_tab(gr: Any, registry: JobRegistry, i18n: Any = None) -> None:
                 dd_update,
             )
 
+        jobs_outputs = [
+            active_agent_group,
+            active_job_box,
+            active_phase_box,
+            active_status_box,
+            active_msg_box,
+            active_progress,
+            jobs_table,
+            target_job_dropdown,
+            inspect_job_dropdown,
+        ]
         refresh_active_btn.click(
             load_all_jobs,
-            outputs=[
-                active_agent_group,
-                active_job_box,
-                active_phase_box,
-                active_status_box,
-                active_msg_box,
-                active_progress,
-                jobs_table,
-                target_job_dropdown,
-                inspect_job_dropdown,
-            ],
+            outputs=jobs_outputs,
         )
+        if hasattr(jobs_tab, "select"):
+            jobs_tab.select(
+                load_all_jobs,
+                outputs=jobs_outputs,
+            )
 
         def on_select_table_row(evt: Any = None) -> tuple[str, str]:
             if evt and hasattr(evt, "index") and evt.index:

@@ -221,13 +221,11 @@ type = "layers"
 # pipeline -> backends -> media -> ports/context -> models -> config -> events
 # -> leaf utilities.
 layers = [
-    # plan observes the pipeline, the platform layer and both chains, and reports
-    # on them. It builds one via Pipeline.default, so it sits *above* the pipeline
-    # in the import sense -- a layer may import what is below it, never above.
-    # Like porter.core.jobs, it was outside this contract at first, which meant
-    # the module whose whole job is to describe the pipeline accurately could
-    # have imported anything at all.
-    "porter.core.plan",
+    # workflow observes every layer below it: it probes sources, selects
+    # capabilities and (in the executor) drives the pipeline. It must sit above
+    # the pipeline because the executor imports it, and above asr/translate/
+    # platforms because the capability catalog probes them.
+    "porter.core.workflow",
     "porter.core.pipeline",
     # doctor is a cross-cutting service: it observes the media layer, the
     # platform layer and the ASR/translation chains, and is consumed by the

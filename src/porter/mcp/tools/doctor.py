@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from porter.core.config import resolve
-from porter.core.doctor import GUIDES, guide_for, probe_all
+from porter.core.doctor import GUIDES, probe_all, report_payload
 from porter.core.errors import PorterError
 from porter.mcp.stdout_guard import protect
 
@@ -62,27 +62,9 @@ def register(server: FastMCP) -> None:
                 "error": f"configuration could not be resolved: {exc.message}",
             }
 
-        report = probe_all(config)
-        payload = report.to_dict()
-
-        # Only the failing keys. Sending all of them would be a wall of text for
-        # the common case where one capability is missing, and the guide for a
-        # capability that passed is irrelevant.
-        guidance: dict[str, Any] = {}
-        for finding in report.findings:
-            if finding.ok or not finding.remediation_key:
-                continue
-            guide = guide_for(finding.remediation_key)
-            if guide is not None:
-                guidance[finding.remediation_key] = {
-                    "summary": guide.summary,
-                    "steps": list(guide.steps),
-                    "note": guide.note,
-                    "url": guide.url,
-                }
-
-        payload["guidance"] = guidance
-        return payload
+        # The same payload the CLI's --json mode emits, so the two frontends
+        # cannot disagree about what a blocker means or how to fix it.
+        return report_payload(probe_all(config))
 
     @server.resource(GUIDES_RESOURCE_URI)
     @protect

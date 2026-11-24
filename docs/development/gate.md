@@ -86,7 +86,7 @@ locale 编码；在 Windows 上写入 CJK 字幕或带 emoji 的标题会抛
 Porter 使用 MIT。贡献按同样条款接受。
 
 - **不要新增 copyleft 硬依赖。** GPL/AGPL 代码只能留在子进程边界之外，
-  例如 `videocaptioner` 那样由用户自行安装、porter 只 `subprocess` 调用。
+  由用户自行安装、porter 仅通过 `subprocess` 调用（例如外部 FFmpeg 构建）。
 - **新增或删除依赖时更新 [`THIRD_PARTY_NOTICES.md`](../../THIRD_PARTY_NOTICES.md)**，
   写明许可证以及 porter 是依赖、可选安装还是仅外部调用。
 - **不要把 copyleft 项目的代码粘贴进本仓库。**
@@ -98,7 +98,7 @@ The English heading above is kept stable so GitHub anchors used by issue
 templates (`docs/development/gate.md#licence-rules`) do not break. The rules are:
 
 - No hard dependency on a copyleft package. GPL/AGPL code stays behind a
-  subprocess boundary, as `videocaptioner` does.
+  subprocess boundary (for example, user-installed FFmpeg builds).
 - Update `THIRD_PARTY_NOTICES.md` whenever a dependency is added or removed.
 - Do not paste code from a copyleft project into this repository.
 

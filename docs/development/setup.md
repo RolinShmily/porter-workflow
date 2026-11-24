@@ -53,8 +53,10 @@ UV_PROJECT_ENVIRONMENT=/tmp/porter-dev-venv uv run pytest -m "not network"
 ```bash
 uv run porter --version
 uv run porter doctor
-uv run porter inspect "<URL>"
-uv run porter run "<URL>" -o ./porter_output
+uv run porter capabilities
+uv run porter probe "<URL>"
+uv run porter plan "<URL>" --json > plan.json
+uv run porter run --plan plan.json -o ./porter_output
 uv run porter-web                       # 需要 [web]
 uv run porter-mcp                       # 需要 [mcp]，stdio 传输
 ```

@@ -4,14 +4,11 @@ The only ASR backend in the chain that needs **no key, no network and no third
 party service**: the model runs on this machine, so a transcription is
 reproducible, unmetered and immune to an endpoint being withdrawn.
 
-## Why not VideoCaptioner, which does the same thing
+## Why ``faster-whisper`` on a permissive stack
 
-VideoCaptioner is GPL-3.0 and pins ``python<3.13``, so it can never be a
-dependency of this MIT project; porter reaches it only as an external process
-(``asr/videocaptioner.py``). This module implements the idea
-(local Whisper, no key) on a permissively licensed stack rather than borrowing
-GPL code: ``faster-whisper`` is MIT and its CTranslate2 backend needs no
-PyTorch, which keeps the extra around 100 MB instead of ~2 GB.
+This module implements local, key-free Whisper on a permissively licensed stack:
+``faster-whisper`` is MIT and its CTranslate2 backend needs no PyTorch, which
+keeps the extra around 100 MB instead of ~2 GB.
 
 ## Why it runs first in the chain
 
@@ -34,6 +31,7 @@ finally report a feasible ASR route without a caveat.
 from __future__ import annotations
 
 import time
+import wave
 from pathlib import Path
 from typing import Any
 
@@ -497,11 +495,29 @@ class WhisperLocalBackend:
         inside whoever iterates it next.
         """
         wanted = None if not language or language == "auto" else language
-        segments, _info = model.transcribe(
-            str(audio),
-            language=wanted,
-            vad_filter=True,
-        )
+        try:
+            segments, _info = model.transcribe(
+                str(audio),
+                language=wanted,
+                vad_filter=True,
+            )
+        except TypeError as exc:
+            # faster-whisper 1.x passes ``metadata_errors="ignore"`` to
+            # ``av.open()``, which PyAV 19+ removed. Porter's audio master is
+            # already a 16 kHz mono 16-bit PCM WAV, so decode it directly with
+            # stdlib ``wave`` + numpy and bypass PyAV when that happens.
+            samples = _load_pcm16_wav_float32(audio)
+            if samples is None:
+                raise
+            _logger.debug(
+                "faster-whisper file decode raised %s; retrying with decoded PCM WAV samples",
+                exc,
+            )
+            segments, _info = model.transcribe(
+                samples,
+                language=wanted,
+                vad_filter=True,
+            )
 
         items: list[SubtitleItem] = []
         for segment in segments:
@@ -524,3 +540,31 @@ class WhisperLocalBackend:
         # coerce_items renumbers and drops degenerate cues. The renumbering
         # matters because the generators write ``index`` into the SRT.
         return coerce_items(items)
+
+
+def _load_pcm16_wav_float32(audio: Path) -> Any | None:
+    """Decode a 16 kHz 16-bit PCM WAV into a mono float32 numpy array.
+
+    Returns ``None`` if the file is not a standard 16 kHz 16-bit PCM WAV or
+    ``numpy`` is unavailable, letting the original PyAV error propagate.
+    """
+    try:
+        import numpy as np
+    except ImportError:
+        return None
+
+    try:
+        with wave.open(str(audio), mode="rb") as handle:
+            channels = handle.getnchannels()
+            sampwidth = handle.getsampwidth()
+            framerate = handle.getframerate()
+            if sampwidth != 2 or framerate != 16000 or channels not in (1, 2):
+                return None
+            raw = handle.readframes(handle.getnframes())
+    except (OSError, wave.Error):
+        return None
+
+    samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+    if channels == 2:
+        samples = samples.reshape(-1, 2).mean(axis=1)
+    return samples

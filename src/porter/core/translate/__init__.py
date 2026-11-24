@@ -1,9 +1,10 @@
-"""Translation backends and the fallback chain.
+"""Translation backends and execution wrapper.
 
 ``chain.py``
     :class:`TranslationChain` — implements :class:`~porter.core.ports.Translator`.
-    Walks LLM -> Bing -> Google -> MyMemory -> ``videocaptioner`` and owns the
-    **CJK self-check** that rejects an untranslated "fake hardsub".
+    Owns the **CJK self-check** that rejects an untranslated "fake hardsub".
+    The workflow executor constructs single-capability chains with no runtime
+    cross-capability fallback.
 ``llm.py``
     OpenAI-compatible chat completions (DeepSeek / GPT / Claude-compatible
     gateways). Requires the ``[llm]`` extra.
@@ -12,10 +13,6 @@
     **Unverified endpoints.**
 ``mymemory.py``
     Key-free HTTP backend over a *documented* API, unlike the two above.
-``videocaptioner.py``
-    ★ Optional adapter around the **external** ``videocaptioner`` CLI.
-    Same GPL-3.0 / ``python<3.13`` constraints as the ASR adapter: subprocess
-    only, never a declared dependency.
 ``base.py``
     The backend protocol, the shared :class:`~porter.core.translate.base.TranslationOutcome`,
     and the alignment helper the chain applies.
@@ -47,10 +44,6 @@ from porter.core.translate.chain import TranslationChain
 from porter.core.translate.google import GoogleTranslateBackend
 from porter.core.translate.llm import LLMTranslationBackend
 from porter.core.translate.mymemory import MyMemoryBackend
-from porter.core.translate.videocaptioner import (
-    VideocaptionerBackend,
-    VideocaptionerLLMBackend,
-)
 
 __all__ = [
     "MAX_TEXTS_PER_REQUEST",
@@ -62,6 +55,4 @@ __all__ = [
     "TranslationBackendError",
     "TranslationChain",
     "TranslationOutcome",
-    "VideocaptionerBackend",
-    "VideocaptionerLLMBackend",
 ]

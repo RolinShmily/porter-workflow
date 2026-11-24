@@ -127,7 +127,10 @@ class PlatformRegistry:
         from porter.core.platforms.base import YtDlpExtractor
         from porter.core.platforms.urls import CAMPAIGN_PARAMS, clean_url, expand_short_url
 
-        expanded = expand_short_url(url, timeout=timeout)
+        repaired = url.strip()
+        if repaired and not repaired.startswith(("http://", "https://")):
+            repaired = f"https://{repaired}"
+        expanded = expand_short_url(repaired, timeout=timeout)
         handler = self.find_or_none(expanded)
         if not isinstance(handler, YtDlpExtractor):
             # No platform: strip only the never-functional parameters.

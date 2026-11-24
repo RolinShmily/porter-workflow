@@ -13,9 +13,7 @@ What this module deliberately does **not** do, unlike v0.1:
 
 * it does not know where an agent skill is installed,
 * it does not inspect for the presence of a ``SKILL.md`` to pick a write target,
-* it does not silently read another project's config (``videocaptioner``'s
-  ``config.toml``). That is available explicitly via
-  ``porter config import-videocaptioner``.
+* it does not read another project's config. Settings are porter's own.
 
 Callers that need a non-standard location (an agent skill, a container) set
 ``$PORTER_CONFIG`` — see ``skills/porter-skill/scripts/``.
@@ -23,14 +21,18 @@ Callers that need a non-standard location (an agent skill, a container) set
 
 from __future__ import annotations
 
+import functools
 import json
 import os
+import shutil
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
 from typing import Any
 
 import platformdirs
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from porter.core.errors import ConfigError
 from porter.core.utils.text import sanitize_filename
@@ -44,6 +46,8 @@ __all__ = [
     "config_dir",
     "config_file",
     "default_config",
+    "default_en_font",
+    "default_zh_font",
     "find_project_config",
     "load_config_file",
     "mask_secret",
@@ -119,13 +123,62 @@ class FFmpegConfig(BaseModel):
     auto_tune: bool = True
 
 
+@functools.lru_cache(maxsize=4)
+def _fc_match_pattern(pattern: str) -> str | None:
+    """Resolve a fontconfig pattern to its primary family name, or None."""
+    binary = shutil.which("fc-match")
+    if binary is None:
+        return None
+    try:
+        proc = subprocess.run(  # noqa: S603 - resolved binary with constant pattern
+            [binary, "-f", "%{family}", pattern],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=2.0,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    raw = proc.stdout.strip()
+    if not raw:
+        return None
+    return raw.split(",", 1)[0].strip() or None
+
+
+def default_zh_font() -> str:
+    """Return a cross-platform default Chinese sans-serif font family.
+
+    Avoids hardcoding Windows-only ``Microsoft YaHei`` on Linux/macOS where
+    fontconfig would substitute a monospace or Latin-only font and render
+    Chinese subtitles as empty boxes.
+    """
+    if sys.platform == "win32":
+        return "Microsoft YaHei"
+    if sys.platform == "darwin":
+        return "PingFang SC"
+    return _fc_match_pattern(":lang=zh-cn:family=sans-serif") or "Noto Sans CJK SC"
+
+
+def default_en_font() -> str:
+    """Return a cross-platform default Latin sans-serif font family."""
+    if sys.platform == "win32":
+        return "Arial"
+    if sys.platform == "darwin":
+        return "Helvetica Neue"
+    return _fc_match_pattern(":lang=en:family=sans-serif") or "Noto Sans"
+
+
 class SubtitleStyleConfig(BaseModel):
     """ASS styling. Field names match v0.1 ``config.json`` keys."""
 
     model_config = ConfigDict(extra="ignore")
 
-    zh_font: str = "Microsoft YaHei"
-    en_font: str = "Arial"
+    zh_font: str = Field(default_factory=default_zh_font)
+    en_font: str = Field(default_factory=default_en_font)
     zh_font_size: int = 52
     en_font_size: int = 34
     zh_primary_color: str = "&H00FFFFFF"
@@ -157,6 +210,16 @@ class PorterConfig(BaseModel):
     cookies_browser: str | None = None
     #: Where the values came from, for ``porter config list`` and bug reports.
     source: str = "built-in defaults"
+
+    @field_validator("cookies_file", "cookies_browser", mode="before")
+    @classmethod
+    def _empty_string_to_none(cls, value: Any) -> Any:
+        # Empty strings in JSON (e.g. saved by an older UI form) must never
+        # become ``Path('.')`` — passing ``cookiefile='.'`` makes every yt-dlp
+        # invocation fail with IsADirectoryError.
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     def masked(self) -> dict[str, Any]:
         """``model_dump`` with every secret replaced by a masked preview."""

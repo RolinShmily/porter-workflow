@@ -61,12 +61,8 @@ _SYSTEM_PROMPT = "You are a professional video transcript translator. Respond ON
 def effective_llm_model(ctx: RunContext) -> str:
     """The LLM model to use: the per-job override, else the configured default.
 
-    ``--llm-model`` / ``porter_job_start(llm_model=...)`` was another field both
-    frontends accepted and no engine read, so the flag was a silent no-op and the
-    only way to change the model was editing the config file. Two backends read
-    this value -- the LLM translator and the ``videocaptioner-llm`` adapter, which
-    passes it on as ``--model`` -- so the resolution lives here rather than being
-    duplicated and drifting.
+    ``--llm-model`` / ``porter_job_start(llm_model=...)`` overrides the
+    configured default here so per-job model selection lives in one place.
     """
     return ctx.options.llm_model or ctx.config.llm.model
 

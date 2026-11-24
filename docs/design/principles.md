@@ -30,17 +30,18 @@
 
 这条约束的现实意义：用户第一次运行 `porter doctor` 不应该先下载一个 Web 框架。
 
-## 4. 端口与适配器
+## 4. 端口、对等能力与计划即契约
 
-管线依赖协议，不依赖实现。每个阶段一个端口（`Downloader`、`Transcriber`、
-`Translator`、`Renderer`，以及 `LocalPreparer`、`TranscriptRefiner`），
-后端实现窄协议。
+管线依赖协议，不依赖实现。每个阶段由对等能力实现，计划解析阶段为每个阶段选定
+**恰好一个能力**，封存成 `WorkflowPlan`；执行期只做同一能力内的重试，不做跨能力
+静默回退。
 
 收益不是“架构好看”，而是：
 
 - 管线可以在没有网络、没有 FFmpeg 的情况下测试；
-- GPL 的 `videocaptioner` 可以作为外部进程适配器存在，不污染 MIT 代码；
-- 新增平台/引擎不需要改管线。
+- 外部媒体工具留在子进程边界外，不污染 MIT 代码与依赖树；
+- 调用方与 Agent 在执行前即可看到确切的阶段、成本、外发方向与阻塞项；
+- 新增平台/能力不需要改管线主逻辑。
 
 ## 5. 原子产物
 
@@ -67,9 +68,9 @@ Porter 是 MIT。GPL/AGPL 代码只能：
 
 ## 8. 前端只做适配
 
-CLI、MCP、WebUI 不实现业务逻辑。它们负责：
+CLI、MCP、WebUI 不实现业务逻辑，全部共享同一个 `WorkflowPlan` 与 `execute_plan`。它们负责：
 
-- 解析输入、构造 `JobRequest` / `JobOptions`；
+- 解析输入、构造 `PlanOverrides` 或加载已封存的 `WorkflowPlan`；
 - 调用引擎；
 - 把事件渲染成终端进度、MCP 状态或网页组件；
 - 映射退出码/状态。
@@ -89,7 +90,8 @@ CLI、MCP、WebUI 不实现业务逻辑。它们负责：
 
 ## 11. 诚实的失败与数据
 
-- 计划不提供编造的时间预估；
+- 计划不提供编造的时间预估，且默认排除付费能力（环境里有 Key 不是同意付费）；
+- 不可行计划返回结构化 `issues` / `fix` / `alternatives`，执行器直接拒绝；
 - 字幕合并会报告 `input_cue_count` / `cue_count` / `cues_merged`；
 - 未知视频尺寸保持 `None`，不伪造 1920x1080；
 - 不可用链接是一次成功的探测，但退出码仍为非零，方便脚本判断。

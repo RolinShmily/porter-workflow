@@ -119,34 +119,25 @@ extend to porter's source.
 | [FFmpeg](https://ffmpeg.org/) (`ffmpeg`, `ffprobe`) | LGPL-2.1-or-later by default; GPL-2.0-or-later when built with GPL parts such as `libx264` | Standardisation, encoding, audio extraction/denoise, burning subtitles. Distributions vary — run `ffmpeg -version` to check the build you actually have. |
 | [libass](https://github.com/libass/libass) | ISC | ASS/SSA subtitle rendering, used through FFmpeg's `subtitles` filter. FFmpeg must be compiled with it. |
 | [Deno](https://github.com/denoland/deno) | MIT | JavaScript runtime that yt-dlp needs to solve YouTube's JS challenges. Node.js ≥ 20 (MIT) is an accepted substitute. |
-| [VideoCaptioner](https://github.com/WEIFENG2333/VideoCaptioner) | **GPL-3.0** | Optional external ASR / translation CLI. **See §5.** |
 
 ---
 
 ## 5. Copyleft components — why porter stays MIT
 
-Two components above are copyleft. Both are handled the same way, and it is not
-an accident.
+One transitive component above is copyleft, and it is kept outside porter's own
+code by design:
 
-`mutagen` (GPL-2.0-or-later) and `VideoCaptioner` (GPL-3.0) are **separate
-programs**, not part of porter's source distribution:
+* **`mutagen`** (GPL-2.0-or-later) arrives transitively through `yt-dlp[default]`,
+  as its own installed distribution. Porter neither imports it nor ships it in its
+  sdist or wheel; it runs inside `yt-dlp`. Porter's own code remains MIT. A user
+  who wants to avoid GPL components entirely can install `yt-dlp` without the
+  `default` extra, at the cost of some site support.
 
-* **`mutagen`** arrives transitively through `yt-dlp[default]`, as its own
-  installed distribution. Porter neither imports it nor ships it in its sdist or
-  wheel; it runs inside the `yt-dlp` process. Porter's own code remains MIT.
-  A user who wants to avoid GPL components entirely can install
-  `yt-dlp` without the `default` extra, at the cost of some site support.
-* **`VideoCaptioner`** is never a declared dependency and never imported. Porter
-  probes for the `videocaptioner` binary at runtime and, if present, runs it in a
-  subprocess and parses its output files. Its `python<3.13` pin also makes it
-  unimportable in porter's own supported range, which is a second reason the
-  subprocess boundary is the only option. Porter's own optional local ASR
-  (`asr-local`, via `faster-whisper`) exists precisely so that key-free
-  transcription is available on a permissively licensed stack instead of by
-  borrowing GPL code.
-
-`VideoCaptioner`'s design informed porter's ASR-orchestration approach. That is
-an acknowledgement of ideas, not of copied code.
+Porter's own optional local ASR (`asr-local`, via `faster-whisper`) uses a
+permissively licensed MIT stack instead of invoking external GPL transcription
+CLIs. Earlier versions had an optional subprocess adapter for `VideoCaptioner`
+(GPL-3.0); that adapter has been removed. Its design ideas remain acknowledged
+below.
 
 ---
 

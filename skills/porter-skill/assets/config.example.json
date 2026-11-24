@@ -10,7 +10,7 @@
   },
 
   "asr": {
-    "_comment": "engine: null walks the fallback chain. whisper-local needs the [asr-local] extra (key-free, offline after the model downloads); whisper-api needs whisper_api_key or llm.api_key; videocaptioner needs the external CLI.",
+    "_comment": "engine is a preference for when ASR runs, not a fallback chain and not paid consent: whisper-local needs the [asr-local] extra (free, offline after the model downloads); whisper-api is paid and needs whisper_api_key or llm.api_key, and is only selected when a plan names it or --allow-paid is passed.",
     "engine": null,
     "language": "auto",
     "whisper_api_key": "",
@@ -23,7 +23,7 @@
   },
 
   "refine": {
-    "_comment": "LLM proofreading of the transcript before translation; only runs when LLM credentials are configured.",
+    "_comment": "Legacy LLM proofreading settings. The plan executor uses PassthroughRefiner and never makes a hidden LLM call; select translate.llm explicitly for LLM-level translation.",
     "enabled": true,
     "model": null
   },

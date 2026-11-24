@@ -54,11 +54,6 @@ __all__ = ["Pipeline"]
 
 _logger = get_logger(__name__)
 
-#: VideoCaptioner's engine names. Setting one as ``asr.engine`` is the only way to
-#: ask for the external CLI, and v0.1 ran it *first* in that case — the opposite of
-#: where it sits otherwise, because naming an engine is an explicit request.
-_VIDEOCAPTIONER_ENGINES = frozenset({"bijian", "jianying", "whisper-cpp"})
-
 _T = TypeVar("_T")
 
 
@@ -336,39 +331,29 @@ def _default_downloader() -> Downloader:
 
 
 def _default_transcriber(ctx: RunContext) -> Transcriber:
-    """Build the ASR chain: local Whisper first, then the rest as fallbacks.
+    """Build the default ASR chain for :meth:`Pipeline.default`.
 
     ======================  ===================================================
     order                   condition
     ======================  ===================================================
     1. Local Whisper        ``[asr-local]`` installed; needs no key or network
     2. Whisper API          needs an OpenAI-compatible key
-    3. VideoCaptioner CLI   external process, GPL-3.0
     ======================  ===================================================
 
     **Local Whisper leads**. Local inference is unmetered, offline-capable and
     immune to an endpoint being withdrawn.
 
     ``--asr-engine`` (``options.asr_engine``) or the ``asr.engine`` config key then
-    moves the named backend to the front, keeping every other backend as a
-    fallback. The flag wins over the config key, being the more specific request.
-    Two rules, in this order:
+    moves the named backend (``whisper-local`` or ``whisper-api``) to the front.
+    The flag wins over the config key, being the more specific request. A name
+    matching nothing logs a warning instead of passing unremarked.
 
-    * One of VideoCaptioner's engine names (``bijian``/``jianying``/``whisper-cpp``)
-      promotes the external CLI, which is how v0.1 asked for it.
-    * Any other name that matches a backend (``whisper-local``, ``whisper-api``,
-      ``videocaptioner``) promotes that backend.
-
-    Both sources are consulted, and that is a fix rather than symmetry: for a long
-    time only the config key was, because the flag went into
-    ``JobOptions.asr_engine`` -- written by all three frontends, read by nobody.
-    ``porter run --asr-engine whisper-api`` therefore did nothing while the same
-    value in ``asr.engine`` worked, which is exactly what makes such a gap hard to
-    notice. A name matching nothing logs a warning instead of passing unremarked.
+    Note: the workflow frontends (CLI, MCP, WebUI) do not call this helper;
+    :func:`porter.core.workflow.executor.execute_plan` builds a single-capability
+    chain directly from the resolved :class:`WorkflowPlan`.
     """
     from porter.core.asr.base import AsrBackend
     from porter.core.asr.chain import AsrChain
-    from porter.core.asr.videocaptioner import VideoCaptionerBackend
     from porter.core.asr.whisper_api import WhisperApiBackend
     from porter.core.asr.whisper_local import WhisperLocalBackend
 
@@ -383,38 +368,22 @@ def _default_transcriber(ctx: RunContext) -> Transcriber:
     ordered: list[AsrBackend] = [
         WhisperLocalBackend(),
         WhisperApiBackend(),
-        VideoCaptionerBackend(),
     ]
 
     if configured:
-        wanted = "videocaptioner" if configured in _VIDEOCAPTIONER_ENGINES else configured
-        if not _promote_named(ordered, wanted):
+        if not _promote_named(ordered, configured):
             _logger.warning(
                 "asr.engine=%r names no known backend; keeping the default order (%s)",
                 configured,
                 ", ".join(getattr(backend, "name", "?") for backend in ordered),
             )
         elif not ordered[0].available(ctx):
-            # Naming a backend promotes it and keeps the rest as fallbacks, so an
-            # absent one is not fatal -- the job quietly runs on a *different*
-            # engine. The silence is the problem: someone who asked for `bijian`
-            # and got a different engine's output has no way to tell. The probe is a PATH
-            # lookup, and this runs at assembly -- before the expensive work,
-            # which is where a fixable misconfiguration belongs.
-            if isinstance(ordered[0], VideoCaptionerBackend):
-                _logger.warning(
-                    "asr.engine=%r needs the external VideoCaptioner CLI, which is not on "
-                    "PATH or in ~/.local/bin; the chain will fall back to another engine. "
-                    "Install it (pip install videocaptioner) or drop the setting.",
-                    configured,
-                )
-            else:
-                _logger.warning(
-                    "asr.engine=%r names %s, which is unavailable on this machine; the "
-                    "chain will fall back to another engine.",
-                    configured,
-                    ordered[0].name,
-                )
+            _logger.warning(
+                "asr.engine=%r names %s, which is unavailable on this machine; the "
+                "chain will fall back to another engine.",
+                configured,
+                ordered[0].name,
+            )
 
     chain = AsrChain()
     for backend in ordered:
@@ -423,31 +392,24 @@ def _default_transcriber(ctx: RunContext) -> Transcriber:
 
 
 def _default_translator(ctx: RunContext) -> Translator:
-    """Build the translation chain: LLM, then the key-free endpoints, then the CLI.
+    """Build the default translation chain for :meth:`Pipeline.default`.
 
-    Order rationale, unchanged from v0.1:
+    Order rationale:
 
     * **LLM first** because it is the only engine that translates with context, and
       quality is the reason someone would configure an API key at all.
-    * **The key-free endpoints next**, cheapest first.
-    * **The VideoCaptioner CLI last**: it is an external GPL-3.0 process, so it is
-      the heaviest dependency and the one most likely to be absent.
+    * **The key-free endpoints next**: ``bing``, ``google``, ``mymemory``.
 
     The chain's own CJK self-check then applies to whichever engine runs, which is
     what makes the ordering safe: a key-free endpoint that echoes its input is
-    rejected and the next one is tried, rather than producing an English subtitle
-    labelled as Chinese.
+    rejected rather than producing an English subtitle labelled as Chinese.
 
-    ``options.translator`` then moves the named backend to the front, keeping
-    every other backend as a fallback -- the same rule as ``asr.engine``, and the
-    reason the CLI's ``--translator`` is no longer collected-and-ignored. Names
-    are the real ones: ``llm``, ``bing``, ``google``, ``mymemory``,
-    ``videocaptioner-llm``, ``videocaptioner``. A name matching nothing logs a
-    warning instead of passing unremarked.
+    ``options.translator`` moves the named backend (``llm``, ``bing``, ``google``,
+    ``mymemory``) to the front. A name matching nothing logs a warning.
 
-    Promotion rather than filtering is deliberate: a user who names a backend
-    wants it *tried first*, not to have the job die when that one endpoint is
-    rate-limited. The ``--translator`` flag documents this as its semantics.
+    Note: the workflow frontends (CLI, MCP, WebUI) do not call this helper;
+    :func:`porter.core.workflow.executor.execute_plan` builds a single-capability
+    chain directly from the resolved :class:`WorkflowPlan`.
     """
     from porter.core.translate.base import TranslationBackend
     from porter.core.translate.bing import BingTranslateBackend
@@ -455,10 +417,6 @@ def _default_translator(ctx: RunContext) -> Translator:
     from porter.core.translate.google import GoogleTranslateBackend
     from porter.core.translate.llm import LLMTranslationBackend
     from porter.core.translate.mymemory import MyMemoryBackend
-    from porter.core.translate.videocaptioner import (
-        VideocaptionerBackend,
-        VideocaptionerLLMBackend,
-    )
 
     configured = (ctx.options.translator or "").strip().lower()
 
@@ -467,8 +425,6 @@ def _default_translator(ctx: RunContext) -> Translator:
         BingTranslateBackend(),
         GoogleTranslateBackend(),
         MyMemoryBackend(),
-        VideocaptionerLLMBackend(),
-        VideocaptionerBackend(),
     ]
 
     if configured and not _promote_named(ordered, configured):

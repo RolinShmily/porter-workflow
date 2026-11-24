@@ -493,81 +493,77 @@ def probe_encoder(selector: EncoderSelector) -> Finding:
     return Finding.info("encoder", "Video encoder", detail)
 
 
-def probe_asr_route(config: PorterConfig, *, which: Any = None) -> Finding:
-    """Which speech-to-text path this configuration will take.
+def probe_asr_route(config: PorterConfig) -> Finding:
+    """Which speech-to-text capabilities this machine can offer a plan.
 
-    A *configuration* probe, not a chain probe, and deliberately so: it answers
-    the question an operator actually has — "will this spend money and how
-    reliable is the path?" — without constructing a chain or a run context.
+    A *capability* probe, not a chain probe: a plan names exactly one transcript
+    capability, so what the resolver needs to know is the set of choices, not
+    an order to fall through.
 
-    The order mirrors :func:`porter.core.pipeline._default_transcriber`, because the
-    route it names has to be the route a run takes:
+    1. **Local Whisper** (``[asr-local]``) -- free, no key, no network after the
+       model is downloaded. The default for sources without a subtitle track.
+    2. **Whisper API** -- paid, needs an OpenAI-compatible key. Only used when a
+       plan names it or the operator passes ``--allow-paid``.
 
-    1. **Local Whisper** (``[asr-local]``) — no key, no network, no third party.
-    2. **Whisper API** — keyed and documented.
-    3. **VideoCaptioner CLI** — external GPL-3.0 process, local engines only.
-
-    If none of the three is present, transcription will fail; that is reported as
-    an actionable finding rather than a pass.
+    Having neither is DEGRADED, not a blocker: a source that carries a subtitle
+    track needs no ASR at all. An ASR-dependent plan reports the missing
+    capability itself, with a remediation key.
     """
-    lookup = which or shutil.which
-
     if whisper_local.is_installed():
         model = config.asr.whisper_local_model or whisper_local.DEFAULT_MODEL
         cached = whisper_local.model_is_cached(model)
         detail = (
             f"local Whisper ({model}, "
             + ("already downloaded" if cached else "downloads on first use")
-            + ") — no key, no network"
+            + ") -- free, no key, no network"
         )
         if config.asr.whisper_api_key or config.llm.api_key:
-            detail += f", falling back to the Whisper API ({config.asr.whisper_model})"
+            detail += (
+                f"; the Whisper API ({config.asr.whisper_model}) is also available, paid"
+            )
         return Finding.passed("asr_route", "Speech-to-text route", detail)
 
     if config.asr.whisper_api_key or config.llm.api_key:
         return Finding.passed(
             "asr_route",
             "Speech-to-text route",
-            f"Whisper API (model {config.asr.whisper_model})",
+            f"Whisper API (model {config.asr.whisper_model}) -- paid, uses a key",
         )
 
-    if lookup("videocaptioner") or (
-        Path("~/.local/bin/videocaptioner").expanduser().is_file()
-    ):
-        return Finding.info(
-            "asr_route",
-            "Speech-to-text route",
-            "the VideoCaptioner CLI",
-        )
-
-    return Finding.info(
+    return Finding.degraded(
         "asr_route",
         "Speech-to-text route",
-        "no speech-to-text backend is available. Set an LLM or Whisper API "
-        "key, or install porter-workflow[asr-local] for offline transcription "
-        "with no key, or transcription will fail",
+        "no speech-to-text capability is available: install "
+        "porter-workflow[asr-local] for free offline transcription, or set an "
+        "OpenAI-compatible key for the paid Whisper API; a source with a "
+        "subtitle track still needs neither",
+        "asr",
     )
 
 
 def probe_translation_route(config: PorterConfig) -> Finding:
-    """Which translation path this configuration will take.
+    """Which translation capabilities this machine can offer a plan.
 
-    Without an LLM key the chain uses Bing, Google and MyMemory — all key-free,
-    all reverse-engineered. Reporting that as a plain pass would hide a real
-    reliability difference, so it is reported as the fact it is.
+    Translation never blocks: the key-free endpoints (Bing, Google, MyMemory)
+    need no setup. An LLM key adds a higher-quality paid capability; it is not
+    a fallback the other endpoints lead to. The plan records the exact
+    capability it will use, so network flakiness is a plan/run outcome rather
+    than a silent substitution.
     """
     if config.llm.api_key:
         return Finding.passed(
             "translation_route",
             "Translation route",
-            f"LLM ({config.llm.model})",
+            f"LLM ({config.llm.model}) -- paid, uses a key; the key-free "
+            "endpoints (Bing, Google, MyMemory) remain selectable",
         )
 
-    return Finding.info(
+    return Finding.passed(
         "translation_route",
         "Translation route",
-        "no LLM key set; the key-free endpoints (Bing, Google, MyMemory) are "
-        "reverse-engineered and unverified, with the VideoCaptioner CLI last",
+        "key-free endpoints (Bing, Google, MyMemory) -- no key needed; "
+        "availability depends on the network, and a plan names the exact "
+        "endpoint it will use",
     )
 
 
@@ -611,7 +607,7 @@ def probe_all(
 
     findings.append(probe_js_runtime(which=ctx.which))
     findings.append(probe_font(config))
-    findings.append(probe_asr_route(config, which=ctx.which))
+    findings.append(probe_asr_route(config))
     findings.append(probe_translation_route(config))
 
     return CapabilityReport(findings=findings)

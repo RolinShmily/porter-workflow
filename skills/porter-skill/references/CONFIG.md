@@ -54,7 +54,9 @@
 
 ### `llm`
 
-用于字幕语义纠错与翻译。**不配也能跑**——翻译会走免 Key 的 `bing` / `google` / `mymemory`。
+提供**付费** LLM 翻译能力（`translate.llm`）。**不配也能跑**——翻译默认从免 Key 的
+`bing` / `google` / `mymemory` 中选择一个。LLM 不是免 Key 端点的回退；计划会明确
+记录选了哪个能力。
 
 | 键 | 默认 | 说明 |
 |---|---|---|
@@ -66,7 +68,7 @@
 
 | 键 | 默认 | 说明 |
 |---|---|---|
-| `engine` | `null` | `null` = 走回退链；也可强制 `whisper-local` / `whisper-api` / `videocaptioner` |
+| `engine` | `null` | **偏好**，不是回退链：当 ASR 确实要运行时，优先选这个能力（`whisper-local` / `whisper-api`）。只在能力可用且策略允许时生效；它不会强制 ASR，也不构成付费同意 |
 | `language` | `auto` | 源语言 |
 | `whisper_api_key` | `null` | 未设时回落到 `llm.api_key` |
 | `whisper_api_base` | `null` | 未设时回落到 `llm.api_base` |
@@ -76,17 +78,21 @@
 | `whisper_local_compute_type` | `auto` | 计算精度（`auto` / `int8` / `float16` 等） |
 | `audio_denoise` | `true` | 是否生成 ASR 专用增强音轨（不影响成片音质） |
 
-`whisper-local` 需要 `[asr-local]` extra：免 Key，首次下载模型后可离线。`whisper-api`
-需要 OpenAI 兼容 Key；`videocaptioner` 需要用户自行安装外部 CLI。
+`whisper-local` 需要 `[asr-local]` extra：免 Key，首次下载模型后可离线，是免费默认。
+`whisper-api` 是**付费**能力，需要 OpenAI 兼容 Key；只有计划显式命名它或传入
+`--allow-paid` 时才会被选中。`asr.engine=whisper-api` 本身不授权付费。
 
 ### `refine`
 
-转录后字幕文本纠错与语义精炼（标点修复、同音字校对）。
+LLM 精修是旧管线能力。**当前的 `plan` / `run --plan` 执行器固定使用
+`PassthroughRefiner`，不会发起隐藏的 LLM 调用**；`refine.enabled` 不改变计划的能力
+选择，也不产生费用。保留这些键是为了兼容旧配置和旧前端；需要 LLM 级翻译请显式
+选择 `translate.llm`。
 
 | 键 | 默认 | 说明 |
 |---|---|---|
-| `enabled` | `true` | 是否启用 LLM 语义校对 |
-| `model` | `null` | 指定精炼模型（未指定时继承 `llm.model`） |
+| `enabled` | `true` | 旧管线的 LLM 语义校对开关；新计划执行器不使用 |
+| `model` | `null` | 旧管线精修模型（未指定时继承 `llm.model`） |
 
 ### `ffmpeg`
 
@@ -110,8 +116,8 @@ ASS 字幕样式。字号单位是**视频自身分辨率下的像素**；竖屏
 
 | 键 | 默认 |
 |---|---|
-| `zh_font` | `Microsoft YaHei` |
-| `en_font` | `Arial` |
+| `zh_font` | 按平台自动选择（Linux 自动匹配 fontconfig 中文字体 / 回落 `Noto Sans CJK SC`；macOS `PingFang SC`；Windows `Microsoft YaHei`） |
+| `en_font` | 按平台自动选择（Linux `Noto Sans`；macOS `Helvetica Neue`；Windows `Arial`） |
 | `zh_font_size` | `52` |
 | `en_font_size` | `34` |
 | `zh_primary_color` | `&H00FFFFFF` |

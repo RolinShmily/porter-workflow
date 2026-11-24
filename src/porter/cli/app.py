@@ -3,7 +3,10 @@
 Command tree::
 
     porter <URL>                      # shorthand for `porter run <URL>`
-    porter run <URL> [options]
+    porter capabilities               # what this machine can execute
+    porter probe <SOURCE>             # source facts, no plan
+    porter plan <SOURCE>              # resolved workflow, no execution
+    porter run <SOURCE> [--plan FILE] # execute the resolved workflow
     porter inspect <URL>
     porter doctor
     porter config {list,get,set,path}
@@ -20,18 +23,20 @@ from collections.abc import Sequence
 
 from porter import __version__
 from porter.cli import render
+from porter.cli.commands import capabilities as capabilities_cmd
 from porter.cli.commands import config as config_cmd
 from porter.cli.commands import doctor as doctor_cmd
 from porter.cli.commands import inspect as inspect_cmd
 from porter.cli.commands import jobs as jobs_cmd
 from porter.cli.commands import plan as plan_cmd
+from porter.cli.commands import probe as probe_cmd
 from porter.cli.commands import run as run_cmd
 from porter.core.errors import ConfigError
 from porter.core.logging import configure as configure_logging
 
 __all__ = ["SUBCOMMANDS", "build_parser", "dispatch", "main"]
 
-SUBCOMMANDS = ("run", "inspect", "plan", "doctor", "config", "jobs")
+SUBCOMMANDS = ("capabilities", "probe", "run", "inspect", "plan", "doctor", "config", "jobs")
 
 #: Global options that consume the following token, so the bare-URL detector
 #: does not mistake that token for a subcommand.
@@ -66,7 +71,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     subparsers = parser.add_subparsers(dest="command", metavar="<command>")
-    for module in (run_cmd, inspect_cmd, plan_cmd, doctor_cmd, config_cmd, jobs_cmd):
+    for module in (
+        run_cmd,
+        capabilities_cmd,
+        probe_cmd,
+        inspect_cmd,
+        plan_cmd,
+        doctor_cmd,
+        config_cmd,
+        jobs_cmd,
+    ):
         module.configure(subparsers)
     return parser
 

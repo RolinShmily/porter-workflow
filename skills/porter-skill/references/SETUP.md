@@ -1,175 +1,242 @@
-# 环境与配置检查（SOP）
+# 环境与依赖（SOP 展开）
 
-本页是 [`SKILL.md`](../SKILL.md) 第 1–2 步的展开清单。目标是**在下载任何媒体之前**
-确认：入口能运行、系统依赖齐全、ASR 有可用路由、配置来源明确、输出目录可写。
+本页展开 [`SKILL.md`](../SKILL.md) §0 的三道门。目标是**在下载任何媒体之前**确认：
+
+1. 这台机器能跑 porter（`doctor`）
+2. 每个阶段有哪些对等能力（`capabilities`）
+3. 这次输入的源是什么（`probe`）
 
 环境检查每个会话做一次即可；安装依赖、切换 `PORTER_SKILL_SPEC` 或改配置后重跑。
 
----
-
-## 1. 入口检查
-
-### CLI
-
-```bash
-uv --version
-uvx --version
-<SKILL_DIR>/scripts/porter.sh --version
-```
-
-PowerShell：
-
-```powershell
-& '<SKILL_DIR>\scripts\porter.ps1' --version
-```
-
-`porter.sh` / `porter.ps1` 把参数原样转发给 `uvx --from "$PORTER_SKILL_SPEC" porter`。
-默认 spec 是 `porter-workflow[llm]`；需要本地 ASR 时设置：
-
-```bash
-export PORTER_SKILL_SPEC='porter-workflow[llm,asr-local]'
-```
-
-设置后，同一会话里的 `run`、`jobs status` 等都要沿用同一个 spec，否则可能是两个
-不同的临时环境。
-
-### MCP
-
-如果宿主能看到以下工具，说明 MCP 已配置：
-
-```text
-porter_version, porter_doctor, porter_inspect, porter_plan,
-porter_job_start, porter_job_status, porter_job_result, porter_job_cancel,
-porter_job_list, porter_config
-```
-
-MCP 的配置方法见 [`MCP.md`](MCP.md)。注意：`npx skills add` **不会**安装 MCP server。
-
-### WebUI
-
-```bash
-uvx --from "porter-workflow[web]" porter-web --help
-```
+**porter 没有回退链。** 这里的每一道门都是为了在 plan 之前把“能选什么”确定下来；
+计划一旦生成，运行期不会换能力。
 
 ---
 
-## 2. 系统依赖
+## 0. 入口：Python 与 uvx
 
-| 依赖 | 是否阻塞 | 确认 |
+```bash
+python3 --version      # Windows: py -3 --version
+uvx --version          # 没有时先安装 uv
+```
+
+- porter 要求 Python ≥ 3.11；包装器 `scripts/porter.py` 只要求 ≥ 3.8，`uvx` 会解析
+  或下载 porter 需要的解释器。
+- 本文命令写作 `python3 <SKILL_DIR>/scripts/porter.py`；Windows 用
+  `py -3 <SKILL_DIR>\scripts\porter.py`。
+- 没有 Python：由 Agent 指导安装，不要静默改系统环境。没有 uv：按 uv 官方方式安装。
+- 技能入口只有一个 Python 文件（`scripts/porter.py`），没有 Bash/PowerShell 两套
+  实现；`scripts/bootstrap.py` 只用于离线或源码 checkout 的 venv 安装。
+
+---
+
+## 1. 完整依赖清单
+
+| 依赖 | 用途 | 缺失时 |
 |---|---|---|
-| Python ≥ 3.11 | 是 | `python3 --version` |
-| uv / uvx | 是（CLI 路径） | `uv --version` |
-| FFmpeg + ffprobe | 是 | `ffmpeg -version`、`ffprobe -version` |
-| FFmpeg 的 libass 支持 | 是（压制） | `ffmpeg -filters \| grep subtitles` |
-| Deno 或 Node ≥ 20 | YouTube 是，其他平台否 | `porter doctor` 的 JS runtime 项 |
-| 字体 | 压制需要 | `porter doctor` 的 font 项 |
+| Python ≥ 3.11 | 运行 porter | blocker |
+| `uv` / `uvx` | 技能包装器解析并运行发行包 | CLI 入口不可用 |
+| FFmpeg + ffprobe | 探测、标准化、提取音轨、压制 | blocker（除 `subtitle.only`） |
+| FFmpeg 的 libass（`ass` 滤镜） | 烧硬字幕 | 只能出字幕，不能压制 |
+| Deno 或 Node ≥ 20 | yt-dlp 处理 YouTube JS 挑战 | YouTube 抽取格式变少，可能下载失败 |
+| 中文字体 | ASS 渲染 | 中文显示为方块 |
+| `porter-workflow` 基础包 | yt-dlp、requests、pydantic、平台字幕、翻译、压制 | blocker |
+| `[asr-local]` | 本地 faster-whisper，免费离线 | 无字幕轨时必须付费或提供字幕 |
+| `[llm]` | Whisper API、LLM 翻译 | 只是付费能力不可用 |
+| `[mcp]` / `[web]` | 旧版前端 | 与本文 SOP 无关 |
 
-安装方向：
-
-- **uv**：按 uv 官方文档安装；不要静默修改系统级环境。
-- **FFmpeg + libass**：优先系统包管理器（Linux 发行版、Homebrew、winget 等）。
-  Windows 上注意 `ffmpeg.exe` 与 `ffprobe.exe` 都要在 `PATH`。
-- **Deno / Node**：YouTube 的 yt-dlp JS 挑战需要外部运行时；Deno 优先。
-- 安装后确认 `ffmpeg`、`ffprobe` 与 JS runtime 都在当前 shell 的 `PATH` 上。
-
-验证：
-
-```bash
-porter doctor --json
-```
-
-- 退出码 0 = 没有 blocker；退出码 1 = 有阻塞项。
-- `blockers` 必须清零才能开作业。
-- `degradations` 不阻塞，但要向用户说明（例如没有硬件编码器、只能用软件编码）。
-- `doctor` 只验证**能力存在性**（命令、滤镜、Key 是否设置），不验证远端 Key 是否
-  有效、额度是否充足；真实端点要等第一次调用才会暴露问题。
+翻译的免 Key 端点只需要基础包（`requests`）。`[asr-local]` 首次运行会下载模型
+（默认 `small` 约 484 MB）；安装前取得用户同意。
 
 ---
 
-## 3. Python extras 怎么选
+## 2. 门一：`doctor`
 
-| Extra | 带来什么 | 什么时候需要 |
+```bash
+python3 <SKILL_DIR>/scripts/porter.py doctor --json
+```
+
+### 输出结构
+
+```jsonc
+{
+  "platform": "Linux ...",
+  "ok": false,
+  "blockers": ["ffmpeg"],
+  "degradations": ["js_runtime"],
+  "findings": [
+    {
+      "key": "ffmpeg",
+      "label": "ffmpeg & ffprobe",
+      "ok": false,
+      "severity": "blocker",
+      "detail": "not found on PATH",
+      "remediation_key": "ffmpeg"
+    }
+  ],
+  "guidance": {
+    "ffmpeg": {
+      "summary": "ffmpeg and ffprobe must both be installed and on PATH.",
+      "steps": ["Debian/Ubuntu:  sudo apt install ffmpeg", "..."],
+      "note": "...",
+      "url": "https://ffmpeg.org/download.html"
+    }
+  }
+}
+```
+
+### 判定规则
+
+- **退出码 0 且 `blockers` 为空**才通过。退出码 1 表示存在 blocker。
+- `degradations` 不阻塞，但必须向用户说明影响。
+- `guidance` 只包含失败项的修复步骤；`steps` 可直接执行。
+- `doctor` 检查：Python、ffmpeg/ffprobe、版本、libass、编码器、yt-dlp、JS runtime、
+  中文字体、输出目录写权限、ASR 能力、翻译能力。
+- `doctor` **不验证**远端 Key、额度、网络；这些要等真实调用。
+- `doctor` 不会创建输出目录：它探测最近的已存在父目录，所以通过不代表目录已建好，
+  只代表可以创建。
+
+### 常见 blocker 的处理方向
+
+| finding | 处理 |
+|---|---|
+| `ffmpeg` / `ffmpeg_version` | 按 `guidance.ffmpeg.steps` 安装；确认 `ffprobe` 也在 PATH |
+| `ffmpeg_libass` | 换带 libass 的构建；只出字幕可用 `--task subtitle` 绕过 |
+| `js_runtime` | 装 Deno（推荐）或 Node ≥ 20；任何受支持的运行时都够 |
+| `yt_dlp` | `uv pip install yt-dlp`；它是基础包依赖，通常不会缺 |
+| `font` | 装 Noto Sans CJK，或在 `porter.json` 改 `style.zh_font` |
+| `output_dir` | 换可写路径（`-o` / `PORTER_OUTPUT_DIR`） |
+| `asr_route`（degraded） | 有字幕轨可继续；否则装 `[asr-local]` 或配置付费 Key |
+| `translation_route` | 不会 blocker；免 Key 端点默认可用 |
+
+修完重跑 `doctor`，直到退出码 0。
+
+---
+
+## 3. 门二：`capabilities`
+
+```bash
+python3 <SKILL_DIR>/scripts/porter.py capabilities --json
+python3 <SKILL_DIR>/scripts/porter.py capabilities --stage transcript --available --json
+```
+
+每项字段：
+
+```jsonc
+{
+  "id": "transcript.whisper-local",
+  "stage": "transcript",
+  "available": true,
+  "verified": true,
+  "requires": ["faster-whisper"],
+  "cost": "free",
+  "egress": "none",
+  "download_mb": 0,
+  "params_schema": {},
+  "description": "Local faster-whisper recognition. ..."
+}
+```
+
+- `available=false` 的能力仍会列出：区分“未安装”与“不支持”。
+- `cost=paid` 默认不会被 planner 选中。
+- `download_mb>0` 表示首次运行会下载模型，必须先告知用户。
+- `egress=audio` 表示音频会上传到第三方（Whisper API）；`text` 表示字幕文本。
+
+常用过滤：
+
+```bash
+# 转录阶段有哪些可用能力
+porter capabilities --stage transcript --available
+
+# 翻译阶段全部能力（含不可用）
+porter capabilities --stage translate
+```
+
+---
+
+## 4. 门三：`probe`
+
+```bash
+python3 <SKILL_DIR>/scripts/porter.py probe "<SOURCE>" --json
+```
+
+- `kind` 决定工作流：`url` / `local_video` / `subtitle` / `audio`。
+- `tracks[].verified=false` 只是“平台列出”，不是“已抓取”。
+- `warnings` 里的 blocker 表示源不可用；退出码 1。
+- 本地文件用 ffprobe 实测 `has_video` / `has_audio`；URL 的 `has_audio` 在探测阶段
+  固定为 `false`（元数据不能证明音频流存在）。
+- 需要登录：`--cookies FILE` 或 `--cookies-from-browser BROWSER`。
+
+`probe` 不下载媒体；它是安全的预检。
+
+---
+
+## 5. Python 包与 extras
+
+| 安装 | 带来什么 | 何时需要 |
 |---|---|---|
-| 基础包 | yt-dlp、pydantic、platformdirs、requests | 预检、规划、平台字幕、翻译、压制 |
-| `[llm]` | `openai`、`json-repair` | Whisper API ASR、LLM 翻译/精修 |
-| `[asr-local]` | `faster-whisper`、`ctranslate2` | **免 Key 本地 ASR（推荐）**；首次下载模型 |
-| `[mcp]` | `fastmcp` | `porter-mcp` |
-| `[web]` | `gradio` | `porter-web` |
-| `[all]` | 以上全部 | 想一次装全；体积最大 |
+| `porter-workflow` | yt-dlp、requests、pydantic、platformdirs；平台字幕、翻译、压制 | 默认 |
+| `porter-workflow[asr-local]` | `faster-whisper`、`ctranslate2` | **免费离线 ASR（推荐）** |
+| `porter-workflow[llm]` | `openai`、`json-repair` | Whisper API、LLM 翻译（付费） |
+| `porter-workflow[mcp]` | `fastmcp` | 旧版 MCP server |
+| `porter-workflow[web]` | `gradio` | 旧版 WebUI |
+| `porter-workflow[all]` | 以上全部 | 一次装全；体积最大 |
 
 **决策规则：**
 
-1. 平台有原生字幕轨 → 不装 ASR 也能转录（但字幕抓取可能失败并回退 ASR）。
-2. 没有平台字幕且没有 API Key → 必须装 `[asr-local]`，否则无法转录。
-3. 有 OpenAI 兼容 Key → `[llm]` 即可；本地 ASR 仍可作为离线回退。
-4. 装了 VideoCaptioner CLI → 可作为外部 ASR/翻译后端，但它是 GPL-3.0 且
-   `python<3.13`，不是 porter 的依赖。
+1. 源有平台字幕轨 → 基础包即可转录（但抓取可能失败，见 [`PLAN.md`](PLAN.md)）。
+2. 源无字幕轨且不付费 → 必须装 `[asr-local]`。
+3. 愿意付费 → 装 `[llm]` 并配置 `WHISPER_API_KEY` / `OPENAI_API_KEY`；计划仍需显式
+   命名付费能力或 `--allow-paid`。
+4. 只处理字幕文件 → 基础包即可，不需要 ffmpeg 或 ASR。
 
-安装大依赖（尤其 `[asr-local]`）前先征得用户同意，并说明首次模型下载体积
-（默认 `small` 约 464 MB）。
+### 技能包装器
+
+```bash
+# 默认基础包
+python3 <SKILL_DIR>/scripts/porter.py --version
+
+# 免费本地 ASR
+export PORTER_SKILL_SPEC='porter-workflow[asr-local]'
+
+# 再加付费能力
+export PORTER_SKILL_SPEC='porter-workflow[asr-local,llm]'
+```
+
+设置后，同一会话里的 `plan` / `run` / `jobs status` 都要沿用同一个 spec，否则可能
+是两个不同的临时环境。
 
 ---
 
-## 4. 配置检查
-
-### 4.1 来源与优先级
-
-从高到低：
-
-1. `--config <path>`
-2. `$PORTER_CONFIG`
-3. 环境变量（覆盖所选文件中的对应键）
-4. 最近的项目配置：`porter.json` → `porter.toml` → `config.json`
-5. 用户级配置目录（仅当没有项目配置时）
-6. 内置默认值
-
-项目配置与用户配置是**二选一**：找到项目配置后，用户配置不再参与。`porter config
-list` 的 `Source:` 行就是实际使用的文件。
+## 6. 配置来源（只读检查）
 
 ```bash
 porter config path
-porter config list
-porter config get llm
+porter config list      # Source + 生效值，密钥打码
 porter config get asr
+porter config get llm
 ```
 
-密钥永远以 `sk-...abcd` 形式打码；把输出贴给用户或写进报告是安全的。
+优先级从高到低：`--config` → `$PORTER_CONFIG` → 环境变量 → 最近的项目配置
+（`porter.json` → `porter.toml` → `config.json`）→ 用户配置 → 内置默认。
 
-### 4.2 ASR 路由
+项目配置与用户配置**二选一**，不是深合并。完整键表见 [`CONFIG.md`](CONFIG.md)。
 
-| 顺序 | 后端 | 前提 | 离线 |
-|---|---|---|---|
-| 1 | `whisper-local` | `[asr-local]` 已安装 | 模型缓存后可以 |
-| 2 | `whisper-api` | `WHISPER_API_KEY` 或 `OPENAI_API_KEY` | 否 |
-| 3 | `videocaptioner` | 外部 CLI 在 `PATH` 或 `~/.local/bin` | 取决于它的引擎 |
+**Key 的安全放置：**
 
-- `asr.engine` / `PORTER_ASR_ENGINE` / `--asr-engine` 只做**提升**，不做过滤。
-- 本地模型/设备/精度：`asr.whisper_local_model`、`whisper_local_device`、
-  `whisper_local_compute_type`。
-- 没有可用后端且没有平台字幕 → 作业会在 transcribe 阶段失败；不要硬跑。
-
-### 4.3 翻译
-
-- 不配 LLM Key 也能翻译：`llm` 不可用时会走 `bing` → `google` → `mymemory`。
-- 中文目标会做 CJK 自检；返回原文/英文会被判失败并换下一个后端。
-- 想稳定质量就配置 `llm.api_key` / `llm.api_base` / `llm.model`。
-
-### 4.4 输出与受限宿主
-
-- 默认 `output_dir=./porter_output`。
-- 受限宿主：读 [`HOSTS.md`](HOSTS.md)，把 `PORTER_SKILL_STATE_DIR` 指到获准的
-  **绝对路径**，并确保 `-o` 也在获准目录内。
-- `doctor` 通过不代表当前目录可写；必要时显式 `-o`。
+- 首选环境变量：`WHISPER_API_KEY`、`OPENAI_API_KEY`。
+- 其次 `porter config set llm.api_key=...`（用户级配置）。
+- 不要写进仓库、技能目录或对话记录。
 
 ---
 
-## 5. 开作业前的检查清单
+## 7. 开作业前的检查清单
 
-- [ ] `porter --version` 或 `porter_version` 有输出
-- [ ] `porter doctor` 退出码 0，无 blocker；degradation 已向用户说明
-- [ ] `ffmpeg -filters | grep subtitles` 有输出
-- [ ] YouTube 链接已确认 JS runtime
-- [ ] 已明确 ASR 路由：平台字幕 / 本地 / API / VideoCaptioner
-- [ ] 已明确翻译路由与是否需要 LLM Key
+- [ ] `doctor --json` 退出码 0，`blockers` 为空；`degradations` 已向用户说明
+- [ ] 需要的能力在 `capabilities` 中 `available=true`
+- [ ] `probe` 的 `kind` 与 `warnings` 已确认
+- [ ] `plan --json` 的 `feasible=true`
+- [ ] 付费能力已显式命名或 `--allow-paid`，且用户已同意费用
+- [ ] 模型下载体积（`download_mb`）与数据出口（`egress`）已告知用户
 - [ ] 输出目录可写，且位于宿主允许的路径内
-- [ ] 已把 `plan` 的结论和成本报给用户并取得确认
+- [ ] 计划已保存为 `plan.json`，`plan_id` 已记录

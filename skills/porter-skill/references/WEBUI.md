@@ -1,8 +1,11 @@
 # WebUI 操作指南
 
-WebUI 是**人工通道**：适合用户可视化地预检、启动作业、查看日志与成片、修改配置。
-Agent 不能点击页面；职责是启动服务、告诉用户去哪个 Tab、怎么看结果，以及在生产
-路径上优先使用 CLI/MCP。
+WebUI 是**人工通道**：适合用户可视化地预检、生成计划、执行、查看日志与成片、修改
+配置。Agent 不能点击页面；职责是启动服务、告诉用户去哪个 Tab、怎么看结果，以及在
+自动化路径上使用 CLI。
+
+WebUI 与 CLI/MCP 使用同一份 `WorkflowPlan`：工作台先解析计划并展示 JSON，执行时把
+这份计划交给 `execute_plan`。没有第二套回退链，也没有旧的 ASR 引擎排列。
 
 ---
 
@@ -32,17 +35,22 @@ uvx --from "porter-workflow[web]" porter-web --share
 
 | 操作 | 说明 |
 |---|---|
-| 输入链接 / 本地路径 | 支持平台 URL 或 `file:///...` 本地文件 |
-| 快速预检 | 调用 `porter inspect`，显示标题、平台、时长、是否有原生字幕 |
+| 输入链接 / 本地路径 | 平台 URL、`file:///...`、本地视频、音频或字幕文件 |
+| 预检并生成计划 | 调用 `probe_source` + `resolve_plan`，显示源事实与 `WorkflowPlan` |
+| 任务范围 | `release` / `subtitle` / `transcribe` / `audio` / `probe`；`convert` 尚未接入执行器 |
+| 转录能力 | 自动、平台字幕轨、本地 Whisper（免费）、Whisper API（付费）；**单选，无回退** |
+| 翻译能力 | 自动、Bing / Google / MyMemory（免 Key）、LLM（付费）；**单选，无回退** |
+| 供字幕文件 | 可选 `.srt` / `.vtt`，规划为 `subtitle.supplied` |
+| 允许付费 | 未勾选时 `paid` 能力不会被自动选中；显式选择仍会在计划中报告 |
 | 压制模式 | `dual`（默认）、`zh_only`、`skip` |
-| ASR 引擎 | 自动 / 本地 faster-whisper / Whisper API / VideoCaptioner |
-| 目标语言 | 默认 `zh-Hans` |
-| 开始 / 取消 | 在当前页面启动作业或请求取消 |
-| 实时日志 | 阶段、进度、产物事件；失败时显示错误 |
-| 成片预览 | 双语与纯中文成片播放器 |
+| 计划 JSON | 完整 `WorkflowPlan`，可复制给 CLI `run --plan` 或 MCP `job_start(plan=...)` |
+| 开始 / 取消 | 执行当前计划，或在当前页面请求取消 |
+| 实时日志 | 阶段、进度、产物事件；失败时显示结构化错误 |
+| 成片预览 | 从 `WorkflowResult.artifacts` 取 `video_bilingual` / `video_zh` |
 | 物料下载 | `cooked.zip`、`raw.zip`，以及 raw/cooked 文件列表 |
 
-适合“用户想看着它跑”的场景。长任务仍在后台线程执行，页面只轮询状态。
+规划选项一改，旧计划即失效；点“执行”会重新解析，而不是偷偷沿用旧选择。计划
+`feasible=false` 时不会启动，页面会列出 blocker 与 `fix`。
 
 ### 2. 任务总览与人机协作
 
@@ -60,18 +68,20 @@ HITL（Human-in-the-Loop）说明：
 - 作业进入 `AWAITING_USER` 时，活跃卡片会显示 `interaction_required`。
 - 在“人工协作”表单里填 action（例如 `confirm`）和 payload（例如 `{}`），提交后
   写入作业记录的 `interaction_response`，流水线恢复。
-- 当前内置管线通常不会主动触发 HITL；这是给人工介入和扩展流程预留的机制。没有
-  待操作作业时提交会被拒绝，并提示当前状态。
+- 当前内置工作流通常不会主动触发 HITL；这是给人工介入和扩展流程预留的机制。
 
 ### 3. 配置文件与首选项
 
 | 操作 | 说明 |
 |---|---|
 | 目标文件 | 显示实际写入的配置路径：优先写项目级 JSON 配置；若项目只有 `porter.toml`，则回退到用户级 JSON |
-| 可视化表单 | LLM Key/Base/模型、ASR 引擎与本地模型、降噪、Whisper API、字幕样式、cookies |
+| 可视化表单 | LLM Key/Base/模型、首选转录能力、本地模型、降噪、Whisper API、字幕样式、cookies |
 | 保存表单 | 合并进目标 JSON 文件；文件权限尽量设为 `0600` |
 | 原始 JSON | 直接编辑完整配置；可格式化、保存 |
 | 重新加载 | 从目标文件重新读取所有字段，包含 `cookies_file` |
+
+`asr.engine` 是**偏好**：它只在 ASR 真正运行时影响选择，不强制走 ASR，也不是付费
+授权。真正的付费同意仍由计划显式命名或 `allow_paid` 决定。
 
 注意：
 
@@ -86,7 +96,7 @@ HITL（Human-in-the-Loop）说明：
 
 | 操作 | 说明 |
 |---|---|
-| 运行诊断 | 调用 `porter doctor` 的能力探测，显示 Component / Status / Details / Guidance |
+| 运行诊断 | 调用 `doctor` 的能力探测，显示 Component / Status / Details / Guidance |
 | 摘要 | 区分 ✅ Ready、⚠️ Degraded、❌ Blocked |
 
 诊断结果与 CLI `porter doctor` 同源；页面上的修复建议是只读文本，实际安装仍需用户
@@ -96,14 +106,14 @@ HITL（Human-in-the-Loop）说明：
 
 ## Agent 如何配合
 
-1. **启动前**：用 CLI/MCP 跑 `doctor` 和 `plan`，把结论告诉用户；不要让用户在一个
-   必然失败的配置上点击开始。
+1. **启动前**：用 CLI 跑 `doctor`、`capabilities`、`probe` 与 `plan`，把结论告诉
+   用户；不要让用户在一个必然失败的配置上点击执行。
 2. **启动服务**：由用户决定是否运行；如果 agent 启动，放后台，不要阻塞当前会话。
-3. **操作引导**：告诉用户“工作台 Tab 填 URL → 预检 → 选择压制模式 → 开始”，以及
-   失败时去“任务总览”看 `Action` 列。
+3. **操作引导**：告诉用户“工作台填 URL → 预检并生成计划 → 检查 blocker 与计划 JSON
+   → 执行”，失败时去“任务总览”看 `Action` 列。
 4. **产物交付**：告诉用户成片在 `cooked/`，或直接在下载区取 `cooked.zip`。
-5. **自动化优先**：需要脚本化、批处理、长时间无人值守时，用 CLI 或 MCP；WebUI 是
-   人工可视化层，不是自动化接口。
+5. **自动化优先**：需要脚本化、批处理、长时间无人值守或保存计划复现时，用 CLI
+   `plan --json` → `run --plan`。WebUI 是人工可视化层，不是自动化接口。
 
 ---
 
@@ -112,7 +122,8 @@ HITL（Human-in-the-Loop）说明：
 | 现象 | 处理 |
 |---|---|
 | 页面打不开 | 确认 `porter-web` 进程仍在运行；检查 `--host` / `--port` 和防火墙 |
+| 计划不可行 | 看 blocker 的 `code` / `message` / `fix`；安装能力或改规划选项后重新生成 |
 | 文件下载 403 / 路径不允许 | 输出目录必须在当前工作目录或 `output_dir` 内；重启服务后再试 |
 | 配置保存到错误位置 | 看“目标文件”字段；项目配置优先于用户配置 |
 | 提交 HITL 没反应 | 作业不在 `AWAITING_USER`；先刷新看板确认状态 |
-| 预览没有视频 | 作业可能用了 `--burn skip`，或 BURN 阶段失败；去任务总览看成片文件是否存在 |
+| 预览没有视频 | 计划任务可能是 `subtitle` / `transcribe`，或压制模式为 `skip`；查看计划 JSON 的 `stages` |

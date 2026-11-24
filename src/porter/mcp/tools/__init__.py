@@ -4,12 +4,16 @@ Tool modules:
 
 ``meta.py``
     ``porter_version`` — implementation detail, always available.
-``inspect.py``
-    ``porter_inspect`` — pre-flight probe, no side effects.
+``probe.py``
+    ``porter_probe`` — source facts (URL, local media, audio, subtitle), no
+    plan and no download.
+``capabilities.py``
+    ``porter_capabilities`` — the peer-level capability catalog with
+    availability, cost and data egress.
 ``plan.py``
-    ``porter_plan`` — the resolved execution plan (which extractor, native
-    subtitle or ASR, which translator, what is broken) so an agent can confirm
-    before committing compute.
+    ``porter_plan`` — the resolved ``WorkflowPlan``: workflow, exactly one
+    capability per stage, blockers and fixes, executable by
+    ``porter_job_start(plan=...)``.
 ``jobs.py``
     ``porter_job_start`` / ``_status`` / ``_result`` / ``_cancel`` / ``_list``,
     plus the ``porter://jobs/{id}/log`` resource. Long work is job-based because
@@ -31,12 +35,22 @@ from __future__ import annotations
 
 from typing import Any
 
-from porter.mcp.tools import config, docs, doctor, inspect, jobs, meta, plan, stages
+from porter.mcp.tools import (
+    capabilities,
+    config,
+    docs,
+    doctor,
+    jobs,
+    meta,
+    plan,
+    probe,
+    stages,
+)
 
 __all__ = ["register_all"]
 
 #: Modules that contribute tools, in registration order.
-_MODULES = (meta, docs, doctor, config, inspect, plan, jobs, stages)
+_MODULES = (meta, docs, doctor, config, capabilities, probe, plan, jobs, stages)
 
 
 def register_all(server: Any) -> None:

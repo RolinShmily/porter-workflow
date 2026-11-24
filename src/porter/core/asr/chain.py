@@ -86,8 +86,36 @@ class AsrChain:
 
     name = "chain"
 
-    def __init__(self, backends: list[AsrBackend] | None = None) -> None:
+    def __init__(
+        self,
+        backends: list[AsrBackend] | None = None,
+        *,
+        allow_platform: bool = True,
+        allow_supplied: bool = True,
+        allow_asr: bool = True,
+        expected_used_asr: bool | None = None,
+        expected_origin: str | None = None,
+        expected_origin_prefix: str | None = None,
+    ) -> None:
+        """Build a chain.
+
+        The four booleans exist for the resolved workflow executor, which must
+        run exactly the capability its plan named. The defaults preserve the old
+        behaviour: platform track first, then a supplied file, then ASR.
+
+        ``expected_used_asr`` and ``expected_origin`` make cache reuse honest for
+        those single-capability runs. Without them, a ``url.asr`` plan could
+        silently reuse cues a previous ``url.subtitled`` run wrote from the
+        platform's track -- the exact cross-capability substitution the plan
+        exists to prevent.
+        """
         self.backends: list[AsrBackend] = list(backends or [])
+        self.allow_platform = allow_platform
+        self.allow_supplied = allow_supplied
+        self.allow_asr = allow_asr
+        self.expected_used_asr = expected_used_asr
+        self.expected_origin = expected_origin
+        self.expected_origin_prefix = expected_origin_prefix
 
     def add(self, backend: AsrBackend) -> AsrChain:
         """Append a backend. Returns self, so assembly is one expression."""
@@ -133,12 +161,15 @@ class AsrChain:
         # have to guess about. It also raises rather than returning [] -- see
         # `load_supplied_subtitles`.
         supplied = ctx.options.subtitle_file
-        items = (
-            load_supplied_subtitles(Path(supplied))
-            if supplied is not None
-            else load_platform_subtitles(raw.subtitle_src)
-        )
+        if supplied is not None and not self.allow_supplied:
+            raise PorterError(
+                "this workflow does not allow a supplied subtitle file",
+                phase=Phase.TRANSCRIBE.value,
+                hint="plan the subtitled workflow instead",
+            )
+        items: list[SubtitleItem] = []
         if supplied is not None:
+            items = load_supplied_subtitles(Path(supplied))
             ctx.progress(Phase.TRANSCRIBE, 1.0, "using the supplied subtitle file")
             return self._write(
                 raw,
@@ -146,6 +177,9 @@ class AsrChain:
                 AsrOutcome(items=items, used_asr=False, origin="supplied"),
                 ctx,
             )
+
+        if self.allow_platform:
+            items = load_platform_subtitles(raw.subtitle_src)
 
         if items:
             ctx.logger.info("using the platform's own subtitle track (%d cues)", len(items))
@@ -164,6 +198,16 @@ class AsrChain:
             # question the operator asks.
             return self._write(
                 raw, items, AsrOutcome(items=items, used_asr=False, origin="platform"), ctx
+            )
+
+        if not self.allow_asr:
+            raise PorterError(
+                "the platform did not provide a usable subtitle track",
+                phase=Phase.TRANSCRIBE.value,
+                hint=(
+                    "the plan chose the platform track; fetch the link again, pass "
+                    "--subtitle-file, or build a new plan that selects ASR"
+                ),
             )
 
         outcome = self._run(_best_audio(raw), ctx)
@@ -230,6 +274,33 @@ class AsrChain:
             _logger.warning("could not read %s (%s); re-running recognition", sidecar, exc)
             return None
         if not isinstance(provenance, dict) or "used_asr" not in provenance:
+            return None
+        if (
+            self.expected_used_asr is not None
+            and bool(provenance["used_asr"]) != self.expected_used_asr
+        ):
+            _logger.info(
+                "cached source cues came from a different provenance; not reusing them"
+            )
+            return None
+        if (
+            self.expected_origin is not None
+            and provenance.get("origin") != self.expected_origin
+        ):
+            _logger.info(
+                "cached source cues came from %r, not %r; not reusing them",
+                provenance.get("origin"),
+                self.expected_origin,
+            )
+            return None
+        if self.expected_origin_prefix is not None and not str(
+            provenance.get("origin") or ""
+        ).startswith(self.expected_origin_prefix):
+            _logger.info(
+                "cached source cues came from %r, not from a %r backend; not reusing them",
+                provenance.get("origin"),
+                self.expected_origin_prefix,
+            )
             return None
 
         items = normalize_subtitle_items(parse_srt(source_srt.read_text(encoding="utf-8")))

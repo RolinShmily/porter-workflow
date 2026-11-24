@@ -125,6 +125,22 @@ GUIDES: dict[str, Remediation] = {
             "frontend's protocol stream."
         ),
     ),
+    "asr": Remediation(
+        summary="No speech-to-text capability is available on this machine.",
+        steps=(
+            "Free and offline:  pip install 'porter-workflow[asr-local]'",
+            "Skill wrapper:     export PORTER_SKILL_SPEC='porter-workflow[asr-local]'",
+            "Paid and hosted:   export WHISPER_API_KEY=...   (or OPENAI_API_KEY)",
+            "Verify:            porter doctor",
+        ),
+        note=(
+            "The local engine downloads its model on first use; after that it "
+            "needs no key and no network. The hosted Whisper API is a paid "
+            "capability and a plan only uses it when the plan names it or the "
+            "operator passes --allow-paid. A source that already carries a "
+            "subtitle track needs neither."
+        ),
+    ),
     "subtitle_font": Remediation(
         summary="The configured Chinese subtitle font is not installed.",
         steps=(

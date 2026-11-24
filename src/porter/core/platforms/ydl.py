@@ -68,6 +68,7 @@ __all__ = [
     "available_js_runtimes",
     "build_ydl",
     "download_progress_hook",
+    "has_audio_stream",
     "has_video_stream",
     "translate_ydl_errors",
 ]
@@ -238,6 +239,23 @@ def has_video_stream(info: Mapping[str, Any]) -> bool:
         return ext not in NON_VIDEO_EXTENSIONS
 
     return False
+
+
+def has_audio_stream(info: Mapping[str, Any]) -> bool:
+    """Whether a yt-dlp info dict advertises at least one audio stream."""
+    for fmt in info.get("formats") or []:
+        if not isinstance(fmt, Mapping):
+            continue
+        acodec = fmt.get("acodec")
+        if acodec not in (None, "none", ""):
+            return True
+
+    entries = info.get("entries")
+    if isinstance(entries, list):
+        return any(isinstance(e, Mapping) and has_audio_stream(e) for e in entries)
+
+    acodec = info.get("acodec")
+    return acodec not in (None, "none", "")
 
 
 def available_js_runtimes(which: Callable[[str], str | None] | None = None) -> dict[str, Any]:

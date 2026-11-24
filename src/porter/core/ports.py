@@ -2,16 +2,13 @@
 
 The pipeline depends only on these protocols, never on a concrete extractor,
 ASR backend, translator or renderer. That is what makes the engine testable
-without network or ffmpeg, and what lets ``videocaptioner`` (GPL-3.0) live
-behind a process boundary as just another optional implementation.
+without network or ffmpeg, and what lets external media tools stay behind a
+subprocess boundary.
 
-One port per pipeline phase. ``Transcriber`` and ``Translator`` are *chains*:
-they own the fallback ordering and expose an ``available()`` probe so the
-assembly step can drop unusable backends. The individual engines behind them
-implement the narrower protocols in ``porter.core.asr.base`` and
-``porter.core.translate.base``.
-
-Implementations are selected by ``Pipeline.default()`` at assembly time.
+One port per pipeline phase. The individual engines behind ``Transcriber`` and
+``Translator`` implement the narrower protocols in ``porter.core.asr.base`` and
+``porter.core.translate.base``. The workflow executor binds each port to the
+single capability selected by a :class:`~porter.core.workflow.model.WorkflowPlan`.
 """
 
 from __future__ import annotations

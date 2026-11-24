@@ -45,10 +45,11 @@ from porter.core.media.prepare import (
     standardize_master,
 )
 from porter.core.media.probe import probe
+from porter.core.media.standardize import extract_audio
 from porter.core.models.materials import RawMaterials, TaskLayout
 from porter.core.models.metadata import VideoMetadata
 
-__all__ = ["LocalFileDownloader", "local_video_id"]
+__all__ = ["AUDIO_SUFFIXES", "VIDEO_SUFFIXES", "LocalFileDownloader", "local_video_id"]
 
 _logger = get_logger(__name__)
 
@@ -71,6 +72,25 @@ VIDEO_SUFFIXES = frozenset(
         ".m2ts",
         ".3gp",
         ".ogv",
+    }
+)
+
+#: Suffixes treated as audio-only input. These take the same PREPARE path, but
+#: skip video standardisation and the cover frame: there is no video to master.
+AUDIO_SUFFIXES = frozenset(
+    {
+        ".aac",
+        ".aif",
+        ".aiff",
+        ".alac",
+        ".flac",
+        ".m4a",
+        ".mp3",
+        ".oga",
+        ".ogg",
+        ".opus",
+        ".wav",
+        ".wma",
     }
 )
 
@@ -132,11 +152,56 @@ class LocalFileDownloader:
         ctx.check_cancelled()
         video_path = layout.raw_dir / VIDEO_NAME
         audio_path = layout.raw_dir / AUDIO_NAME
+        is_audio = source.suffix.lower() in AUDIO_SUFFIXES
 
         # Probe once, before the branch: the reuse check needs it either way, and
         # re-probing inside both arms is how the first draft ended up running
         # ffprobe twice on the common path.
         metadata = self._metadata(source, layout, runner)
+
+        if is_audio:
+            # Audio-only input has nothing to standardise into video.mp4. The
+            # audio track is still normalised to the same 16 kHz mono WAV every
+            # other source produces, so transcription and translation downstream
+            # cannot tell the difference.
+            if ctx.options.force or not audio_path.is_file() or audio_path.stat().st_size == 0:
+                ctx.check_cancelled()
+                ctx.progress(Phase.PREPARE, 60.0, "extracting the audio")
+                extract_audio(
+                    runner,
+                    source,
+                    audio_path,
+                    sample_rate=ctx.config.ffmpeg.wav_sample_rate,
+                )
+            else:
+                _logger.info("reusing the existing audio master in %s", layout.raw_dir)
+
+            enhanced = enhance_audio(runner, audio_path, layout, ctx)
+            metadata_path = layout.write_metadata(metadata)
+            layout.cleanup_tmp()
+            materials = RawMaterials(
+                layout=layout,
+                # There is no video master. The field is a Path, and pointing it
+                # at the place a video master would live is more honest than
+                # pretending the source audio is a video.
+                video=video_path,
+                audio=audio_path,
+                audio_enhanced=enhanced,
+                cover=None,
+                subtitle_src=None,
+                subtitle_zh=None,
+                metadata_path=metadata_path,
+                info=metadata,
+            )
+            ctx.emit(
+                ArtifactReady(
+                    phase=Phase.PREPARE,
+                    kind=ArtifactKind.AUDIO,
+                    path=audio_path,
+                )
+            )
+            ctx.progress(Phase.PREPARE, 100.0, "raw materials ready")
+            return materials
 
         # Resumption, matching the URL path: a complete master from a previous
         # run is reused unless `force` says otherwise. The check is the same
@@ -227,11 +292,11 @@ class LocalFileDownloader:
                 f"local video is empty: {resolved}",
                 path=str(resolved),
             )
-        if resolved.suffix.lower() not in VIDEO_SUFFIXES:
+        if resolved.suffix.lower() not in VIDEO_SUFFIXES | AUDIO_SUFFIXES:
             raise ExtractionError(
-                f"local video has an unrecognised extension {resolved.suffix!r}: {resolved}",
+                f"local media has an unrecognised extension {resolved.suffix!r}: {resolved}",
                 path=str(resolved),
-                supported=sorted(VIDEO_SUFFIXES),
+                supported=sorted(VIDEO_SUFFIXES | AUDIO_SUFFIXES),
             )
         return resolved
 

@@ -111,77 +111,33 @@ class TestDefaultWiring:
 
 
 class TestAsrChainOrder:
-    """Local Whisper first, then the paid API, then the free endpoints, then the CLI.
+    """Local Whisper first, then Whisper API."""
 
-    v0.1 ran the VideoCaptioner CLI first only when explicitly asked for: naming
-    one of its engines is a request, leaving the field empty makes the same binary
-    a fallback of last resort. Both behaviours are user-visible and both are
-    pinned here.
-
-    §13.48 moved local Whisper to the head and gave ``asr.engine`` a general
-    promote-a-named-backend rule, so the older assertions below changed rather
-    than being deleted.
-    """
-
-    def test_the_default_order_is_local_then_api_then_cli(self, tmp_path) -> None:
+    def test_the_default_order_is_local_then_api(self, tmp_path) -> None:
         pipeline = Pipeline.default(_ctx(tmp_path))
         assert [backend.name for backend in pipeline.transcriber.backends] == [
             "whisper-local",
             "whisper-api",
-            "videocaptioner",
         ]
 
     def test_the_only_verified_backend_leads(self, tmp_path) -> None:
-        """Local inference is the one engine with no remote protocol to drift.
-
-        The two key-free endpoints were measured returning empty results
-        (§13.21), so leading with them would mean the chain tries two engines it
-        knows cannot work before reaching one that can.
-        """
+        """Local inference is the one engine with no remote protocol to drift."""
         backends = Pipeline.default(_ctx(tmp_path)).transcriber.backends
         assert backends[0].name == "whisper-local"
         assert backends[0].endpoint_verified is True
 
-    @pytest.mark.parametrize("engine", ["bijian", "jianying", "whisper-cpp"])
-    def test_a_configured_cli_engine_moves_it_first(self, tmp_path, engine: str) -> None:
-        ctx = _ctx(tmp_path, PorterConfig(asr={"engine": engine}))
-        pipeline = Pipeline.default(ctx)
-
-        assert pipeline.transcriber.backends[0].name == "videocaptioner"
-
-    def test_a_configured_cli_engine_does_not_duplicate_the_cli(self, tmp_path) -> None:
-        """It appears once, at the front, not at both ends."""
-        ctx = _ctx(tmp_path, PorterConfig(asr={"engine": "jianying"}))
-        names = [backend.name for backend in Pipeline.default(ctx).transcriber.backends]
-
-        assert names.count("videocaptioner") == 1
-
-    @pytest.mark.parametrize(
-        "engine", ["whisper-local", "whisper-api", "videocaptioner"]
-    )
+    @pytest.mark.parametrize("engine", ["whisper-local", "whisper-api"])
     def test_the_named_backend_flag_is_promoted_to_the_front(
         self, tmp_path, engine: str
     ) -> None:
-        """``--asr-engine``, which is what the CLI and both MCP tools actually pass.
-
-        This test used to set ``asr.engine`` in the config while its own docstring
-        described the *flag* being ignored -- and the flag really was ignored: all
-        three frontends wrote ``JobOptions.asr_engine`` and no code read it, so
-        ``porter run --asr-engine whisper-api`` did nothing while the same value in
-        the config worked. Testing the config key under a docstring about the flag
-        is how that survived.
-        """
         ctx = _ctx(tmp_path, asr_engine=engine)
         names = [backend.name for backend in Pipeline.default(ctx).transcriber.backends]
 
         assert names[0] == engine
-        # Promotion is a reorder, not a filter: the rest stay as fallbacks.
         assert names.count(engine) == 1
-        assert len(names) == 3
+        assert len(names) == 2
 
-    @pytest.mark.parametrize(
-        "engine", ["whisper-local", "whisper-api", "videocaptioner"]
-    )
+    @pytest.mark.parametrize("engine", ["whisper-local", "whisper-api"])
     def test_a_configured_backend_is_promoted_to_the_front(
         self, tmp_path, engine: str
     ) -> None:
@@ -190,32 +146,21 @@ class TestAsrChainOrder:
         names = [backend.name for backend in Pipeline.default(ctx).transcriber.backends]
 
         assert names[0] == engine
-        assert len(names) == 3
+        assert len(names) == 2
 
     def test_the_flag_wins_over_the_config_key(self, tmp_path) -> None:
-        """Two sources, one answer, and the more specific one wins.
-
-        Without a stated rule the outcome would depend on which line happened to
-        be written first -- the kind of ambiguity that surfaces as a bug report
-        years later.
-        """
-        ctx = _ctx(tmp_path, PorterConfig(asr={"engine": "videocaptioner"}), asr_engine="whisper-api")
+        """Two sources, one answer, and the more specific one wins."""
+        ctx = _ctx(tmp_path, PorterConfig(asr={"engine": "whisper-local"}), asr_engine="whisper-api")
 
         names = [backend.name for backend in Pipeline.default(ctx).transcriber.backends]
 
         assert names[0] == "whisper-api"
-        assert names.count("videocaptioner") == 1
+        assert names.count("whisper-local") == 1
 
     def test_an_unrecognised_engine_keeps_the_default_order(
         self, tmp_path, monkeypatch
     ) -> None:
-        """A typo must not change the chain, and must not pass unremarked either.
-
-        Asserts on the module logger directly rather than via ``caplog``: the
-        engine root sets ``propagate = False`` (deliberately — see
-        ``porter.core.logging``), so records never reach the root logger a ``caplog``
-        handler hangs off.
-        """
+        """A typo must not change the chain, and must not pass unremarked either."""
         import porter.core.pipeline as pipeline_module
 
         messages: list[str] = []
@@ -235,24 +180,13 @@ class TestAsrChainOrder:
         assert names[0] == "whisper-local"
         assert any("whisperx" in message for message in messages)
 
-    def test_the_cli_sits_after_whisper(self, tmp_path) -> None:
-        names = [b.name for b in Pipeline.default(_ctx(tmp_path)).transcriber.backends]
-        assert names.index("whisper-local") < names.index("whisper-api") < names.index("videocaptioner")
-
     def test_a_named_backend_that_is_missing_is_reported(
         self, tmp_path, monkeypatch
     ) -> None:
-        """Naming a backend keeps the rest as fallbacks, so a missing one is not
-        fatal -- which is exactly why silence is wrong: someone who asked for
-        `bijian` and got a different engine's output has no way to tell.
-
-        The absence is forced rather than assumed, so the test does not depend on
-        whether the machine happens to have the VideoCaptioner CLI installed.
-        """
+        """Naming an unavailable backend logs a warning instead of failing silently."""
         import porter.core.pipeline as pipeline_module
 
-        monkeypatch.setattr("porter.core.asr.videocaptioner._resolve_binary", lambda: None)
-
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         messages: list[str] = []
 
         class _Recorder:
@@ -263,13 +197,12 @@ class TestAsrChainOrder:
                 return lambda *args, **kwargs: None
 
         monkeypatch.setattr(pipeline_module, "_logger", _Recorder())
-        # `bijian` is one of VideoCaptioner's engine names.
-        ctx = _ctx(tmp_path, PorterConfig(asr={"engine": "bijian"}))
+        ctx = _ctx(tmp_path, PorterConfig(asr={"engine": "whisper-api"}))
 
         names = [backend.name for backend in Pipeline.default(ctx).transcriber.backends]
 
-        assert names[0] == "videocaptioner", "naming still promotes"
-        assert any("VideoCaptioner" in message for message in messages), messages
+        assert names[0] == "whisper-api", "naming still promotes"
+        assert any("whisper-api" in message and "unavailable" in message for message in messages), messages
 
     def test_an_available_named_backend_is_not_reported_as_missing(
         self, tmp_path, monkeypatch
@@ -278,7 +211,8 @@ class TestAsrChainOrder:
         import porter.core.pipeline as pipeline_module
 
         monkeypatch.setattr(
-            "porter.core.asr.videocaptioner._resolve_binary", lambda: "/usr/bin/videocaptioner"
+            "porter.core.asr.whisper_api.WhisperApiBackend.available",
+            lambda self, ctx: True,
         )
         messages: list[str] = []
 
@@ -290,11 +224,11 @@ class TestAsrChainOrder:
                 return lambda *args, **kwargs: None
 
         monkeypatch.setattr(pipeline_module, "_logger", _Recorder())
-        ctx = _ctx(tmp_path, PorterConfig(asr={"engine": "bijian"}))
+        ctx = _ctx(tmp_path, PorterConfig(asr={"engine": "whisper-api"}))
 
         Pipeline.default(ctx)
 
-        assert not any("not on PATH" in message for message in messages), messages
+        assert not any("unavailable" in message for message in messages), messages
 
 
 # ----------------------------------------------------------------------
@@ -303,58 +237,27 @@ class TestAsrChainOrder:
 
 
 class TestTranslationChainOrder:
-    def test_the_order_matches_v0_1(self, tmp_path) -> None:
-        """LLM first (it is the only context-aware engine), free endpoints next,
-        the external GPL-3.0 process last."""
+    def test_the_default_order_is_llm_then_free_endpoints(self, tmp_path) -> None:
+        """LLM first (context-aware), key-free HTTP endpoints next."""
         pipeline = Pipeline.default(_ctx(tmp_path))
         assert [backend.name for backend in pipeline.translator.backends] == [
             "llm",
             "bing",
             "google",
             "mymemory",
-            "videocaptioner-llm",
-            "videocaptioner",
         ]
 
     def test_the_llm_is_first_because_quality_is_the_point_of_a_key(self, tmp_path) -> None:
         assert Pipeline.default(_ctx(tmp_path)).translator.backends[0].name == "llm"
 
-    @pytest.mark.parametrize(
-        "backend",
-        ["llm", "bing", "google", "mymemory", "videocaptioner-llm", "videocaptioner"],
-    )
+    @pytest.mark.parametrize("backend", ["llm", "bing", "google", "mymemory"])
     def test_a_named_backend_is_promoted_to_the_front(self, tmp_path, backend: str) -> None:
-        """``--translator`` was the same dead flag ``--asr-engine`` was.
-
-        ``JobOptions.translator`` was accepted by both frontends and read by no
-        engine: ``_default_translator`` assembled the whole chain
-        unconditionally, so ``--translator bing`` silently got the default order.
-        Promotion is a reorder, not a filter -- naming a backend asks for it to
-        be *tried first*, not for the job to die when that endpoint is
-        rate-limited, which is exactly what happened to bing and google on the
-        §13.48 run.
-        """
         ctx = _ctx(tmp_path, translator=backend)
         names = [item.name for item in Pipeline.default(ctx).translator.backends]
 
         assert names[0] == backend
         assert names.count(backend) == 1
-        assert len(names) == 6
-
-    def test_promoting_the_cli_backend_does_not_drag_its_llm_sibling(self, tmp_path) -> None:
-        """Two distinct backends, two distinct names. No aliasing magic.
-
-        ``videocaptioner`` and ``videocaptioner-llm`` are different engines with
-        different requirements (the latter needs an API key), so naming one must
-        move only that one. A user who wants the LLM variant can name it.
-        """
-        names = [
-            item.name
-            for item in Pipeline.default(_ctx(tmp_path, translator="videocaptioner")).translator.backends
-        ]
-
-        assert names[0] == "videocaptioner"
-        assert names.index("videocaptioner-llm") > 0
+        assert len(names) == 4
 
     def test_an_unrecognised_translator_keeps_the_default_order(
         self, tmp_path, monkeypatch

@@ -246,14 +246,16 @@ class TestLibassProbe:
 
 
 class TestFontProbe:
-    def test_a_resolving_font_passes(self, config) -> None:
-        finding = probe_font(config, matcher=lambda family: "Microsoft YaHei,微软雅黑")
+    def test_a_resolving_font_passes(self) -> None:
+        cfg = PorterConfig(style={"zh_font": "Microsoft YaHei"})
+        finding = probe_font(cfg, matcher=lambda family: "Microsoft YaHei,微软雅黑")
         assert finding.ok is True
         assert "Microsoft YaHei" in finding.detail
 
-    def test_a_substituted_font_degrades(self, config) -> None:
+    def test_a_substituted_font_degrades(self) -> None:
         """fc-match never fails; it silently substitutes, so compare the answer."""
-        finding = probe_font(config, matcher=lambda family: "Verdana")
+        cfg = PorterConfig(style={"zh_font": "Microsoft YaHei"})
+        finding = probe_font(cfg, matcher=lambda family: "Verdana")
         assert finding.ok is False
         assert finding.severity is Severity.DEGRADED
         assert "Verdana" in finding.detail
@@ -276,12 +278,30 @@ class TestFontProbe:
         assert finding.ok is True
         assert "cannot verify" in finding.detail
 
-    def test_matching_is_case_insensitive(self, config) -> None:
-        assert probe_font(config, matcher=lambda f: "MICROSOFT YAHEI").ok is True
+    def test_matching_is_case_insensitive(self) -> None:
+        cfg = PorterConfig(style={"zh_font": "Microsoft YaHei"})
+        assert probe_font(cfg, matcher=lambda f: "MICROSOFT YAHEI").ok is True
 
-    def test_a_multi_family_match_counts_as_present(self, config) -> None:
+    def test_a_multi_family_match_counts_as_present(self) -> None:
         """fontconfig returns localised names comma-joined."""
-        assert probe_font(config, matcher=lambda f: "Other, Microsoft YaHei").ok is True
+        cfg = PorterConfig(style={"zh_font": "Microsoft YaHei"})
+        assert probe_font(cfg, matcher=lambda f: "Other, Microsoft YaHei").ok is True
+
+    def test_default_fonts_adapt_to_platform(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from porter.core import config as config_mod
+
+        monkeypatch.setattr(config_mod.sys, "platform", "win32")
+        assert config_mod.default_zh_font() == "Microsoft YaHei"
+        assert config_mod.default_en_font() == "Arial"
+
+        monkeypatch.setattr(config_mod.sys, "platform", "darwin")
+        assert config_mod.default_zh_font() == "PingFang SC"
+        assert config_mod.default_en_font() == "Helvetica Neue"
+
+        monkeypatch.setattr(config_mod.sys, "platform", "linux")
+        monkeypatch.setattr(config_mod, "_fc_match_pattern", lambda _p: None)
+        assert config_mod.default_zh_font() == "Noto Sans CJK SC"
+        assert config_mod.default_en_font() == "Noto Sans"
 
 
 class TestJsRuntimeProbe:
@@ -555,6 +575,7 @@ class TestGuideCoverage:
         """The other direction: dead guides are prose nobody will ever read."""
         assert "ffmpeg_libass" in GUIDES
         assert "js_runtime" in GUIDES
+        assert "asr" in GUIDES
 
 
 class TestGuides:
@@ -636,30 +657,27 @@ class TestProbeSubprocessHygiene:
 
 
 class TestRouteProbes:
-    """The doctor answers "what will this job actually do", not just "is it installed".
+    """The doctor answers which capabilities a plan can choose from.
 
-    Without an LLM key the pipeline falls through to reverse-engineered, key-free
-    endpoints. That is a real reliability difference and hiding it behind a plain
-    pass would be the kind of silent downgrade this project keeps finding.
+    There is no fallback chain any more: a plan names exactly one transcript
+    capability and one translation capability. So the probe reports the
+    available choices and must never advertise a route the resolver cannot
+    select.
     """
 
     def test_local_whisper_is_reported_when_the_extra_is_installed(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Local inference leads the chain, so it is the route to report.
-
-        Added in §13.48. Before it, this probe told every operator that the only
-        key-free path was two reverse-engineered endpoints that do not work.
-        """
+        """Local inference is the free default for sources without a track."""
         monkeypatch.setattr(whisper_local, "is_installed", lambda: True)
         monkeypatch.setattr(whisper_local, "model_is_cached", lambda _model: True)
 
-        finding = probe_asr_route(PorterConfig(), which=_which_for())
+        finding = probe_asr_route(PorterConfig())
 
         assert finding.ok is True
         assert "local Whisper" in finding.detail
         assert "already downloaded" in finding.detail
-        assert "no key, no network" in finding.detail
+        assert "free, no key, no network" in finding.detail
 
     def test_local_whisper_announces_a_pending_download(
         self, monkeypatch: pytest.MonkeyPatch
@@ -668,79 +686,84 @@ class TestRouteProbes:
         monkeypatch.setattr(whisper_local, "is_installed", lambda: True)
         monkeypatch.setattr(whisper_local, "model_is_cached", lambda _model: False)
 
-        finding = probe_asr_route(PorterConfig(), which=_which_for())
+        finding = probe_asr_route(PorterConfig())
 
         assert "downloads on first use" in finding.detail
 
-    def test_local_whisper_leads_even_when_a_key_is_set(
+    def test_local_whisper_and_api_key_are_both_reported(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """It is first in the chain, so naming the API instead would be a lie."""
+        """The paid capability is another choice, not a fallback from the free one."""
         monkeypatch.setattr(whisper_local, "is_installed", lambda: True)
         monkeypatch.setattr(whisper_local, "model_is_cached", lambda _model: True)
         config = PorterConfig(asr={"whisper_api_key": "sk-test"})
 
-        finding = probe_asr_route(config, which=_which_for())
+        finding = probe_asr_route(config)
 
         assert "local Whisper" in finding.detail
-        assert "falling back to the Whisper API" in finding.detail
+        assert "Whisper API" in finding.detail
+        assert "paid" in finding.detail
+        assert "falling back" not in finding.detail
 
-    def test_no_keys_and_no_local_extra_reports_that_transcription_will_fail(
+    def test_no_backend_is_a_degradation_with_remediation(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """No backend exists in that configuration, so the job will fail.
+        """No ASR capability means ASR plans cannot run, but subtitle jobs can.
 
-        The finding stays informational rather than a failure: the environment is
-        as configured, and the message names the way out.
+        DEGRADED is the right severity: this machine still produces output for
+        sources that carry a subtitle track, so calling it a blocker would
+        refuse work that would succeed.
         """
         monkeypatch.setattr(whisper_local, "is_installed", lambda: False)
 
-        finding = probe_asr_route(PorterConfig(), which=_which_for())
+        finding = probe_asr_route(PorterConfig())
 
-        assert finding.ok is True, "it is not a failure, it is a fact"
-        assert "no speech-to-text backend is available" in finding.detail
-        assert "key" in finding.detail
-        assert "will fail" in finding.detail
+        assert finding.severity is Severity.DEGRADED
+        assert finding.ok is False
+        assert finding.remediation_key == "asr"
+        assert "no speech-to-text capability" in finding.detail
         assert "asr-local" in finding.detail, "it must name the free way out"
+        assert "paid Whisper API" in finding.detail
+        assert "subtitle track" in finding.detail
 
-    def test_a_whisper_key_selects_the_documented_path_without_local_whisper(
+    def test_a_whisper_key_is_reported_as_paid(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(whisper_local, "is_installed", lambda: False)
         config = PorterConfig(asr={"whisper_api_key": "sk-test"})
-        finding = probe_asr_route(config, which=_which_for())
 
+        finding = probe_asr_route(config)
+
+        assert finding.ok is True
         assert "Whisper API" in finding.detail
-        assert "unverified" not in finding.detail
+        assert "paid" in finding.detail
 
     def test_an_llm_key_also_enables_whisper(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """v0.1 fell back from the Whisper key to the LLM key; keep that order."""
+        """The Whisper API reuses the LLM key when no dedicated one is set."""
         monkeypatch.setattr(whisper_local, "is_installed", lambda: False)
         config = PorterConfig(llm={"api_key": "sk-test"})
-        assert "Whisper API" in probe_asr_route(config, which=_which_for()).detail
 
-    def test_the_videocaptioner_binary_is_noticed(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(whisper_local, "is_installed", lambda: False)
-        finding = probe_asr_route(PorterConfig(), which=_which_for("videocaptioner"))
-        assert "VideoCaptioner" in finding.detail
+        assert "Whisper API" in probe_asr_route(config).detail
 
     def test_translation_without_a_key_reports_the_free_endpoints(self) -> None:
         finding = probe_translation_route(PorterConfig())
 
+        assert finding.ok is True
         assert finding.severity is Severity.INFO
         assert "Bing" in finding.detail
-        assert "unverified" in finding.detail
+        assert "no key" in finding.detail
+        assert "VideoCaptioner" not in finding.detail
 
     def test_translation_with_a_key_names_the_model(self) -> None:
         config = PorterConfig(llm={"api_key": "sk-test", "model": "deepseek-chat"})
+
         finding = probe_translation_route(config)
 
         assert "LLM" in finding.detail
         assert "deepseek-chat" in finding.detail
+        assert "paid" in finding.detail
 
     def test_both_routes_appear_in_the_full_report(self, config) -> None:
         report = probe_all(
@@ -750,9 +773,38 @@ class TestRouteProbes:
         assert report.get("asr_route") is not None
         assert report.get("translation_route") is not None
 
-    def test_the_routes_never_block(self) -> None:
+    def test_no_route_finding_blocks_a_run(self) -> None:
         """A configuration choice is not a broken machine."""
         report = CapabilityReport(
-            findings=[probe_asr_route(PorterConfig(), which=_which_for()), probe_translation_route(PorterConfig())]
+            findings=[probe_asr_route(PorterConfig()), probe_translation_route(PorterConfig())]
         )
         assert report.ok is True
+
+
+class TestReportPayload:
+    """The JSON both frontends ship carries the fix, not just the fact."""
+
+    def test_a_blocker_carries_its_remediation(self) -> None:
+        from porter.core.doctor import report_payload
+
+        report = CapabilityReport(
+            findings=[Finding.blocked("ffmpeg", "ffmpeg & ffprobe", "missing", "ffmpeg")]
+        )
+
+        payload = report_payload(report)
+
+        assert payload["ok"] is False
+        assert payload["guidance"]["ffmpeg"]["summary"]
+        assert any(
+            "apt install ffmpeg" in step
+            for step in payload["guidance"]["ffmpeg"]["steps"]
+        )
+
+    def test_passing_findings_do_not_ship_guidance(self) -> None:
+        from porter.core.doctor import report_payload
+
+        report = CapabilityReport(
+            findings=[Finding.passed("ffmpeg", "ffmpeg & ffprobe", "found")]
+        )
+
+        assert report_payload(report)["guidance"] == {}

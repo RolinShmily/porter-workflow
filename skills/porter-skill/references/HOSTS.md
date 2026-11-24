@@ -8,11 +8,14 @@
 
 | 宿主 | 入口 |
 |---|---|
-| Bash / Linux / macOS | `<SKILL_DIR>/scripts/porter.sh <command>`，预检也可调用 `inspect.sh` |
-| Windows PowerShell | `& '<SKILL_DIR>\scripts\porter.ps1' <command>`，预检用 `inspect <URL> --json` |
-| 已配置 porter MCP | 直接用 `porter_inspect` / `porter_plan` 等工具，不需要 Shell 包装器 |
+| Linux / macOS | `python3 <SKILL_DIR>/scripts/porter.py <command>` |
+| Windows PowerShell | `py -3 <SKILL_DIR>\scripts\porter.py <command>` |
+| 已配置 porter MCP | `porter_capabilities` / `porter_probe` / `porter_plan` / `porter_job_start(plan=...)`；契约见 [`MCP.md`](MCP.md) |
 
-首次运行会联网安装 `porter-workflow[llm]`：基础发行包已有 yt-dlp，`[llm]` 提供 API 版转录和 LLM 翻译。免 Key 的本地语音识别额外安装 `[asr-local]`（首次还要下载模型）；MCP、WebUI 不属于 CLI 入口的必需项。需要这些后端时，可先设置 `PORTER_SKILL_SPEC=porter-workflow[llm,asr-local]` 或按需指定其他 extras；安装额外依赖前取得用户同意。修改 spec 后，后续 `jobs status` 等调用也应使用同一个 spec 和环境。
+入口只有一个 Python 文件；两边共享同一套 state dir、`--host-check` 与 uvx 逻辑。
+先确认 `python3 --version` / `py -3 --version`；没有 Python 时由 Agent 指导安装。
+
+首次运行会联网安装基础包 `porter-workflow`：已有 yt-dlp、平台字幕、免 Key 翻译与压制能力。免费离线语音识别需要 `[asr-local]`（首次还要下载模型）；付费 Whisper API 与 LLM 翻译需要 `[llm]` 和对应 Key。MCP、WebUI 不属于 CLI 入口的必需项，它们解析并执行同一份 `WorkflowPlan`。需要本地 ASR 时设置 `PORTER_SKILL_SPEC='porter-workflow[asr-local]'`，需要付费能力时再加 `,llm`；安装额外依赖前取得用户同意。修改 spec 后，后续 `plan` / `run` / `jobs status` 等调用也应使用同一个 spec 和环境。
 
 ## 工作区状态目录：显式选择，而不是推断
 
@@ -20,16 +23,16 @@
 
 ```powershell
 $env:PORTER_SKILL_STATE_DIR = 'C:\path\to\allowed-workspace\.state'
-& '<SKILL_DIR>\scripts\porter.ps1' --host-check
-& '<SKILL_DIR>\scripts\porter.ps1' doctor
-& '<SKILL_DIR>\scripts\porter.ps1' plan '<URL>' --json
-& '<SKILL_DIR>\scripts\porter.ps1' run '<URL>' -o 'C:\path\to\allowed-workspace\porter_output'
+py -3 '<SKILL_DIR>\scripts\porter.py' --host-check
+py -3 '<SKILL_DIR>\scripts\porter.py' doctor
+py -3 '<SKILL_DIR>\scripts\porter.py' plan '<URL>' --json
+py -3 '<SKILL_DIR>\scripts\porter.py' run '<URL>' -o 'C:\path\to\allowed-workspace\porter_output'
 ```
 
 ```bash
 export PORTER_SKILL_STATE_DIR="$PWD/.state"  # 仅在当前目录获准写入时使用
-<SKILL_DIR>/scripts/porter.sh --host-check
-<SKILL_DIR>/scripts/porter.sh doctor
+python3 <SKILL_DIR>/scripts/porter.py --host-check
+python3 <SKILL_DIR>/scripts/porter.py doctor
 ```
 
 启用时，包装器将 uv 的缓存、工具及托管 Python 路径覆盖到该目录，也设置 `XDG_CACHE_HOME`（yt-dlp）和 `PORTER_CACHE_DIR`（作业注册表）。**已有环境变量会被覆盖**：机器级变量也可能指向沙盒外；未启用时则只检查已配置的路径，不修改它们。每次运行或轮询都要保持同一个状态目录，否则作业列表可能不同。`--host-check` 测试这些目录能否创建与写入，不会运行 uvx，也不能保证宿主允许子进程或网络访问。`doctor` 还检查编码器、字体和输出目录；两者都通过才开始作业。
@@ -41,7 +44,7 @@ export PORTER_SKILL_STATE_DIR="$PWD/.state"  # 仅在当前目录获准写入时
 | 现象 | 处理 |
 |---|---|
 | `npx skills add` 报 `spawn EPERM` | 宿主禁止安装器的子进程模式。可经用户确认后按宿主文档手动复制技能目录；不要循环重试安装器或自动提权。 |
-| Git Bash 无法创建 signal pipe / WSL 被拦 | 用原生 `porter.ps1`；不要依赖换一个 Bash 绕过沙盒。 |
+| Git Bash 无法创建 signal pipe / WSL 被拦 | 直接用 Windows 的 `py -3 ...\scripts\porter.py`；包装器不依赖 Bash。 |
 | uv、yt-dlp、作业注册表的 `access denied` | 确认状态目录获准写入，设置 `PORTER_SKILL_STATE_DIR` 并运行 `--host-check`；检查 `-o` 输出目录。 |
 | `Failed to download ... operation timed out` | 这是网络/体积问题；在用户同意后设置 `UV_HTTP_TIMEOUT`、核对代理/镜像或缩小可选 extras。不要改权限。 |
 | 安装成功但语音识别不可行 | 用 `plan` 检查有无平台字幕轨、API Key 或已安装的本地 ASR；`doctor` 通过并不保证某一条视频可行。 |

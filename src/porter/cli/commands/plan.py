@@ -1,198 +1,125 @@
-"""``porter plan`` — predict what a job will do before committing to it.
+"""``porter plan`` — resolve one workflow before committing to it.
 
-The CLI counterpart of the MCP ``porter_plan`` tool. It exists because the plan
-is the step that prevents wasted compute, and a plan that only exists over MCP
-would leave the CLI path without it: an agent driving porter from a shell would
-have to start a job to find out it was doomed.
+The plan is derived, not authored. The source is probed, a workflow name is
+chosen from what the source actually is, and exactly one capability is selected
+for each stage. The JSON form is the execution contract accepted by
+``porter run --plan``: it contains every non-secret setting the run needs.
 
-Both frontends call the same :func:`porter.core.plan.plan_for`, which derives its
-answer from ``Pipeline.default`` -- so the CLI cannot predict one thing and the
-run do another.
+Exit code 0 means the plan is feasible. A plan that says "this will fail" is
+still a successful *plan*, but scripts need the same boolean the run would use,
+so infeasibility is reported non-zero.
 """
 
 from __future__ import annotations
 
 import argparse
+from typing import TYPE_CHECKING
 
-from porter.cli import render
-from porter.core.errors import PorterError
-from porter.core.models.plan import Plan
+from porter.cli import planning, render
 
-__all__ = ["configure", "run"]
+if TYPE_CHECKING:
+    from porter.core.workflow.model import WorkflowPlan
+
+__all__ = ["configure", "render_plan", "run"]
 
 
 def configure(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    """Register the ``plan`` command."""
     parser = subparsers.add_parser(
         "plan",
-        help="Predict phases, subtitle route and blockers without downloading.",
+        help="Resolve the workflow and capabilities for a source, without running.",
         description=(
-            "Report what a job would do for this source: the phases that run, "
-            "whether the platform's own subtitle track can be used or speech "
-            "recognition is needed, whether translation is required, and whether "
-            "the job is feasible at all. Inspects the source, so it takes a few "
-            "seconds and downloads no media."
+            "Probe the source, choose a workflow (url.subtitled, url.asr, "
+            "local.asr, ...), and select exactly one capability per stage. The "
+            "result is a JSON plan that 'porter run --plan' executes. Nothing "
+            "heavy runs here: no media is downloaded and no ffmpeg job starts."
         ),
     )
-    parser.add_argument("source", help="Video URL or local media path.")
-    parser.add_argument(
-        "--burn",
-        choices=("dual", "zh-only", "bilingual-only", "skip"),
-        default=None,
-        help="Burn mode to plan for. Defaults to dual.",
-    )
-    parser.add_argument(
-        "--target-lang",
-        metavar="LANG",
-        default=None,
-        help="Target subtitle language. Defaults to zh-Hans.",
-    )
-    parser.add_argument(
-        "--only-phase",
-        choices=("prepare", "transcribe", "translate", "burn"),
-        default=None,
-        help="Plan to stop after this phase.",
-    )
-    # The plan prints the ASR and translation routes, so the flags that choose
-    # them belong here too. Without these, `porter plan --asr-engine whisper-api` was
-    # rejected as a misuse while `porter plan --cookies` was accepted -- and the
-    # route the plan reported could not be made to match the one `porter run`
-    # would take.
-    parser.add_argument(
-        "--asr-engine",
-        metavar="ENGINE",
-        default=None,
-        help="Plan with this ASR engine tried first. Defaults to the configured order.",
-    )
-    parser.add_argument(
-        "--translator",
-        metavar="NAME",
-        default=None,
-        help="Plan with this translation backend tried first.",
-    )
-    parser.add_argument(
-        "--llm-model",
-        metavar="MODEL",
-        default=None,
-        help="LLM model to plan with. Defaults to the configured model.",
-    )
-    parser.add_argument(
-        "--cookies",
-        metavar="FILE",
-        help="Netscape cookies.txt, for links that require authentication.",
-    )
-    parser.add_argument(
-        "--cookies-from-browser",
-        metavar="BROWSER",
-        help="Read cookies from a browser profile.",
-    )
+    parser.add_argument("source", metavar="SOURCE", help="Video URL, local media path, or subtitle.")
+    planning.add_arguments(parser)
     parser.add_argument(
         "--json",
         dest="as_json",
         action="store_true",
-        help="Emit the plan as JSON instead of a formatted report.",
+        help="Emit the resolved plan as JSON.",
     )
     parser.set_defaults(handler=run)
 
 
 def run(args: argparse.Namespace) -> int:
-    """Produce the plan and report it.
-
-    Exit codes match ``inspect``: 0 when the job is feasible, 1 when it is not.
-    A plan is a prediction, and a prediction of "this will fail" is still a
-    successful plan -- but callers script against "can I proceed", so an
-    infeasible plan exits non-zero.
-    """
     from porter.core.config import resolve
     from porter.core.context import RunContext
-    from porter.core.models.request import BurnMode, JobOptions
-    from porter.core.plan import plan_for
+    from porter.core.errors import PorterError
+    from porter.core.models.request import JobOptions
+    from porter.core.workflow.resolver import resolve_plan
 
     config = resolve(args.config_path)
-    options = JobOptions(
-        output_dir=config.output_dir,
-        burn=BurnMode(args.burn) if args.burn else BurnMode.DUAL,
-        target_lang=args.target_lang or "zh-Hans",
-        only_phase=args.only_phase,
-        asr_engine=args.asr_engine,
-        translator=args.translator,
-        llm_model=args.llm_model,
-        # The plan inspects the source, so it needs the same credentials the run
-        # would need -- otherwise it reports "blocked: authentication required"
-        # for a link that is perfectly usable, and the advice to pass cookies is
-        # advice this very command could not follow.
-        cookies_file=args.cookies,
-        cookies_browser=args.cookies_from_browser,
+    overrides = planning.overrides_from_args(args, config)
+    ctx = RunContext(
+        job_id="plan",
+        options=JobOptions(
+            output_dir=overrides.output_dir,
+            cookies_file=overrides.cookies_file,
+            cookies_browser=overrides.cookies_browser,
+        ),
+        config=config,
     )
-    # Build the context here and hand it over, rather than passing only the
-    # options: ``plan_for`` resolves the configuration itself when given neither,
-    # which silently dropped ``--config`` for everything the plan reads from
-    # configuration (``asr.engine``, ``translator``, ffmpeg, subtitle style). The
-    # plan then described a different run from the one the same command line
-    # would actually perform.
-    ctx = RunContext(job_id="plan", options=options, config=config)
 
     try:
-        plan = plan_for(args.source, ctx=ctx)
+        plan = resolve_plan(args.source, overrides, ctx)
     except PorterError as exc:
-        render.warn(str(exc))
+        render.warn(exc.message)
         return render.EXIT_ERROR
 
     if args.as_json:
         render.emit_json(plan.to_dict())
     else:
-        render.info(render.banner("PORTER JOB PLAN"))
-        render.value(_format_plan(plan))
+        render.info(render.banner("PORTER WORKFLOW PLAN"))
+        render.value(render_plan(plan))
 
     if not plan.feasible:
-        for issue in plan.blocking_issues:
-            render.warn(issue)
+        for issue in plan.blockers:
+            render.warn(f"{issue.code}: {issue.message}")
         return render.EXIT_ERROR
     return render.EXIT_OK
 
 
-def _format_plan(plan: Plan) -> str:
-    """Render a :class:`~porter.core.models.plan.Plan` as a readable report.
+def render_plan(plan: WorkflowPlan) -> str:
+    """Render the plan as a compact human report.
 
-    Only the fields that change a decision are shown. The full structure is
-    available with ``--json``, and printing every backend on every invocation
-    would bury the two lines that matter: the route and the blockers.
+    The source facts and the stage list are the two things that change a
+    decision; the full parameter set is available with ``--json`` and printing
+    it every time would bury them.
     """
+    probe = plan.source_probe
     lines = [
         f"Source     : {plan.source}",
-        f"Kind       : {plan.kind}" + (f" ({plan.platform})" if plan.platform else ""),
-        f"Phases     : {', '.join(plan.phases)}",
+        f"Kind       : {probe.kind.value}" + (f" ({probe.platform})" if probe.platform else ""),
+        f"Workflow   : {plan.workflow.value}",
+        f"Task       : {plan.task.value}",
     ]
-
-    if plan.duration_seconds:
-        size = f"{plan.width}x{plan.height}" if plan.width and plan.height else "unknown"
-        orientation = "vertical" if plan.is_vertical else "horizontal"
-        lines.append(f"Media      : {plan.duration_seconds:.1f}s, {size}, {orientation}")
-
-    route = plan.subtitles.route
-    if route == "platform":
-        tracks = ", ".join(f"{name} ({lang})" for name, lang in plan.subtitles.tracks.items())
-        lines.append(f"Subtitles  : platform track -- {tracks}")
-    elif route == "asr":
-        available = [b.name for b in plan.subtitles.asr_backends if b.available]
-        lines.append(f"Subtitles  : speech recognition -- {', '.join(available) or 'none available'}")
-    else:
-        lines.append("Subtitles  : unknown (the source could not be inspected)")
-
-    if plan.translation.needed:
-        langs = ", ".join(b.name for b in plan.translation.backends if b.available)
-        lines.append(f"Translation: needed ({plan.translation.target_lang}) -- {langs or 'none available'}")
-    else:
-        lines.append("Translation: not needed")
-
-    if plan.burn_runs:
-        lines.append(f"Burn       : {plan.burn_mode} ({plan.renderer})")
-
+    if probe.duration_seconds:
+        size = f"{probe.width}x{probe.height}" if probe.width and probe.height else "unknown"
+        orientation = "vertical" if probe.is_vertical else "horizontal"
+        lines.append(f"Media      : {probe.duration_seconds:.1f}s, {size}, {orientation}")
+    if probe.tracks:
+        lines.append(
+            "Tracks     : "
+            + ", ".join(
+                f"{track.role}={track.lang}"
+                + (" (auto)" if track.auto_generated else "")
+                + ("" if track.verified else " (listed)")
+                for track in probe.tracks
+            )
+        )
+    lines.append("Stages     :")
+    for stage in plan.stages:
+        lines.append(f"  {stage.stage.value:<10} {stage.capability}")
     lines.append(f"Feasible   : {'yes' if plan.feasible else 'NO'}")
-
-    for issue in plan.blocking_issues:
-        lines.append(f"  blocked  : {issue}")
-    for note in plan.notes:
-        lines.append(f"  note     : {note}")
-
+    for issue in plan.issues:
+        label = "blocked " if issue.severity == "blocker" else "note    "
+        lines.append(f"  {label}: [{issue.code}] {issue.message}")
+        if issue.alternatives:
+            lines.append(f"            alternatives: {', '.join(issue.alternatives)}")
+        if issue.fix:
+            lines.append(f"            fix: {issue.fix}")
     return "\n".join(lines)

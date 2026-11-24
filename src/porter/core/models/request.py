@@ -130,10 +130,12 @@ class JobRequest(BaseModel):
         :meth:`~porter.core.platforms.local.LocalFileDownloader.prepare`'s job, and
         keeping it there means the error can name the resolved path.
         """
-        text = str(source)
+        from porter.core.utils.source import normalize_source_input
+
+        text, is_url = normalize_source_input(source)
         if text.startswith("file://"):
             return cls(local_video=Path(url2pathname(urlparse(text).path)), options=options)
-        if "://" in text:
+        if is_url:
             return cls(url=text, options=options)
         return cls(local_video=Path(text), options=options)
 

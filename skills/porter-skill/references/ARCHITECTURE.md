@@ -1,93 +1,120 @@
 # porter 架构
 
-本文说明 porter 的内部结构，供需要判断"为什么这么设计"或"哪里可能出问题"时阅读。日常使用只需 `SKILL.md`。
+本文说明 porter 的内部结构，供需要判断“为什么这么设计”或“哪里可能出问题”时阅读。
+日常使用只需 [`SKILL.md`](../SKILL.md)。
 
 ---
 
-## 1. 四个阶段
+## 1. 七阶段与六工作流
 
 ```
-prepare → transcribe → translate → burn
+probe → acquire → normalize → transcript → translate → write → render
 ```
 
 | 阶段 | 做什么 | 产物 |
 |---|---|---|
-| `prepare` | 获取媒体、标准化为母版、提取音轨、探测画幅 | `raw/video.mp4`、`raw/audio.wav`、`raw/audio_enhanced.wav`、`raw/metadata.json` |
-| `transcribe` | 取平台原生字幕轨，或跑语音识别 | `raw/subtitle.srt`、`raw/transcript.json/.txt` |
-| `translate` | 句子级翻译、碎片重构、生成双语/中文轨 | `cooked/subtitle.srt`、`cooked/subtitle_zh.srt`、两个 `.ass` |
-| `burn` | 用 libass 烧录硬字幕 | `cooked/video_bilingual.mp4`、`cooked/video_zh.mp4` |
+| `probe` | 分类源并读取事实 | `source_facts` |
+| `acquire` | 下载 URL 媒体，或接入本地文件 | `source_media`、`platform_subtitles` |
+| `normalize` | 标准化母版、提取 16 kHz 单声道音轨 | `master_video`、`master_audio` |
+| `transcript` | 平台字幕轨、供字幕，或语音识别 | `source_transcript` |
+| `translate` | 句子级翻译、碎片重构 | `target_transcript` |
+| `write` | 写双语/目标语 SRT 与 ASS | `bilingual_srt` 等四个文件 |
+| `render` | 用 libass 烧录硬字幕 | `video_bilingual`、`video_zh` |
 
-**每个阶段消费上一阶段的内存结果，同时把自己的产物写到磁盘。** 所以失败时已完成的阶段不会白跑——这一点直接决定了 `--only-phase` 的语义。
+工作流由**源事实**决定，不是由平台名字硬编码：
 
-### `--only-phase` 是"到此为止"，不是"只跑这个"
+| 工作流 | 条件 |
+|---|---|
+| `url.subtitled` | URL 列出源语言字幕轨，或给了 `--subtitle-file` |
+| `url.asr` | URL 无字幕轨，或显式要求 ASR |
+| `local.subtitled` | 本地视频 + `--subtitle-file` |
+| `local.asr` | 本地视频无字幕轨 |
+| `subtitle.only` | 输入是字幕文件 |
+| `audio.asr` | 输入是音频 |
 
-因为每个阶段需要上一阶段的输出，`--only-phase translate` 仍然会执行 `prepare` 和 `transcribe`。它表达的是"做完这个阶段就停"，用于调试或只想要中间产物。
-
----
-
-## 2. 字幕来源：两条路径
-
-`transcribe` 阶段有两条路，由平台规格决定：
-
-1. **平台原生字幕轨**（`platforms/*.py` 里 `subtitles.remote=True` 的平台）
-   - YouTube、Bilibili、TikTok
-   - 优势：**精确的拼写、标点、专有名词，且零识别成本**
-   - 若平台还提供中文轨（`prefer_existing_chinese=True`），翻译阶段整段跳过
-   - **但这是"请求"而非"保证"**：抓取可能失败（平台限流，实测会遇到 HTTP 429），失败后回退到语音识别
-
-2. **语音识别**（`subtitles.remote=False` 的平台，或没有原生轨时）
-   - X / Twitter、Instagram 永远走这条（它们的规格里 `remote=False`，即不抓字幕）
-   - 按回退链依次尝试后端
-
-> `plan` 命令报告的 `subtitles.route` 就是这条判断的结论，它复用管线自身的 `plan_subtitles()`，不是重新推断。
+`--task` 截断工作流（probe / audio / transcribe / subtitle / release），不选择后端。
+`convert` 尚未接入执行器，计划会明确报 `TASK_NOT_SUPPORTED`。
 
 ---
 
-## 3. 后端回退链
+## 2. 能力是对等的，不是回退链
 
-链按顺序尝试，第一个成功的胜出。
+`capabilities.py` 定义 18 个能力，每个能力是**一个阶段的一种实现**：
 
-### ASR（语音识别）
+- probe：`probe.ytdlp` / `probe.ffprobe` / `probe.subtitle`
+- acquire：`acquire.ytdlp-video` / `acquire.ytdlp-audio` / `acquire.ytdlp-subs` / `acquire.local`
+- normalize：`normalize.ffmpeg`
+- transcript：`transcript.platform-track` / `transcript.supplied` / `transcript.whisper-local` / `transcript.whisper-api`
+- translate：`translate.bing` / `translate.google` / `translate.mymemory` / `translate.llm`
+- write：`write.subtitles`
+- render：`render.ffmpeg-libass`
 
-| 后端 | 需要 | 端点是否经实测 |
-|---|---|---|
-| `whisper-local` | `[asr-local]` extra（本地模型，零 Key 离线可用） | ✅ |
-| `whisper-api` | Whisper API Key（或 `llm.api_key`） | ✅ |
-| `videocaptioner` | 已安装 VideoCaptioner CLI | ✅ |
+能力记录 `available`、`cost`（free/network/paid）、`egress`（none/text/audio）、
+`download_mb`、`requires`。**没有顺序含义**；`_DEFAULT_CANDIDATES` 只是免费优先的
+偏好顺序，解析器从中选一个。
 
-默认优先走免 Key、离线的 `whisper-local`（需要安装 `[asr-local]` 可选依赖）；如未安装则按顺序尝试云端 `whisper-api` 或本地 `videocaptioner`。若既无本地引擎，也无 API Key，且视频没有原生字幕轨，转录将无法执行。
+### 付费策略
 
-### 翻译
+- `paid` 能力默认被排除：环境里有 Key 是配置，不是同意付费。
+- 显式命名（`--transcript whisper-api`、`--translate llm`）即视为同意。
+- `--allow-paid` 允许解析器在免费能力不可用时选择付费能力。
 
-| 后端 | 需要 | 端点是否经实测 |
-|---|---|---|
-| `llm` | LLM API Key | ✅ |
-| `bing` | 无 | ❌ 逆向 |
-| `google` | 无 | ❌ 逆向 |
-| `mymemory` | 无 | ✅ |
-| `videocaptioner-llm` | VideoCaptioner CLI | ✅ |
-| `videocaptioner` | VideoCaptioner CLI | ✅ |
+### 没有运行期回退
 
-翻译**不需要任何 Key**：`bing` → `google` → `mymemory` 这条免 Key 路径可用（实测 `google` 与 `mymemory` 正常；`bing` 可用但行为不稳定，见下）。
+`executor.py` 用计划选中的**单一能力**构造 `AsrChain` / `TranslationChain`：
 
-### 两处已知的脆弱点
+- 平台字幕：`allow_platform=True`，其余 `False`
+- 供字幕：`allow_supplied=True`，其余 `False`
+- 本地 Whisper：只有 `[WhisperLocalBackend()]`，`expected_origin_prefix="faster-whisper:"`
+- Whisper API：只有 `[WhisperApiBackend()]`，`expected_origin_prefix="whisper:"`
 
-1. **`bing` 的分隔符会被重写。** Bing 现在走 LLM 翻译，会重排空白：批量请求用 `\n[[|]]\n` 做分隔符，若段数对不上就**降级为逐句请求**而不是整条后端失败。这是刻意的——单个后端的格式猜测不该毁掉整条链。
-2. **`google` / `mymemory` 会限流（HTTP 429）**，尤其在被反复探测之后。这是环境性的，等一会儿或换后端。
+缓存恢复时校验来源：上一能力产生的字幕不会被新能力复用。若能力失败，结果里返回
+`alternatives` 与 `suggested_workflow`，由 Agent 重新 plan。
+
+---
+
+## 3. 解析器与执行器
+
+### 解析器（`resolver.py`）
+
+1. `probe_source()` 读取源事实。
+2. `_choose_workflow()` 按源类型与显式转录请求选工作流。
+3. 为每个阶段选**恰好一个**能力，并检查可用性/付费策略。
+4. 生成 `WorkflowPlan`，内容哈希封存 `plan_id`；有 blocker 时 `feasible=false`。
+
+同一实现会生成 `PlanIssue`，包含 `code`、`message`、`fix`、`alternatives`、
+`suggested_workflow`。计划即使不可行也保留“如果修好会怎么跑”的阶段列表，便于向
+用户展示具体修复。
+
+### 执行器（`executor.py`）
+
+1. 预检：`feasible` 与配置指纹。指纹不一致直接 `PLAN_CONFIG_CHANGED`。
+2. 把计划映射为 `JobOptions`；`--plan` 的 source/输出/语言/压制/字幕/cookies 都来自
+   计划。
+3. 按阶段分组为事件 Phase：PREPARE（acquire+normalize）、TRANSCRIBE、TRANSLATE
+   （translate+write）、BURN（render）。
+4. 字幕-only 工作流不构造媒体管线：读文件 → 翻译 → 写四个字幕产物。
+5. 失败返回 `WorkflowResult.error`，不抛出跨能力重试。
+
+`plan` 是契约，`run --plan` 逐字执行；运行期只允许覆盖 `-o` 与 `--force`。
 
 ---
 
 ## 4. 句子级翻译与碎片重构
 
-ASR 和平台字幕常常给出**滚动碎片**（YouTube 自动字幕每 2–3 个词一条）。直接逐条翻译会得到语序颠倒的碎词。
+ASR 和平台字幕常常给出**滚动碎片**（YouTube 自动字幕每 2–3 个词一条）。直接逐条
+翻译会得到语序颠倒的碎词。翻译阶段做三件事：
 
-所以翻译阶段做三件事：
-
-1. **合并短碎片**（`merge_short_fragments`）——把过短的相邻 cue 合成可翻译的完整句
+1. **合并短碎片**——把过短的相邻 cue 合成可翻译的完整句
 2. **重构句子**——按语法、标点与静音间隙切分
 3. **按中文意群重新断句**——单行 ≤20 字，时间戳按字数比例平滑分配
 
-**副作用（重要）**：对**已经是句级切分**的字幕文件，合并仍会发生——实测 3 条输入可能变成 2 条输出，把两个不相关的短句并成一条（合并后的 cue 时间跨度正确覆盖原 cue，所以**行为正确但边界变了**）。CLI 与 MCP 都会如实报告 `input_cue_count` / `cue_count` / `cues_merged`，不会静默改变。
+**副作用（重要）**：对**已经是句级切分**的字幕文件，合并仍会发生——实测 3 条输入
+可能变成 2 条输出。合并后的 cue 时间跨度正确覆盖原 cue，所以行为正确但边界变了。
+结果会如实报告 `input_cue_count` / `cue_count` / `cues_merged`。
+
+新执行器固定使用 `PassthroughRefiner`：计划没有选择 LLM 精修能力，就不会发起隐藏的
+付费调用。
 
 ---
 
@@ -99,7 +126,8 @@ ASR 和平台字幕常常给出**滚动碎片**（YouTube 自动字幕每 2–3 
 - stderr 只保留尾部若干行（否则错误信息被淹没）
 - 显式 utf-8 + `errors="replace"`（避免非 ASCII 路径在 ASCII locale 下炸掉）
 
-**成片音频直通复制**（`-c:a copy`）：`raw/audio_enhanced.wav` 只供 ASR 使用，从不进入成片。这样识别准确率与成片音质兼得。
+**成片音频直通复制**（`-c:a copy`）：`raw/audio_enhanced.wav` 只供 ASR 使用，从不
+进入成片。这样识别准确率与成片音质兼得。
 
 ### 硬件编码分级
 
@@ -110,31 +138,38 @@ h264_nvenc / hevc_nvenc / h264_qsv / h264_amf → libx264
 ```
 
 判定结果缓存在进程内的 `EncoderSelector`，所以一次进程内多次压制只探测一次。
+软件编码是 `INFO`，不是 degradation：它能工作。
 
 ### 压制输出是原子的
 
-先写到目标旁的临时文件，**探测确认可读后**才改名到位。v0.1 是无条件改名，导致截断的编码被当成成品发布——这正是质检步骤要跑 `ffprobe` 的原因。
+先写到目标旁的临时文件，**探测确认可读后**才改名到位。v0.1 是无条件改名，导致截断
+的编码被当成成品发布——这正是质检步骤要跑 `ffprobe` 的原因。
 
 ---
 
 ## 6. 作业注册表
 
-作业记录写在一个共享的 JSON 注册表文件里（原子写 + 文件锁 + 用 `/proc` 的进程启动时间判断 PID 是否陈旧）。
+作业记录写在一个共享的 JSON 注册表文件里（原子写 + 文件锁 + 用 `/proc` 的进程启动
+时间判断 PID 是否陈旧）。
 
-**这解决了"长任务无法轮询"的问题**：`porter run` 在终端 A 启动的作业，终端 B 的 `porter jobs status` 看得到，MCP server 也看得到。取消同理——由一个每作业的看门狗线程轮询注册表实现，因为静默的 yt-dlp 下载期间事件通道根本不产生事件。
+**这解决了“长任务无法轮询”的问题**：`porter run` 在终端 A 启动的作业，终端 B 的
+`porter jobs status` 看得到。取消同理——由一个每作业的看门狗线程轮询注册表实现，
+因为静默的 yt-dlp 下载期间事件通道根本不产生事件。
 
 ---
 
 ## 7. 配置与分层
 
-引擎（`src/porter/core/`）不知道部署形态；根门面 `src/porter/__init__.py` 提供稳定公开 API。CLI（`src/porter/cli/`）、MCP（`src/porter/mcp/`）与 WebUI（`src/porter/webui/`）是三个对等前端，都只依赖引擎的公开接口，互相之间不 import。
+引擎（`src/porter/core/`）不知道部署形态；根门面 `src/porter/__init__.py` 提供稳定
+公开 API。CLI（`src/porter/cli/`）、MCP（`src/porter/mcp/`）与 WebUI
+（`src/porter/webui/`）是三个前端，都只依赖引擎的公开接口，互相之间不 import。
 
-分层由 `import-linter` 强制（`engine must not import frontends`、`frontends are independent` 与 `engine layers` 三条契约），依赖方向单向：
+新的工作流层位于引擎最上层：
 
 ```
 porter.cli / porter.mcp / porter.webui
         ↓
-porter.core.plan
+porter.core.workflow   (model → capabilities → probe → resolver → executor)
         ↓
 porter.core.pipeline
         ↓
@@ -143,4 +178,11 @@ core.asr / translate / platforms / refine / media / doctor
 core.models / errors / events / config
 ```
 
-前端之间的独立性由 `independence` 契约强制，`tests/unit/test_architecture.py` 保留同一检查以给出精确文件位置。引擎（含根门面）内**零 `print()`**（由 ruff 的 `T20` 规则强制）：MCP 的 stdout 是 JSON-RPC 通道，任何一行杂输出都会破坏协议。所有日志走 stderr。
+分层由 `import-linter` 强制（`engine must not import frontends`、`frontends are
+independent` 与 `engine layers` 三条契约）。引擎（含根门面）内**零 `print()`**
+（ruff `T20`）：MCP 的 stdout 是 JSON-RPC 通道，任何一行杂输出都会破坏协议。所有
+日志走 stderr。
+
+**前端一致性**：CLI、MCP、WebUI 都通过 `porter.core.workflow` 解析
+`WorkflowPlan` 并调用同一个 `execute_plan`。没有任何前端保留第二套计划模型或
+运行期回退链。

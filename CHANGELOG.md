@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A real workflow model.** `WorkflowPlan` / `WorkflowResult` describe seven
+  stages (`probe`, `acquire`, `normalize`, `transcript`, `translate`, `write`,
+  `render`) and six workflows (`url.subtitled`, `url.asr`, `local.subtitled`,
+  `local.asr`, `subtitle.only`, `audio.asr`). Each stage names exactly one
+  capability; there is no runtime cross-capability fallback. A failure reports
+  `alternatives` and `suggested_workflow`, and changing engines requires
+  replanning.
+- **`porter capabilities`.** Lists every stage capability with its availability,
+  cost and data egress (`audio` / `text`). Paid capabilities are never selected
+  automatically unless `--allow-paid` is passed or the capability is named
+  explicitly.
+- **`porter probe`.** Reports the source kind, platform, media facts and listed
+  subtitle tracks for URLs, local video, audio and subtitle files, without
+  planning or downloading media. `porter inspect` remains as a link-only alias.
+- **Plan-based MCP tools.** `porter_capabilities` and `porter_probe` join
+  `porter_plan`; `porter_job_start(plan=...)` executes the plan unchanged and
+  refuses conflicting planning arguments or an infeasible plan.
+  `porter_job_result` returns the full `WorkflowResult`.
+- **Plan-first WebUI workbench.** The workbench resolves and displays the
+  `WorkflowPlan` JSON, invalidates it when a planning control changes, refuses
+  infeasible plans, and executes the same plan the CLI/MCP would.
+- **Workflow public root exports.** `from porter import ...` lazily exports
+  `WorkflowPlan`, `WorkflowResult`, `ExecutionOutcome`, `PlanOverrides`,
+  `PlanIssue`, `StagePlan`, `StageResult`, `StageError`, `SourceProbe`,
+  `CapabilityDescriptor`, `Stage`, `WorkflowId`, `Task`, `SourceKind`,
+  `capability_catalog`, `probe_source`, `resolve_plan`, and `execute_plan`.
+
+### Changed
+
+- **CLI planning flags select one capability.** `--transcript` / `--translate` /
+  `--render` (aliases `--asr-engine` / `--translator`) choose exactly that peer;
+  an unavailable choice blocks the plan instead of falling through a chain.
+- **`--task` replaces `--only-phase`.** `--only-phase` is deprecated and mapped
+  onto `--task` (`prepare`→`audio`, `transcribe`→`transcribe`,
+  `translate`→`subtitle`, `burn`→`release`).
+- **The skill uses Python launchers.** The dual Bash/PowerShell wrappers were
+  replaced by `scripts/bootstrap.py` and `scripts/porter.py`; the SOP treats
+  Python detection and installation as an agent-guided environment step.
+- **MCP and WebUI share the plan model.** Neither frontend has a second pipeline
+  or a fallback chain.
+
+### Removed
+
+- **VideoCaptioner adapters and CLI integration.** Removed
+  `porter.core.asr.videocaptioner`, `porter.core.translate.videocaptioner`,
+  `config import-videocaptioner`, `Pipeline.default()` VideoCaptioner wiring,
+  and WebUI engine choices. External-tool invocation belongs to the skill, not
+  to a porter backend.
+- **Legacy predictive plan model.** Removed `porter.core.plan` and
+  `porter.core.models.plan` (`Plan`, `BackendPlan`, `SubtitlePlan`,
+  `TranslationPlan`), superseded by `porter.core.workflow` (`WorkflowPlan`).
+
+### Fixed
+
+- **A broken configuration is reported as such.** `porter_plan` distinguishes an
+  unresolvable config from a planning fault instead of treating it as data an
+  agent can plan around.
+
 ## [0.3.2] - 2026-11-11
 
 ### Changed

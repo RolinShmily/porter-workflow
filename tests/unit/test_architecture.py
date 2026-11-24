@@ -163,6 +163,26 @@ def test_unknown_attribute_raises_attribute_error() -> None:
         _ = porter.this_symbol_does_not_exist
 
 
+def test_every_lazy_export_is_listed_in_all() -> None:
+    missing = sorted(set(porter._LAZY_EXPORTS) - set(porter.__all__))
+    assert not missing, f"_LAZY_EXPORTS entries missing from __all__: {missing}"
+
+
+def test_workflow_api_is_exported_from_root() -> None:
+    for name in (
+        "WorkflowPlan",
+        "WorkflowResult",
+        "PlanOverrides",
+        "ExecutionOutcome",
+        "resolve_plan",
+        "execute_plan",
+        "probe_source",
+        "capability_catalog",
+    ):
+        assert name in porter.__all__
+        assert hasattr(porter, name)
+
+
 @pytest.mark.parametrize("frontend", FRONTEND_DIRS)
 def test_frontend_packages_are_discoverable(frontend: str) -> None:
     """Guard against an empty ``rglob`` making the sibling test vacuous."""

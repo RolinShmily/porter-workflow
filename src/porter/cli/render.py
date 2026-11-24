@@ -40,7 +40,6 @@ __all__ = [
     "emit_json",
     "info",
     "mask_secret",
-    "not_implemented",
     "render_event",
     "symbol",
     "value",
@@ -170,18 +169,6 @@ def emit_json(payload: Any) -> None:
     pair.
     """
     print(json.dumps(payload, indent=2, ensure_ascii=True, default=str))
-
-
-def not_implemented(command: str) -> int:
-    """Report a command that is specified but not yet built.
-
-    A partially built CLI must fail loudly and honestly rather than silently
-    doing nothing, and it must not hand the user a design document to go read:
-    the message has to be actionable on its own.
-    """
-    warn(f"'{command}' is not implemented in this build yet")
-    info("  see https://github.com/RolinShmily/porter-workflow/issues for status")
-    return EXIT_MISUSE
 
 
 def render_event(event: Event) -> None:

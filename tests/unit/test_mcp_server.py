@@ -15,6 +15,46 @@ from porter.core.jobs import process_marker
 from porter.mcp.server import create_server
 
 
+def _feasible_plan(source: str = "/videos/a.mp4"):
+    """A sealed plan that is cheap to build and never probes anything.
+
+    Job-tool tests are about orchestration -- ids, threads, cancellation,
+    result shaping -- not about whether this machine has ffmpeg. Supplying a
+    plan through the same public path an agent uses keeps those concerns apart.
+    """
+    from porter.core.workflow.model import (
+        PlanRuntime,
+        SourceKind,
+        SourceProbe,
+        Stage,
+        StagePlan,
+        Task,
+        WorkflowId,
+        WorkflowPlan,
+    )
+
+    return WorkflowPlan(
+        workflow=WorkflowId.LOCAL_ASR,
+        task=Task.RELEASE,
+        source=source,
+        runtime=PlanRuntime(output_dir="./porter_output"),
+        source_probe=SourceProbe(
+            kind=SourceKind.LOCAL_VIDEO,
+            source=source,
+            has_video=True,
+            has_audio=True,
+        ),
+        stages=(
+            StagePlan(
+                id="acquire",
+                stage=Stage.ACQUIRE,
+                capability="acquire.local",
+            ),
+        ),
+        feasible=True,
+    ).sealed()
+
+
 class TestServerConstruction:
     def test_create_server_returns_a_server(self) -> None:
         assert create_server() is not None
@@ -349,13 +389,13 @@ class TestJobStartTool:
         assert result.data["ok"] is False
         assert "nonsense" in result.data["error"]
 
-    async def test_a_valid_source_returns_a_job_id_immediately(
+    async def test_a_plan_returns_a_job_id_immediately(
         self, _isolated_registry, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The whole point of the job API: the call returns before the work does.
 
         ``_run_job`` is replaced rather than allowed to run. Starting a real job
-        here would launch a pipeline in a background thread, log its failure into
+        here would launch a workflow in a background thread, log its failure into
         the test output, and make the assertion depend on how far that thread got
         before the test ended.
         """
@@ -365,15 +405,17 @@ class TestJobStartTool:
         monkeypatch.setattr(
             jobs_module,
             "_run_job",
-            lambda job, ctx, request: launched.append(job.job_id),
+            lambda job, ctx, plan: launched.append(job.job_id),
         )
 
         async with Client(create_server()) as client:
             result = await client.call_tool(
-                "porter_job_start", {"source": "/videos/a.mp4"}
+                "porter_job_start", {"plan": _feasible_plan().model_dump(mode="json")}
             )
 
         assert result.data["ok"] is True
+        assert result.data["plan_id"].startswith("sha256:")
+        assert result.data["workflow"] == "local.asr"
         job_id = result.data["job_id"]
         # Already visible to status before any work has happened.
         assert _isolated_registry.get(job_id) is not None
@@ -391,17 +433,63 @@ class TestJobStartTool:
 
         observed: dict[str, object] = {}
 
-        def capture(job, ctx, request) -> None:
+        def capture(job, ctx, plan) -> None:
             observed["cancel_is_wired"] = job.cancel is ctx.cancel
             observed["running"] = job.state.value
+            observed["plan_source"] = plan.source
 
         monkeypatch.setattr(jobs_module, "_run_job", capture)
 
         async with Client(create_server()) as client:
-            await client.call_tool("porter_job_start", {"source": "/videos/a.mp4"})
+            await client.call_tool(
+                "porter_job_start", {"plan": _feasible_plan().model_dump(mode="json")}
+            )
 
         assert observed["cancel_is_wired"] is True
         assert observed["running"] == "running"
+        assert observed["plan_source"] == "/videos/a.mp4"
+
+    async def test_planning_arguments_beside_a_plan_are_refused(
+        self, _isolated_registry
+    ) -> None:
+        """The plan fixed those choices; silently preferring one is worse."""
+        async with Client(create_server()) as client:
+            result = await client.call_tool(
+                "porter_job_start",
+                {
+                    "plan": _feasible_plan().model_dump(mode="json"),
+                    "target_lang": "en",
+                },
+            )
+
+        assert result.data["ok"] is False
+        assert "target_lang" in result.data["error"]
+
+    async def test_an_infeasible_plan_is_refused_before_work(
+        self, _isolated_registry
+    ) -> None:
+        from porter.core.workflow.model import PlanIssue
+
+        plan = _feasible_plan().model_copy(
+            update={
+                "feasible": False,
+                "issues": (
+                    PlanIssue(
+                        code="NO_CAPABILITY",
+                        severity="blocker",
+                        message="no transcript capability is available",
+                    ),
+                ),
+            }
+        )
+
+        async with Client(create_server()) as client:
+            result = await client.call_tool(
+                "porter_job_start", {"plan": plan.model_dump(mode="json")}
+            )
+
+        assert result.data["ok"] is False
+        assert result.data["plan"]["feasible"] is False
 
 
 class TestRunJobThreadBody:
@@ -420,8 +508,9 @@ class TestRunJobThreadBody:
         from porter.core.jobs import JobStore
         from porter.core.models.request import JobOptions, JobRequest
 
+        plan = _feasible_plan()
         store = JobStore()
-        request = JobRequest.from_source("/videos/a.mp4", JobOptions())
+        request = JobRequest.from_source(plan.source, JobOptions())
         job = store.create(request)
         ctx = RunContext(
             job_id=job.job_id,
@@ -430,43 +519,43 @@ class TestRunJobThreadBody:
             events=null_sink,
         )
         store.attach(job, ctx)
-        return job, ctx, request
+        return job, ctx, plan
 
     def test_an_expected_error_becomes_a_failed_result(
         self, tmp_path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from porter.core.errors import ExtractionError
-        from porter.core.models.request import JobResult
-        from porter.core.pipeline import Pipeline
         from porter.mcp.tools import jobs as jobs_module
 
-        job, ctx, request = self._job_and_ctx(tmp_path)
+        job, ctx, plan = self._job_and_ctx(tmp_path)
 
-        def explode(self, req, context) -> JobResult:
+        def explode(_plan, _ctx):
             raise ExtractionError("local video not found: /videos/a.mp4")
 
-        monkeypatch.setattr(Pipeline, "run", explode)
+        monkeypatch.setattr("porter.core.workflow.executor.execute_plan", explode)
 
-        jobs_module._run_job(job, ctx, request)
+        jobs_module._run_job(job, ctx, plan)
 
         assert job.state.value == "failed"
         assert "not found" in (job.result.error.message or "")
+        workflow = jobs_module._workflow_for(job.job_id)
+        assert workflow is not None
+        assert workflow.error is not None
+        assert workflow.error.code == "extraction_error"
 
     def test_an_unexpected_error_is_still_recorded(
         self, tmp_path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from porter.core.models.request import JobResult
-        from porter.core.pipeline import Pipeline
         from porter.mcp.tools import jobs as jobs_module
 
-        job, ctx, request = self._job_and_ctx(tmp_path)
+        job, ctx, plan = self._job_and_ctx(tmp_path)
 
-        def explode(self, req, context) -> JobResult:
+        def explode(_plan, _ctx):
             raise ZeroDivisionError("bug in a backend")
 
-        monkeypatch.setattr(Pipeline, "run", explode)
+        monkeypatch.setattr("porter.core.workflow.executor.execute_plan", explode)
 
-        jobs_module._run_job(job, ctx, request)
+        jobs_module._run_job(job, ctx, plan)
 
         assert job.state.value == "failed"
         assert job.result.error.code == "internal_error"
@@ -476,79 +565,88 @@ class TestRunJobThreadBody:
         self, tmp_path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from porter.core.errors import JobCancelled
-        from porter.core.models.request import JobResult
-        from porter.core.pipeline import Pipeline
         from porter.mcp.tools import jobs as jobs_module
 
-        job, ctx, request = self._job_and_ctx(tmp_path)
+        job, ctx, plan = self._job_and_ctx(tmp_path)
 
-        def explode(self, req, context) -> JobResult:
+        def explode(_plan, _ctx):
             raise JobCancelled("cancelled by the client")
 
-        monkeypatch.setattr(Pipeline, "run", explode)
+        monkeypatch.setattr("porter.core.workflow.executor.execute_plan", explode)
 
-        jobs_module._run_job(job, ctx, request)
+        jobs_module._run_job(job, ctx, plan)
 
         assert job.state.value == "cancelled"
+        workflow = jobs_module._workflow_for(job.job_id)
+        assert workflow is not None
+        assert workflow.state.value == "cancelled"
 
     def test_a_cancel_while_queued_prevents_the_work(
         self, tmp_path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A job cancelled while waiting its turn must not start when it gets one."""
-        from porter.core.events import JobState
-        from porter.core.models.request import JobResult
-        from porter.core.pipeline import Pipeline
         from porter.mcp.tools import jobs as jobs_module
 
-        job, ctx, request = self._job_and_ctx(tmp_path)
+        job, ctx, plan = self._job_and_ctx(tmp_path)
         ran: list[str] = []
 
-        def record(self, req, context) -> JobResult:
+        def record(_plan, _ctx):
             ran.append("ran")
-            return JobResult(job_id=job.job_id, state=JobState.DONE)
+            raise AssertionError("cancelled work must not start")
 
-        monkeypatch.setattr(Pipeline, "run", record)
+        monkeypatch.setattr("porter.core.workflow.executor.execute_plan", record)
         # Cancelled before the semaphore is even acquired.
         job.cancel.set()
 
-        jobs_module._run_job(job, ctx, request)
+        jobs_module._run_job(job, ctx, plan)
 
         assert ran == []
         assert job.state.value == "cancelled"
 
 
-class TestInspectToolContract:
-    """``porter_inspect``'s schema is part of the safety contract, not just a shape."""
+# ----------------------------------------------------------------------
+# Probe
+# ----------------------------------------------------------------------
 
-    async def test_porter_inspect_is_exposed(self) -> None:
+
+class TestProbeToolContract:
+    """``porter_probe``'s schema is part of the safety contract, not just a shape."""
+
+    async def test_porter_probe_is_exposed(self) -> None:
         async with Client(create_server()) as client:
             names = {tool.name for tool in await client.list_tools()}
-        assert "porter_inspect" in names
+        assert "porter_probe" in names
+
+    async def test_the_old_inspect_name_is_gone(self) -> None:
+        """A rename is a migration, not an alias: one name per concept."""
+        async with Client(create_server()) as client:
+            names = {tool.name for tool in await client.list_tools()}
+        assert "porter_inspect" not in names
 
     async def test_it_accepts_a_source_and_nothing_else(self) -> None:
         """No cookie parameters, deliberately.
 
         The CLI has ``--cookies`` / ``--cookies-from-browser``. Exposing them over
         MCP would write credentials into the conversation transcript and into any
-        telemetry with it (§8.5). Cookies still work here -- they are read from the
+        telemetry with it. Cookies still work here -- they are read from the
         resolved config, which only the CLI can write.
 
         Asserted on the schema rather than trusted, because the tempting change is
         to "just add one parameter" for a link that needs authentication.
         """
         async with Client(create_server()) as client:
-            tool = next(t for t in await client.list_tools() if t.name == "porter_inspect")
+            tool = next(t for t in await client.list_tools() if t.name == "porter_probe")
 
         assert set(tool.input_schema["properties"]) == {"source"}
 
 
-class TestInspectTool:
+class TestProbeTool:
     """Result shaping: what an agent can act on, and what it must not retry."""
 
     @pytest.fixture
     def fake_inspect(self, monkeypatch):
         """Replace the engine call so shaping can be tested on its own."""
-        from porter.core.platforms import inspector as inspector_module
+        from porter.core.workflow import probe as probe_module
 
         def install(result_or_exc):
             def fake(url, ctx=None, **kwargs):
@@ -556,57 +654,73 @@ class TestInspectTool:
                     raise result_or_exc
                 return result_or_exc
 
-            monkeypatch.setattr(inspector_module, "inspect_url", fake)
+            monkeypatch.setattr(probe_module, "inspect_url", fake)
 
         return install
 
     @staticmethod
-    def _valid() -> object:
+    def _valid(**overrides) -> object:
         from porter.core.models.inspection import InspectionResult
 
-        return InspectionResult(
-            input_url="https://x.com/a/status/1",
-            canonical_url="https://x.com/a/status/1",
-            platform="x",
-            is_valid=True,
-            has_video=True,
-            video_id="1",
-            title="A Vertical Clip",
-            duration_seconds=42.0,
-            width=1080,
-            height=1920,
-            is_vertical=True,
-            has_subtitles=False,
-        )
+        fields = {
+            "input_url": "https://x.com/a/status/1",
+            "canonical_url": "https://x.com/a/status/1",
+            "platform": "x",
+            "is_valid": True,
+            "has_video": True,
+            "video_id": "1",
+            "title": "A Vertical Clip",
+            "duration_seconds": 42.0,
+            "width": 1080,
+            "height": 1920,
+            "is_vertical": True,
+            "has_subtitles": False,
+        }
+        fields.update(overrides)
+        return InspectionResult(**fields)
 
-    async def test_a_usable_link_returns_the_structured_result(self, fake_inspect) -> None:
+    async def test_a_usable_link_returns_the_probe_facts(self, fake_inspect) -> None:
         fake_inspect(self._valid())
 
         async with Client(create_server()) as client:
-            result = await client.call_tool("porter_inspect", {"source": "https://x.com/a/status/1"})
+            result = await client.call_tool("porter_probe", {"source": "https://x.com/a/status/1"})
 
         data = result.data
         assert data["ok"] is True
-        assert data["is_valid"] is True
+        assert data["kind"] == "url"
         assert data["platform"] == "x"
         assert data["duration_seconds"] == 42.0
         assert data["is_vertical"] is True
+        assert data["blockers"] == []
 
-    async def test_the_rendered_summary_comes_back_too(self, fake_inspect) -> None:
-        """An agent needs something to say to its user without a second call."""
-        fake_inspect(self._valid())
+    async def test_a_listed_track_is_reported_as_unverified(self, fake_inspect) -> None:
+        """A listing is not a promise: the warning is the contract."""
+        fake_inspect(
+            self._valid(
+                input_url="https://www.youtube.com/watch?v=abc",
+                canonical_url="https://www.youtube.com/watch?v=abc",
+                platform="youtube",
+                raw_info={"subtitles": {"en": [{"ext": "vtt"}]}},
+            )
+        )
 
         async with Client(create_server()) as client:
-            result = await client.call_tool("porter_inspect", {"source": "https://x.com/a/status/1"})
+            result = await client.call_tool(
+                "porter_probe", {"source": "https://www.youtube.com/watch?v=abc"}
+            )
 
-        assert "A Vertical Clip" in result.data["summary"]
+        data = result.data
+        assert data["ok"] is True
+        assert data["tracks"][0]["lang"] == "en"
+        assert data["tracks"][0]["verified"] is False
+        assert any(issue["code"] == "TRACKS_UNVERIFIED" for issue in data["warnings"])
 
     async def test_an_unusable_link_is_a_successful_call(self, fake_inspect) -> None:
         """The contract that stops an agent burning its retry budget.
 
-        ``ok`` describes the call; ``is_valid`` describes the link. A 404 reported
-        as ``ok: false`` reads as "the tool broke", and the natural response --
-        retry -- is exactly wrong.
+        ``ok`` describes the call; the warning describes the source. A 404
+        reported as ``ok: false`` reads as "the tool broke", and the natural
+        response -- retry -- is exactly wrong.
         """
         from porter.core.models.inspection import InspectionResult
 
@@ -623,36 +737,49 @@ class TestInspectTool:
 
         async with Client(create_server()) as client:
             result = await client.call_tool(
-                "porter_inspect", {"source": "https://www.youtube.com/watch?v=dead"}
+                "porter_probe", {"source": "https://www.youtube.com/watch?v=dead"}
             )
 
-        assert result.data["ok"] is True, "a bad link is a result, not a tool failure"
-        assert result.data["is_valid"] is False
-        assert "404" in result.data["error_message"]
+        data = result.data
+        assert data["ok"] is True, "a bad link is a result, not a tool failure"
+        assert data["warnings"][0]["code"] == "SOURCE_UNUSABLE"
+        assert "404" in data["warnings"][0]["message"]
+        assert data["blockers"] == ["SOURCE_UNUSABLE"]
 
-    async def test_a_local_path_explains_itself(self) -> None:
-        """Not "unsupported platform", which would be misleading.
-
-        A local file is a legitimate input to ``porter_job_start``, so an agent
-        that calls inspect on one deserves to be told that inspection is about
-        links -- and that the file needs no pre-flight check.
-        """
+    async def test_a_local_path_is_a_first_class_source(self) -> None:
+        """Unlike the old link-only inspection, a path is probed, not refused."""
         async with Client(create_server()) as client:
-            result = await client.call_tool("porter_inspect", {"source": "/videos/a.mp4"})
+            result = await client.call_tool("porter_probe", {"source": "/videos/a.mp4"})
 
-        assert result.data["ok"] is True
-        assert result.data["is_valid"] is False
-        assert result.data["platform"] == "local"
-        assert "probes links, not local files" in result.data["error_message"]
-        assert "porter_job_start" in result.data["error_message"]
+        data = result.data
+        assert data["ok"] is True
+        assert data["kind"] == "local_video"
+        assert data["has_video"] is False
+        assert data["warnings"][0]["code"] == "SOURCE_NOT_FOUND"
 
-    async def test_a_file_url_is_also_recognised_as_local(self) -> None:
+    async def test_a_file_url_is_treated_as_a_path(self) -> None:
         async with Client(create_server()) as client:
             result = await client.call_tool(
-                "porter_inspect", {"source": "file:///videos/a.mp4"}
+                "porter_probe", {"source": "file:///videos/a.mp4"}
             )
 
-        assert result.data["platform"] == "local"
+        assert result.data["kind"] == "local_video"
+        assert result.data["source"] == "/videos/a.mp4"
+
+    async def test_a_subtitle_file_is_recognised(self, tmp_path) -> None:
+        subtitle = tmp_path / "input.srt"
+        subtitle.write_text(
+            "1\n00:00:00,500 --> 00:00:02,500\nHello\n", encoding="utf-8"
+        )
+
+        async with Client(create_server()) as client:
+            result = await client.call_tool("porter_probe", {"source": str(subtitle)})
+
+        data = result.data
+        assert data["ok"] is True
+        assert data["kind"] == "subtitle"
+        assert data["tracks"][0]["verified"] is True
+        assert data["blockers"] == []
 
     async def test_a_genuine_fault_is_a_tool_error(self, fake_inspect) -> None:
         """A missing dependency is not a bad link, and must not look like one."""
@@ -661,13 +788,12 @@ class TestInspectTool:
         fake_inspect(PorterError("ffmpeg is not installed"))
 
         async with Client(create_server()) as client:
-            result = await client.call_tool("porter_inspect", {"source": "https://x.com/a/status/1"})
+            result = await client.call_tool("porter_probe", {"source": "https://x.com/a/status/1"})
 
         assert result.data["ok"] is False
         assert "ffmpeg" in result.data["error"]
 
     async def test_an_unresolvable_config_is_a_tool_error(self, monkeypatch) -> None:
-        from porter.core.config import PorterConfig  # noqa: F401  (imported for clarity)
         from porter.core.errors import PorterError
 
         def boom(explicit=None):
@@ -676,132 +802,16 @@ class TestInspectTool:
         monkeypatch.setattr("porter.core.config.resolve", boom)
 
         async with Client(create_server()) as client:
-            result = await client.call_tool("porter_inspect", {"source": "https://x.com/a/status/1"})
+            result = await client.call_tool("porter_probe", {"source": "https://x.com/a/status/1"})
 
         assert result.data["ok"] is False
         assert "could not be resolved" in result.data["error"]
 
 
-class TestInspectToolIntegration:
-    """The real ``inspect_url``, through the registry, with only yt-dlp faked.
+class TestProbeConcurrency:
+    """The LIGHT cap: cheap locally, not remotely."""
 
-    The shaping tests above prove the tool's own logic; this proves the tool is
-    actually wired to the engine rather than to a convenient stand-in.
-    """
-
-    @pytest.fixture
-    def ydl(self, monkeypatch):
-        from types import SimpleNamespace
-
-        from porter.core.platforms import inspector as inspector_module
-
-        state = SimpleNamespace(info=None, raises=None)
-
-        class FakeYDL:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *exc):
-                return False
-
-            def extract_info(self, url, download=False):
-                if state.raises is not None:
-                    raise state.raises
-                return state.info
-
-            def download(self, urls):  # pragma: no cover - inspection must not download
-                raise AssertionError("inspection must not download")
-
-        monkeypatch.setattr("porter.core.platforms.base.build_ydl", lambda *a, **k: FakeYDL())
-        # Zero the retry backoff so a failure test does not sleep 4.5 seconds.
-        monkeypatch.setattr(inspector_module, "BACKOFF_BASE_SECONDS", 0.0)
-        return state
-
-    @staticmethod
-    def _info(**overrides):
-        info = {
-            "id": "abc123",
-            "title": "A Real Probe",
-            "uploader": "Someone",
-            "duration": 125.0,
-            "width": 1920,
-            "height": 1080,
-            "formats": [{"vcodec": "avc1", "width": 1920, "height": 1080}],
-            "subtitles": {"en": [{"ext": "vtt"}]},
-            "webpage_url": "https://www.youtube.com/watch?v=abc123",
-        }
-        info.update(overrides)
-        return info
-
-    async def test_a_real_probe_reports_measured_facts(self, ydl, tmp_path, monkeypatch) -> None:
-        monkeypatch.chdir(tmp_path)
-        ydl.info = self._info()
-
-        async with Client(create_server()) as client:
-            result = await client.call_tool(
-                "porter_inspect", {"source": "https://www.youtube.com/watch?v=abc123"}
-            )
-
-        data = result.data
-        assert data["ok"] is True
-        assert data["platform"] == "youtube"
-        assert data["title"] == "A Real Probe"
-        assert (data["width"], data["height"]) == (1920, 1080)
-        assert data["is_vertical"] is False
-        assert data["has_subtitles"] is True
-        assert data["video_id"] == "abc123"
-
-    async def test_a_photo_carousel_is_reported_as_having_no_video(
-        self, ydl, tmp_path, monkeypatch
-    ) -> None:
-        """The v0.1 bug this guards: formats present but no video codec.
-
-        v0.1 computed ``has_video_stream``, used it for the rejection, then fell
-        through and returned ``is_valid=True, has_video=True`` anyway. A test with
-        ``formats: []`` could not see it.
-        """
-        monkeypatch.chdir(tmp_path)
-        ydl.info = self._info(formats=[{"vcodec": "none", "width": 1080, "height": 1080}])
-
-        async with Client(create_server()) as client:
-            result = await client.call_tool(
-                "porter_inspect", {"source": "https://www.youtube.com/watch?v=abc123"}
-            )
-
-        assert result.data["is_valid"] is False
-        assert "does not contain any video" in result.data["error_message"]
-
-    async def test_an_unsupported_host_names_the_supported_ones(self, ydl, tmp_path, monkeypatch) -> None:
-        monkeypatch.chdir(tmp_path)
-
-        async with Client(create_server()) as client:
-            result = await client.call_tool(
-                "porter_inspect", {"source": "https://example.com/v/1"}
-            )
-
-        assert result.data["is_valid"] is False
-        assert "youtube" in result.data["error_message"]
-
-    async def test_a_dead_link_is_not_retried_into_a_wall_of_text(
-        self, ydl, tmp_path, monkeypatch
-    ) -> None:
-        """A 404 returns at once with advice, not the raw yt-dlp error."""
-        monkeypatch.chdir(tmp_path)
-        ydl.raises = RuntimeError("ERROR: Video unavailable")
-
-        async with Client(create_server()) as client:
-            result = await client.call_tool(
-                "porter_inspect", {"source": "https://www.youtube.com/watch?v=abc123"}
-            )
-
-        assert result.data["is_valid"] is False
-        assert result.data["error_message"] == "Resource not found, deleted, or private (404)."
-
-
-class TestInspectConcurrency:
-    """§8.4's LIGHT cap: cheap locally, not remotely."""
-
-    async def test_inspections_are_capped(self, monkeypatch, tmp_path) -> None:
+    async def test_probes_are_capped(self, monkeypatch, tmp_path) -> None:
         """An agent fanning out must not open one socket per link.
 
         The bound is what is asserted, not the exact number: the cap exists to
@@ -811,7 +821,7 @@ class TestInspectConcurrency:
         import threading
 
         from porter.core.models.inspection import InspectionResult
-        from porter.core.platforms import inspector as inspector_module
+        from porter.core.workflow import probe as probe_module
         from porter.mcp import limits
 
         monkeypatch.chdir(tmp_path)
@@ -837,12 +847,12 @@ class TestInspectConcurrency:
                 has_video=True,
             )
 
-        monkeypatch.setattr(inspector_module, "inspect_url", slow)
+        monkeypatch.setattr(probe_module, "inspect_url", slow)
 
         async with Client(create_server()) as client:
             await asyncio.gather(
                 *(
-                    client.call_tool("porter_inspect", {"source": f"https://x.com/a/{i}"})
+                    client.call_tool("porter_probe", {"source": f"https://x.com/a/{i}"})
                     for i in range(limits.LIGHT_CONCURRENCY * 2)
                 )
             )
@@ -850,11 +860,94 @@ class TestInspectConcurrency:
         assert state["peak"] <= limits.LIGHT_CONCURRENCY, (
             f"peak concurrency {state['peak']} exceeded the cap"
         )
-        assert state["peak"] > 1, "inspections should still run in parallel"
+        assert state["peak"] > 1, "probes should still run in parallel"
+
+
+# ----------------------------------------------------------------------
+# Capabilities
+# ----------------------------------------------------------------------
+
+
+class TestCapabilitiesToolContract:
+    async def test_porter_capabilities_is_exposed(self) -> None:
+        async with Client(create_server()) as client:
+            names = {tool.name for tool in await client.list_tools()}
+        assert "porter_capabilities" in names
+
+    async def test_it_exposes_only_filters(self) -> None:
+        async with Client(create_server()) as client:
+            tool = next(
+                t for t in await client.list_tools() if t.name == "porter_capabilities"
+            )
+
+        assert set(tool.input_schema["properties"]) == {"stage", "available_only"}
+
+
+class TestCapabilitiesTool:
+    async def test_every_capability_is_listed(self) -> None:
+        from porter.core.workflow.capabilities import CAPABILITY_IDS
+
+        async with Client(create_server()) as client:
+            data = (await client.call_tool("porter_capabilities", {})).data
+
+        assert data["ok"] is True
+        assert data["count"] == len(CAPABILITY_IDS)
+        assert {item["id"] for item in data["capabilities"]} == set(CAPABILITY_IDS)
+
+    async def test_unavailable_capabilities_are_not_hidden(self) -> None:
+        """Hiding them erases "not installed" vs "not supported"."""
+        async with Client(create_server()) as client:
+            data = (await client.call_tool("porter_capabilities", {})).data
+
+        assert any(item["available"] is False for item in data["capabilities"])
+
+    async def test_paid_capabilities_are_marked_paid(self) -> None:
+        from porter.core.workflow.capabilities import TRANSLATE_LLM
+
+        async with Client(create_server()) as client:
+            data = (await client.call_tool("porter_capabilities", {})).data
+
+        paid = next(item for item in data["capabilities"] if item["id"] == TRANSLATE_LLM)
+        assert paid["cost"] == "paid"
+
+    async def test_a_stage_filter_narrows_the_catalog(self) -> None:
+        async with Client(create_server()) as client:
+            data = (
+                await client.call_tool("porter_capabilities", {"stage": "transcript"})
+            ).data
+
+        assert data["ok"] is True
+        assert data["capabilities"]
+        assert {item["stage"] for item in data["capabilities"]} == {"transcript"}
+
+    async def test_available_only_filters_missing_entries(self) -> None:
+        async with Client(create_server()) as client:
+            data = (
+                await client.call_tool(
+                    "porter_capabilities", {"available_only": True}
+                )
+            ).data
+
+        assert all(item["available"] is True for item in data["capabilities"])
+
+    async def test_an_unknown_stage_is_refused_by_name(self) -> None:
+        async with Client(create_server()) as client:
+            data = (
+                await client.call_tool("porter_capabilities", {"stage": "nope"})
+            ).data
+
+        assert data["ok"] is False
+        assert "unknown stage" in data["error"]
+        assert "transcript" in data["error"]
+
+
+# ----------------------------------------------------------------------
+# Plan
+# ----------------------------------------------------------------------
 
 
 class TestPlanTool:
-    """``porter_plan`` — the resolved execution plan, before committing compute."""
+    """``porter_plan`` -- the executable WorkflowPlan, before compute."""
 
     @pytest.fixture(autouse=True)
     def _in_a_temporary_directory(self, tmp_path, monkeypatch) -> None:
@@ -863,7 +956,7 @@ class TestPlanTool:
     @pytest.fixture
     def inspected(self, monkeypatch):
         from porter.core.models.inspection import InspectionResult
-        from porter.core.platforms import inspector as inspector_module
+        from porter.core.workflow import probe as probe_module
 
         def install(**overrides):
             fields = {
@@ -879,7 +972,7 @@ class TestPlanTool:
             }
             fields.update(overrides)
             monkeypatch.setattr(
-                inspector_module,
+                probe_module,
                 "inspect_url",
                 lambda url, c=None, **k: InspectionResult(**fields),
             )
@@ -887,11 +980,33 @@ class TestPlanTool:
         return install
 
     @pytest.fixture
-    def asr_available(self, monkeypatch):
-        from porter.core.asr.chain import AsrChain
+    def machine(self, monkeypatch):
+        """Make capability probing deterministic without touching the host."""
+        from porter.core.workflow import capabilities as caps
 
-        def install(entries):
-            monkeypatch.setattr(AsrChain, "availability", lambda self, ctx: list(entries))
+        def install(
+            *,
+            ffmpeg: bool = True,
+            ytdlp: bool = True,
+            whisper_local: bool = False,
+            whisper_api: bool = False,
+            translation: bool = True,
+        ) -> None:
+            monkeypatch.setattr(caps, "_probe_ffmpeg", lambda ctx: caps._Probe(ffmpeg, True))
+            monkeypatch.setattr(caps, "_probe_ytdlp", lambda: caps._Probe(ytdlp, True))
+            monkeypatch.setattr(
+                caps, "_probe_whisper_local", lambda ctx: caps._Probe(whisper_local, True)
+            )
+            monkeypatch.setattr(
+                caps, "_probe_whisper_api", lambda ctx: caps._Probe(whisper_api, True)
+            )
+            monkeypatch.setattr(
+                caps,
+                "_probe_translation",
+                lambda ctx, capability: caps._Probe(
+                    translation and capability != caps.TRANSLATE_LLM, True
+                ),
+            )
 
         return install
 
@@ -900,22 +1015,31 @@ class TestPlanTool:
             names = {tool.name for tool in await client.list_tools()}
         assert "porter_plan" in names
 
-    async def test_it_accepts_a_source_and_nothing_else(self) -> None:
-        """Options are deliberately not accepted.
-
-        The plan describes the default run. An agent that wants different flags
-        passes them to ``porter_job_start`` and reads the plan's phase list to know
-        what it is choosing between; accepting options here would mean two
-        frontends deriving a job's shape from two different places.
-        """
+    async def test_it_offers_planning_choices_but_no_cookies(self) -> None:
+        """An agent must be able to choose peers; credentials are CLI-only."""
         async with Client(create_server()) as client:
             tool = next(t for t in await client.list_tools() if t.name == "porter_plan")
 
-        assert set(tool.input_schema["properties"]) == {"source"}
+        properties = set(tool.input_schema["properties"])
+        assert {
+            "source",
+            "task",
+            "burn",
+            "target_lang",
+            "transcript",
+            "translate",
+            "render",
+            "allow_paid",
+            "output_dir",
+        } <= properties
+        assert "cookies" not in properties
+        assert "cookies_from_browser" not in properties
 
-    async def test_a_plan_reports_the_resolved_route(self, inspected, asr_available) -> None:
-        asr_available([("whisper-api", True)])
-        inspected(raw_info={"subtitles": {"en": [{}]}})
+    async def test_a_subtitled_url_plans_the_platform_track(
+        self, inspected, machine
+    ) -> None:
+        machine(whisper_local=True)
+        inspected(raw_info={"subtitles": {"en": [{"ext": "vtt"}]}})
 
         async with Client(create_server()) as client:
             result = await client.call_tool(
@@ -924,39 +1048,79 @@ class TestPlanTool:
 
         data = result.data
         assert data["ok"] is True
+        assert data["schema_version"] == 1
+        assert data["plan_id"].startswith("sha256:")
         assert data["feasible"] is True
-        assert data["subtitles"]["route"] == "platform"
-        assert data["subtitles"]["asr_runs"] is False
-        assert data["platform"] == "youtube"
+        assert data["workflow"] == "url.subtitled"
+        transcript = next(stage for stage in data["stages"] if stage["stage"] == "transcript")
+        assert transcript["capability"] == "transcript.platform-track"
+        assert data["source_probe"]["platform"] == "youtube"
 
-    async def test_it_reports_where_the_artifacts_will_land(self, inspected, asr_available) -> None:
-        """So "where did it go?" needs no second call, and it is not a guess."""
-        asr_available([("whisper-api", True)])
-        inspected(raw_info={"subtitles": {"en": [{}]}})
+    async def test_an_asr_url_plans_one_named_capability(
+        self, inspected, machine
+    ) -> None:
+        machine(whisper_local=True)
+        inspected(raw_info={})
 
         async with Client(create_server()) as client:
             result = await client.call_tool(
                 "porter_plan", {"source": "https://www.youtube.com/watch?v=abc"}
             )
 
-        assert result.data["output_dir"]
+        data = result.data
+        assert data["ok"] is True
+        assert data["workflow"] == "url.asr"
+        transcript = next(stage for stage in data["stages"] if stage["stage"] == "transcript")
+        assert transcript["capability"] == "transcript.whisper-local"
 
-    async def test_a_local_file_plans_asr(self, asr_available) -> None:
-        asr_available([("whisper-api", True)])
+    async def test_a_requested_unavailable_capability_blocks(
+        self, inspected, machine
+    ) -> None:
+        """A named peer is never replaced by another one."""
+        machine(whisper_local=False, whisper_api=True)
+        inspected(raw_info={})
 
         async with Client(create_server()) as client:
-            result = await client.call_tool("porter_plan", {"source": "/videos/a.mp4"})
+            result = await client.call_tool(
+                "porter_plan",
+                {
+                    "source": "https://www.youtube.com/watch?v=abc",
+                    "transcript": "whisper-local",
+                    "allow_paid": True,
+                },
+            )
 
-        assert result.data["kind"] == "local"
-        assert result.data["subtitles"]["route"] == "asr"
+        data = result.data
+        assert data["ok"] is True
+        assert data["feasible"] is False
+        issue = data["issues"][0]
+        assert issue["code"] == "CAPABILITY_UNAVAILABLE"
+        assert issue["alternatives"] == ["transcript.whisper-api"]
 
-    async def test_an_unusable_link_is_a_successful_call(self, inspected, asr_available) -> None:
-        """Same contract as ``porter_inspect``: the call worked, the link is bad.
+    async def test_a_subtitle_file_plans_subtitle_only(
+        self, tmp_path, machine
+    ) -> None:
+        source = tmp_path / "input.srt"
+        source.write_text(
+            "1\n00:00:00,500 --> 00:00:02,500\nHello\n", encoding="utf-8"
+        )
+        machine()
 
-        And unlike inspection, this one says what it means for the job -- which is
-        the entire reason both tools exist.
-        """
-        asr_available([("whisper-api", True)])
+        async with Client(create_server()) as client:
+            result = await client.call_tool("porter_plan", {"source": str(source)})
+
+        data = result.data
+        assert data["ok"] is True
+        assert data["feasible"] is True
+        assert data["workflow"] == "subtitle.only"
+        transcript = next(stage for stage in data["stages"] if stage["stage"] == "transcript")
+        assert transcript["capability"] == "transcript.supplied"
+
+    async def test_an_unusable_link_is_a_successful_call(
+        self, inspected, machine
+    ) -> None:
+        """Same contract as ``porter_probe``: the call worked, the link is bad."""
+        machine(whisper_local=True)
         inspected(
             is_valid=False,
             has_video=False,
@@ -970,11 +1134,12 @@ class TestPlanTool:
 
         assert result.data["ok"] is True
         assert result.data["feasible"] is False
-        assert "404" in result.data["blocking_issues"][0]
+        assert result.data["blockers"][0]["code"] == "SOURCE_UNUSABLE"
+        assert "404" in result.data["blockers"][0]["message"]
 
-    async def test_a_job_that_cannot_finish_is_flagged(self, inspected, asr_available) -> None:
+    async def test_no_transcript_route_is_flagged(self, inspected, machine) -> None:
         """The prediction the tool exists for: not after thirty minutes of encoding."""
-        asr_available([("whisper-api", False), ("videocaptioner", False)])
+        machine(whisper_local=False, whisper_api=False)
         inspected(raw_info={})
 
         async with Client(create_server()) as client:
@@ -982,16 +1147,29 @@ class TestPlanTool:
                 "porter_plan", {"source": "https://www.youtube.com/watch?v=abc"}
             )
 
+        assert result.data["ok"] is True
         assert result.data["feasible"] is False
-        assert "TRANSCRIBE will fail" in result.data["blocking_issues"][0]
+        assert result.data["blockers"][0]["code"] == "NO_CAPABILITY"
+        assert result.data["blockers"][0]["fix"]
+
+    async def test_a_bad_burn_mode_is_reported_as_data(self, machine) -> None:
+        machine()
+
+        async with Client(create_server()) as client:
+            result = await client.call_tool(
+                "porter_plan", {"source": "/videos/a.mp4", "burn": "nonsense"}
+            )
+
+        assert result.data["ok"] is False
+        assert "nonsense" in result.data["error"]
 
     async def test_a_genuine_fault_is_a_tool_error(self, monkeypatch) -> None:
         from porter.core.errors import PorterError
 
-        def boom(source, options=None, ctx=None):
+        def boom(source, **choices):
             raise PorterError("ffmpeg is not installed")
 
-        monkeypatch.setattr("porter.core.plan.plan_for", boom)
+        monkeypatch.setattr("porter.mcp.tools.planning.plan_for", boom)
 
         async with Client(create_server()) as client:
             result = await client.call_tool("porter_plan", {"source": "/videos/a.mp4"})
@@ -1005,7 +1183,7 @@ class TestPlanTool:
         def boom(explicit=None):
             raise PorterError("config file is not valid JSON")
 
-        monkeypatch.setattr("porter.core.config.resolve", boom)
+        monkeypatch.setattr("porter.mcp.tools.planning.resolve", boom)
 
         async with Client(create_server()) as client:
             result = await client.call_tool("porter_plan", {"source": "/videos/a.mp4"})
@@ -1015,7 +1193,7 @@ class TestPlanTool:
 
 
 class TestSharedConcurrencyLimits:
-    """§8.4's caps live in one module, so a tool cannot invent its own."""
+    """The caps live in one module, so a tool cannot invent its own."""
 
     def test_the_limits_are_declared_once(self) -> None:
         from porter.mcp import limits
@@ -1024,12 +1202,12 @@ class TestSharedConcurrencyLimits:
         assert limits.LIGHT_CONCURRENCY == 4
 
     def test_every_network_probe_shares_the_light_cap(self) -> None:
-        """Inspection and planning both hit the network; one cap covers both."""
+        """Probing and planning both hit the network; one cap covers both."""
         from porter.mcp import limits
-        from porter.mcp.tools import inspect as inspect_module
         from porter.mcp.tools import plan as plan_module
+        from porter.mcp.tools import probe as probe_module
 
-        assert inspect_module.LIGHT is limits.LIGHT
+        assert probe_module.LIGHT is limits.LIGHT
         assert plan_module.LIGHT is limits.LIGHT
 
     def test_jobs_share_the_heavy_cap(self) -> None:

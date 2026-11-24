@@ -1,33 +1,44 @@
-# 管线
+# 工作流与管线
 
-`porter.core.pipeline.Pipeline` 只负责**顺序**。每个阶段委托给
-`porter.core.ports` 里的一个协议，因此同一套编排可以用真实后端跑生产，
-也可以用假后端跑测试。
+Porter 的编排分为两层：
 
-## 四个阶段
+- **上层工作流（`porter.core.workflow`）**：所有前端（CLI、MCP、WebUI）的统一入口。
+  按源事实从 6 条工作流中选定一条（`url.subtitled`、`url.asr`、`local.subtitled`、
+  `local.asr`、`subtitle.only`、`audio.asr`），把作业拆成 7 个逻辑阶段，并为每个阶段
+  选定**恰好一个对等能力**（无运行期跨能力回退）。
+- **底层媒体管线（`porter.core.pipeline.Pipeline`）**：负责媒体类作业的四阶段顺序执行。
+  每个阶段委托给 `porter.core.ports` 里的一个协议，因此同一套编排可以用真实后端跑生产，
+  也可以用假后端跑测试。`subtitle.only` 工作流直接读字幕、翻译、写产物，不经过 `Pipeline`。
+
+## 七个逻辑阶段与四个执行阶段
 
 ```
-prepare → transcribe → translate → burn
+工作流阶段：probe → acquire → normalize → transcript → translate → write → render
+执行事件期：          └─── prepare ───┘   transcribe    └── translate ──┘   burn
 ```
 
-| 阶段 | 做什么 | 主要产物 |
-| --- | --- | --- |
-| `prepare` | 获取媒体、标准化母版、提取音轨、增强、探测画幅、取封面与平台字幕 | `raw/video.mp4`、`raw/audio.wav`、`raw/audio_enhanced.wav`、`raw/metadata.json` |
-| `transcribe` | 取平台原生字幕轨，或走 ASR 回退链 | `raw/subtitle.srt`、`raw/transcript.json`、`raw/transcript.txt` |
-| `translate` | 句子级翻译、碎片重构、生成双语/中文轨 | `cooked/subtitle_bilingual.{srt,ass}`、`cooked/subtitle_zh.{srt,ass}` |
-| `burn` | 用 libass 烧录硬字幕 | `cooked/video_bilingual.mp4`、`cooked/video_zh.mp4` |
+| 执行阶段 | 对应工作流阶段 | 做什么 | 主要产物 |
+| --- | --- | --- | --- |
+| `prepare` | `acquire` + `normalize` | 获取媒体、标准化母版、提取 16 kHz 单声道音轨、增强、探测画幅、取封面与平台字幕 | `raw/video.mp4`、`raw/audio.wav`、`raw/audio_enhanced.wav`、`raw/metadata.json` |
+| `transcribe` | `transcript` | 按计划选定的单一转录能力执行（平台字幕轨、供字幕或指定 ASR），不做运行期跨能力回退 | `raw/subtitle.srt`、`raw/transcript.json`、`raw/transcript.txt` |
+| `translate` | `translate` + `write` | 用计划选定的单一翻译能力做句子级翻译、碎片重构，写出双语/中文 SRT 与 ASS | `cooked/subtitle_bilingual.{srt,ass}`、`cooked/subtitle_zh.{srt,ass}` |
+| `burn` | `render` | 用 libass 烧录硬字幕 | `cooked/video_bilingual.mp4`、`cooked/video_zh.mp4` |
 
 每个阶段消费上一阶段的内存结果，同时把自己的产物写到磁盘。失败时已完成的阶段
-不会白跑，这是阶段复用和 `--only-phase` 语义的基础。
+不会白跑，这是阶段复用与 `--task` 截断的基础。
 
 ## 阶段复用与 `--force`
 
-每个阶段在开始前检查自己的产物是否已经存在且可用；可用就跳过实际工作。
+每个阶段在开始前检查自己的产物是否已经存在且可用；`transcript` 复用时还会校验
+产物来源前缀（`origin_prefix`），避免上一次不同能力产生的字幕被错误复用。
 `--force` 是唯一关闭复用的开关：它让所有阶段重新执行，而不是“从断点继续”。
 
 注意：`--force` **不启用**“只用磁盘产物跳到某个阶段”的功能。后者尚未实现。
 
-## `--only-phase` 是“到此为止”
+## 任务截断（`--task`）与底层 `--only-phase`
+
+面向工作流的截断参数是 `--task`（`probe` / `audio` / `transcribe` / `subtitle` / `release`），
+它按阶段截断计划，不负责切换后端。底层 `Pipeline` 仍保留 `--only-phase` 语义：
 
 因为每个阶段需要上一阶段的输出，`--only-phase translate` 仍会执行
 `prepare` 和 `transcribe`。它表达的是“做完这个阶段就停”。
@@ -76,11 +87,12 @@ prepare → transcribe → translate → burn
 - MCP 映射为 `JobState.CANCELLED`；
 - 长跑子进程会注册句柄，被尽快终止。
 
-取消不是后端失败：ASR/翻译链看到 `JobCancelled` 会立即停止，而不是尝试下一个
-后端。
+取消不是后端失败：遇到 `JobCancelled` 会立即向上传播并停止，不做重试。
 
 ## 失败如何返回
 
-`Pipeline.run()` 对**预期失败**不抛异常：错误被捕获成 `JobResult.error`
-（`ErrorInfo`），状态为 `FAILED`，这样 MCP 可以把失败当数据返回，而不是让
-工具调用崩溃。真正的编程错误（例如端口返回了不可能的状态）仍会向上抛。
+`execute_plan()` 与 `Pipeline.run()` 对**预期失败**不抛异常：错误被捕获成
+`WorkflowResult.error`（`StageError`，附带 `stage`、`capability`、`alternatives`、
+`suggested_workflow`）与 `JobResult.error`（`ErrorInfo`），状态为 `FAILED`，这样 CLI、
+MCP 与 WebUI 都能把失败当结构化数据返回，供调用方或 Agent 重新 `plan`。真正的编程错误
+（例如端口返回了不可能的状态）仍会向上抛。

@@ -35,6 +35,7 @@ actually needs, so ``--burn skip`` works on a machine with no libass.
 """
 
 from porter.core.doctor.guides import GUIDES, Remediation, guide_for
+from porter.core.doctor.payload import report_payload
 from porter.core.doctor.probes import (
     CapabilityReport,
     Finding,
@@ -52,4 +53,5 @@ __all__ = [
     "Severity",
     "guide_for",
     "probe_all",
+    "report_payload",
 ]

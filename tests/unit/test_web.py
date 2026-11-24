@@ -243,3 +243,161 @@ class TestSettingsTabAssembly:
         assert len(res) == len(outputs) == 21
         assert res[-2] == "chrome"
         assert res[-1] == "/path/to/cookies.txt"
+
+    def test_asr_engine_choices_are_capabilities_not_legacy_clis(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The old VideoCaptioner route is gone; only real capabilities remain."""
+        target = tmp_path / "config.json"
+        monkeypatch.setattr(config_io, "get_config_target", lambda: target)
+
+        fake_gr = MagicMock()
+        app.build_settings_tab(fake_gr)
+
+        choices = [
+            choice
+            for call in fake_gr.Dropdown.call_args_list
+            for choice in (call.kwargs.get("choices") or [])
+        ]
+        values = {choice[1] if isinstance(choice, tuple) else choice for choice in choices}
+        assert "videocaptioner" not in values
+        assert {"whisper-local", "whisper-api"} <= values
+
+
+class TestWorkbenchPlanHelpers:
+    def test_any_planning_control_change_invalidates_the_plan_key(self) -> None:
+        from porter.webui.tabs.workbench import _plan_key
+
+        base = ("https://youtu.be/x", "release", "dual", "", "", "zh-Hans", "", False)
+        variants = [
+            ("https://youtu.be/y", "release", "dual", "", "", "zh-Hans", "", False),
+            ("https://youtu.be/x", "subtitle", "dual", "", "", "zh-Hans", "", False),
+            ("https://youtu.be/x", "release", "skip", "", "", "zh-Hans", "", False),
+            ("https://youtu.be/x", "release", "dual", "whisper-local", "", "zh-Hans", "", False),
+            ("https://youtu.be/x", "release", "dual", "", "bing", "zh-Hans", "", False),
+            ("https://youtu.be/x", "release", "dual", "", "", "en", "", False),
+            ("https://youtu.be/x", "release", "dual", "", "", "zh-Hans", "a.srt", False),
+            ("https://youtu.be/x", "release", "dual", "", "", "zh-Hans", "", True),
+        ]
+        keys = {_plan_key(*base), *(_plan_key(*variant) for variant in variants)}
+        assert len(keys) == len(variants) + 1
+
+    def test_planning_takes_cookies_from_config_not_from_the_form(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from porter.core.config import PorterConfig
+        from porter.webui.tabs import workbench
+
+        cookies = tmp_path / "cookies.txt"
+        config = PorterConfig(
+            output_dir=tmp_path,
+            cookies_file=cookies,
+            cookies_browser="chrome",
+        )
+        monkeypatch.setattr(workbench, "resolve", lambda explicit=None: config)
+
+        captured: dict[str, object] = {}
+
+        def fake_resolve_plan(source: str, overrides: object, ctx: object) -> object:
+            captured["source"] = source
+            captured["overrides"] = overrides
+            captured["ctx"] = ctx
+            return MagicMock()
+
+        monkeypatch.setattr(workbench, "resolve_plan", fake_resolve_plan)
+
+        workbench._resolve_plan(
+            "https://youtu.be/x",
+            task="release",
+            burn="dual",
+            transcript="whisper-local",
+            translate="bing",
+            target_lang="zh-Hans",
+            subtitle_file="",
+            allow_paid=True,
+        )
+
+        overrides = captured["overrides"]
+        assert overrides.cookies_file == cookies  # type: ignore[attr-defined]
+        assert overrides.cookies_browser == "chrome"  # type: ignore[attr-defined]
+        assert overrides.transcript == "whisper-local"  # type: ignore[attr-defined]
+        assert overrides.translate == "bing"  # type: ignore[attr-defined]
+        assert overrides.allow_paid is True  # type: ignore[attr-defined]
+        assert overrides.output_dir == tmp_path  # type: ignore[attr-defined]
+        assert captured["source"] == "https://youtu.be/x"
+
+    def test_plan_key_tracks_force_translate_and_force(self) -> None:
+        from porter.webui.tabs.workbench import _plan_key
+
+        base = _plan_key("https://youtu.be/x", "release", "dual", "", "", "zh-Hans", "", False)
+        ft = _plan_key(
+            "https://youtu.be/x",
+            "release",
+            "dual",
+            "",
+            "",
+            "zh-Hans",
+            "",
+            False,
+            force_translate=True,
+        )
+        fr = _plan_key(
+            "https://youtu.be/x",
+            "release",
+            "dual",
+            "",
+            "",
+            "zh-Hans",
+            "",
+            False,
+            force=True,
+        )
+        assert len({base, ft, fr}) == 3
+
+    def test_i18n_zh_and_en_keys_stay_in_parity(self) -> None:
+        from porter.webui.i18n import TRANSLATIONS_EN, TRANSLATIONS_ZH
+
+        assert set(TRANSLATIONS_ZH) == set(TRANSLATIONS_EN)
+
+    def test_saving_blank_cookies_writes_null_not_empty_string(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        target = tmp_path / "config.json"
+        monkeypatch.setattr(config_io, "get_config_target", lambda: target)
+
+        fake_gr = MagicMock()
+        app.build_settings_tab(fake_gr)
+
+        save_fn = None
+        for call in fake_gr.Button.return_value.click.call_args_list:
+            fn = call.args[0]
+            if getattr(fn, "__name__", "") == "on_save_form":
+                save_fn = fn
+                break
+        assert save_fn is not None
+
+        save_fn(
+            "",
+            "https://api.deepseek.com/v1",
+            "deepseek-chat",
+            "",
+            "small",
+            True,
+            "",
+            "https://api.openai.com/v1",
+            "Microsoft YaHei",
+            "Arial",
+            52,
+            34,
+            3.5,
+            1.5,
+            90,
+            35,
+            "",
+            "",
+        )
+        import json
+
+        saved = json.loads(target.read_text(encoding="utf-8"))
+        assert saved["cookies_browser"] is None
+        assert saved["cookies_file"] is None

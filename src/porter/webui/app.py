@@ -16,6 +16,7 @@ from typing import Any
 from porter.core.config import PorterConfig
 from porter.core.jobs.records import JobRegistry
 from porter.core.jobs.store import JobStore
+from porter.core.logging import configure as configure_logging
 from porter.core.logging import get_logger
 from porter.webui.config_io import (
     get_config_target,
@@ -93,6 +94,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=7860, help="Port to listen on (default: 7860)")
     parser.add_argument("--share", action="store_true", help="Create a public Gradio share link")
     args = parser.parse_args(argv)
+    configure_logging("info")
 
     gr = check_gradio_installed()
     i18n = create_i18n(gr)

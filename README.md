@@ -15,30 +15,67 @@
   <img src="https://raw.githubusercontent.com/RolinShmily/porter-workflow/main/docs/images/preview.webp" alt="Porter Workflow: video input, media preparation, subtitle extraction, translation, and subtitled video delivery" width="1200">
 </p>
 
-**Porter Workflow** takes a video URL or a local file and produces a localized
-release: a standardized asset bundle, bilingual and Chinese-only subtitles, and
-hard-subbed MP4s.
+**Porter Workflow** turns a video URL, a local video, an audio file or a subtitle
+file into a localized release: a standardized asset bundle, bilingual and
+Chinese-only subtitles, and hard-subbed MP4s. It is built agent-first: every
+run is preceded by an executable plan that says exactly what will happen.
 
 ## How it works
 
 ```text
-URL / local file
+URL / local video / audio / subtitle
       │
       ▼
-PREPARE     download, standardize, fetch platform subtitles, extract audio
-      │
-      ▼
-TRANSCRIBE  use the platform's subtitle track, or run speech recognition
-      │
-      ▼
-TRANSLATE   produce target-language subtitles (default: zh-Hans)
-      │
-      ▼
-BURN        render bilingual / Chinese-only hard-subbed MP4s
+PROBE       identify the source, platform and subtitle tracks
+ACQUIRE     download, copy the local file, or load the supplied subtitles
+NORMALIZE   H.264/AAC master + 16 kHz mono audio (skipped for subtitles)
+TRANSCRIPT  platform track, supplied subtitle, local Whisper, or Whisper API
+TRANSLATE   one translation capability (free endpoints first)
+WRITE       SRT + ASS for bilingual and target-only tracks
+RENDER      bilingual / Chinese-only hard-subbed MP4s
 ```
 
-Completed phases are reused on a rerun. `--force` redoes them, `--only-phase`
-stops after one, and `--burn skip` stops before encoding.
+`--task` stops after a meaningful result: `probe`, `audio`, `transcribe`,
+`subtitle`, `release` (default), or `convert`. `--burn skip` plans the
+subtitles without encoding video.
+
+### Workflows
+
+The resolver picks one workflow from the source, not a fallback chain:
+
+| Workflow | When |
+| --- | --- |
+| `url.subtitled` | A URL whose platform lists a subtitle track |
+| `url.asr` | A URL with no usable track — recognition runs |
+| `local.subtitled` | A local video with a supplied subtitle file |
+| `local.asr` | A local video or audio file — recognition runs |
+| `subtitle.only` | A `.srt` / `.vtt` input; translate and rewrite, no video |
+| `audio.asr` | An audio input; transcribe, translate, write |
+
+### One capability per stage
+
+Each stage has peer capabilities, and the plan names exactly one of them:
+
+| Stage | Capabilities (free unless marked) |
+| --- | --- |
+| probe | `probe.ytdlp`, `probe.ffprobe`, `probe.subtitle` |
+| acquire | `acquire.ytdlp-video`, `acquire.ytdlp-audio`, `acquire.ytdlp-subs`, `acquire.local` |
+| normalize | `normalize.ffmpeg` |
+| transcript | `transcript.platform-track`, `transcript.supplied`, `transcript.whisper-local`, `transcript.whisper-api` (paid, audio egress) |
+| translate | `translate.bing`, `translate.google`, `translate.mymemory`, `translate.llm` (paid, text egress) |
+| write | `write.subtitles` |
+| render | `render.ffmpeg-libass` |
+
+There is **no runtime fallback between capabilities**. If the chosen capability
+fails, the run reports `alternatives` and `suggested_workflow`; replan with a
+different choice. A capability named explicitly on the command line is the only
+one planned, so an unavailable choice blocks the plan instead of being silently
+replaced.
+
+Paid capabilities are only selected when named explicitly or when `--allow-paid`
+is passed. A key in the environment is not consent. `porter capabilities` marks
+each entry `available` / `MISSING`, its cost, and whether audio or text leaves
+the machine.
 
 ### Supported platforms
 
@@ -47,67 +84,18 @@ stops after one, and `--burn skip` stops before encoding.
 | YouTube | `youtube.com`, `youtu.be` | Yes |
 | Bilibili | `bilibili.com`, `b23.tv`, `bilibili.tv` | Yes (CC may require cookies) |
 | TikTok | `tiktok.com`, `vm.tiktok.com` | Yes |
-| X / Twitter | `x.com`, `twitter.com` | No — ASR runs |
-| Instagram | `instagram.com` | No — ASR runs |
-| Local file | any readable path | No — ASR or `--subtitle-file` |
+| X / Twitter | `x.com`, `twitter.com` | No — the ASR workflow is planned |
+| Instagram | `instagram.com` | No — the ASR workflow is planned |
+| Local file | any readable path | Only via `--subtitle-file` |
 
 Downloads go through yt-dlp, so other sites it supports may work, but only these
-platforms have explicit specs. A native track is *requested*, not guaranteed:
-rate limiting can make the fetch fail, and the ASR chain then takes over.
-
-## Backends by phase
-
-### PREPARE
-
-- **URL** — yt-dlp download; **local file** — used in place.
-- **FFmpeg** normalizes video to H.264/AAC and audio to 16 kHz mono.
-- **Deno** (or Node ≥ 20) is recommended for YouTube's JS challenges.
-
-### TRANSCRIBE
-
-| Route | Requires | Notes |
-| --- | --- | --- |
-| Platform subtitles | — | Free and exact; preferred when the platform provides them |
-| `whisper-local` | `[asr-local]` extra | Key-free and offline after the model downloads; tried first |
-| `whisper-api` | `[llm]` extra + API key | Any OpenAI-compatible `/audio/transcriptions` endpoint |
-| `videocaptioner` | External CLI, installed by you | GPL-3.0 and `python<3.13`, so never a declared dependency |
-| `--subtitle-file FILE` | A local SRT | Explicit source track; skips platform tracks and ASR |
-
-The first available backend wins. `--asr-engine NAME` moves a named backend to
-the front but keeps the rest as fallbacks. A Chinese platform track skips the
-translation phase entirely.
-
-### TRANSLATE
-
-| Backend | Requires | Notes |
-| --- | --- | --- |
-| `llm` | `[llm]` extra + API key | Best quality; can also repair transcription errors |
-| `bing` | Nothing | Key-free endpoint |
-| `google` | Nothing | Key-free endpoint |
-| `mymemory` | Nothing | Key-free public API |
-| `videocaptioner-llm` | External CLI | GPL-3.0, installed by you |
-| `videocaptioner` | External CLI | GPL-3.0, installed by you |
-
-The first backend that produces usable text wins. For a Chinese target, a
-response without CJK characters is rejected and the next backend is tried.
-`--translator NAME` promotes a backend to the front, like `--asr-engine`.
-`--target-lang` defaults to `zh-Hans`.
-
-### BURN
-
-| Mode | Output |
-| --- | --- |
-| `dual` (default) | `video_bilingual.mp4` + `video_zh.mp4` |
-| `zh_only` | `video_zh.mp4` |
-| `bilingual_only` | `video_bilingual.mp4` |
-| `skip` | Subtitles only, no video encoding |
-
-Burning requires **FFmpeg with libass**. Fonts, sizes, colors, margins and fades
-are configurable under the `style` section.
+platforms have explicit specs. A platform track is *requested, not guaranteed*:
+rate limiting can make the fetch fail, and the job then reports the failure and
+its alternatives instead of quietly switching engines.
 
 ## Install
 
-Requires **Python ≥ 3.11**.
+Requires **Python 3.11–3.13**.
 
 System dependencies (not Python packages, must be on `PATH`):
 
@@ -117,47 +105,52 @@ System dependencies (not Python packages, must be on `PATH`):
 | **Deno** (recommended) | YouTube downloads | yt-dlp ≥ 2025.11.12 needs an external JS runtime; Node ≥ 20 also works |
 
 ```bash
-# Recommended: local, key-free, offline transcription
+# Core: download, platform subtitles, free translation, hardsub
+uvx --from porter-workflow porter "<URL>"
+
+# Add local, key-free, offline speech recognition
 uvx --from "porter-workflow[asr-local]" porter "<URL>"
 
-# Every optional backend, including WebUI support
+# Everything, including the MCP server and the WebUI
 uvx --from "porter-workflow[all]" porter "<URL>"
 
-# WebUI workbench
-uvx --from "porter-workflow[web]" porter-web
-
-# Persistent install
-pipx install "porter-workflow[all]"
-
-# Check the environment
-porter doctor
+# Check the environment before the first job
+uvx --from porter-workflow porter doctor
 ```
 
 | Extra | Adds | Enables |
 | --- | --- | --- |
-| `[asr-local]` | `faster-whisper` | Local Whisper — key-free and offline |
-| `[llm]` | `openai`, `json-repair` | LLM translation + Whisper API ASR |
+| `[asr-local]` | `faster-whisper` | `transcript.whisper-local` — key-free and offline |
+| `[llm]` | `openai`, `json-repair` | `translate.llm` + `transcript.whisper-api` |
 | `[images]` | `pillow` | Cover image handling |
 | `[mcp]` | `fastmcp` | The `porter-mcp` server |
 | `[web]` | `gradio` | The `porter-web` workbench |
 | `[all]` | all of the above | — |
 
-A minimal install without `[asr-local]` or `[llm]` can download and translate,
-but cannot transcribe unless a platform subtitle track exists or the external
-VideoCaptioner CLI is installed. `porter doctor` reports the route a job will
-actually take.
+The core install can localize a URL with a platform subtitle track, translate it
+with a key-free endpoint, and burn it. Extras add capabilities; they do not
+change the workflow model. `porter doctor` and `porter capabilities` report what
+the current environment can actually run.
 
 ## Usage
 
 ```bash
-porter inspect "<URL>"              # Inspect a link without downloading
-porter plan "<URL>"                 # Show the exact route and expected failures
-porter "<URL>"                      # Full pipeline
-porter "<URL>" -o ./porter_output   # Choose the output directory
-porter "<URL>" --burn skip          # Subtitles only
-porter doctor                       # Diagnose the environment
-porter config list                  # Show resolved config (secrets masked)
+porter capabilities                 # what can this installation execute?
+porter probe "<URL>"                # source facts, no plan, no download
+porter plan "<URL>"                 # resolved workflow, capabilities, blockers
+porter plan "<URL>" --json > plan.json
+porter run --plan plan.json         # execute exactly that plan
+porter run "<URL>"                  # resolve and execute in one step
+porter run "<URL>" -o ./output      # choose the output directory
+porter run "<URL>" --task subtitle  # subtitles only, no video encode
+porter doctor                       # diagnose the environment
+porter config list                  # show resolved config (secrets masked)
 ```
+
+`porter plan` is authoritative: it probes the source, probes the machine, and
+reports which single capability would run each stage, its cost and egress, and
+any blocker with a `fix`. Plans are reproducible, so `plan --json` followed by
+`run --plan` is the recommended contract for agents and scripts.
 
 ### Output layout
 
@@ -171,26 +164,32 @@ porter config list                  # Show resolved config (secrets masked)
 │   ├── subtitle.srt              platform-provided source subtitles, if any
 │   ├── cover.jpg
 │   └── metadata.json
-└── cooked/
-    ├── subtitle_bilingual.{srt,ass}
-    ├── subtitle_zh.{srt,ass}
-    ├── video_bilingual.mp4
-    └── video_zh.mp4
+├── cooked/
+│   ├── subtitle_bilingual.{srt,ass}
+│   ├── subtitle_zh.{srt,ass}
+│   ├── video_bilingual.mp4
+│   └── video_zh.mp4
+└── .tmp/                         scratch, safe to delete between runs
 ```
 
 ### Frontends
 
 | Frontend | Command | For |
 | --- | --- | --- |
-| CLI | `porter` | Humans and shell scripts |
-| MCP | `uvx --from "porter-workflow[mcp]" porter-mcp` | AI agents over stdio JSON-RPC |
-| WebUI | `uvx --from "porter-workflow[web]" porter-web` | Humans and agents using the HITL workbench |
-| Agent Skill | `npx skills add RolinShmily/porter-workflow` | Agents using the Agent Skills spec |
+| CLI | `porter` | Humans, scripts, and the canonical plan contract |
+| MCP | `uvx --from "porter-workflow[mcp]" porter-mcp` | Agents over stdio JSON-RPC |
+| WebUI | `uvx --from "porter-workflow[web]" porter-web` | Humans using the plan workbench and HITL |
+| Agent Skill | `npx skills add RolinShmily/porter-workflow` | Agents following the SOP |
 
-All four call the same engine. MCP setup details are in
-[`skills/porter-skill/references/MCP.md`](skills/porter-skill/references/MCP.md);
-restricted Windows hosts are covered in
-[`skills/porter-skill/references/HOSTS.md`](skills/porter-skill/references/HOSTS.md).
+All four use the same `WorkflowPlan` / `WorkflowResult` model. MCP resolves a
+plan with `porter_plan` and starts it with `porter_job_start(plan=...)`; the
+WebUI displays the plan JSON and executes the same plan. None of them has a
+second pipeline or a runtime fallback chain. Setup details:
+
+- [`skills/porter-skill/SKILL.md`](skills/porter-skill/SKILL.md) — the SOP
+- [`skills/porter-skill/references/PLAN.md`](skills/porter-skill/references/PLAN.md) — plan/result fields and issue codes
+- [`skills/porter-skill/references/MCP.md`](skills/porter-skill/references/MCP.md) — MCP tools and call order
+- [`skills/porter-skill/references/WEBUI.md`](skills/porter-skill/references/WEBUI.md) — WebUI workbench
 
 ## Configuration
 
@@ -206,11 +205,15 @@ Resolved in this order, highest priority first:
 | Section | Keys | Purpose |
 | --- | --- | --- |
 | top level | `output_dir`, `cookies_file`, `cookies_browser` | Output location and gated-media access |
-| `llm` | `api_key`, `api_base`, `model` | LLM translation, refinement and Whisper API fallback |
-| `asr` | `engine`, `language`, `audio_denoise`, `whisper_local_model`, `whisper_local_device`, `whisper_local_compute_type`, `whisper_api_key`, `whisper_api_base`, `whisper_model` | Speech recognition |
-| `refine` | `enabled`, `model` | LLM transcript cleanup before translation |
+| `llm` | `api_key`, `api_base`, `model` | Explicit `translate.llm` and `transcript.whisper-api` |
+| `asr` | `engine`, `language`, `audio_denoise`, `whisper_local_model`, `whisper_local_device`, `whisper_local_compute_type`, `whisper_api_key`, `whisper_api_base`, `whisper_model` | Recognition defaults and preferences |
+| `refine` | `enabled`, `model` | Optional LLM transcript cleanup |
 | `ffmpeg` | `ffmpeg_path`, `ffprobe_path`, `video_codec`, `preset`, `crf`, `pixel_format`, `audio_codec`, `audio_bitrate`, `audio_sample_rate`, `wav_sample_rate`, `auto_tune` | Encoding and hardware tuning |
 | `style` | `zh_font`, `en_font`, sizes, colors, `outline_*`, `shadow`, `margin_*`, `fade_*` | ASS subtitle appearance |
+
+`asr.engine` is a *preference* for automatic selection, not a paid consent and
+not a requirement to run ASR. A workflow only runs recognition when the plan
+says so.
 
 ```bash
 porter config list                     # Effective values + source, secrets masked
@@ -226,7 +229,8 @@ The complete key table, defaults and examples are in
 
 Development needs **Python 3.11–3.13**, **uv**, **FFmpeg + libass**, and
 **Deno** or **Node ≥ 20**. The runtime dependencies are `yt-dlp[default]`,
-`requests`, `pydantic` and `platformdirs`; everything else is an optional extra.
+`requests`, `pydantic` and `platformdirs`; every other engine capability is an
+optional extra.
 
 ```bash
 uv sync --extra all --extra dev      # Install exactly what uv.lock pins
@@ -243,11 +247,12 @@ Repository layout:
 src/porter/
 ├── __init__.py       stable public API (lazy exports), __version__
 ├── core/             engine — all business logic
+│   └── workflow/     plan model, resolver, probe, executor
 ├── cli/              CLI frontend
 ├── mcp/              MCP frontend
-└── webui/            Gradio WebUI frontend (HITL workbench)
-skills/porter-skill/  Agent Skill assets (SKILL.md, scripts, references)
-scripts/              developer / release helper scripts (launcher.py)
+└── webui/            Gradio WebUI frontend
+skills/porter-skill/  Agent Skill assets (SKILL.md, Python scripts, references)
+scripts/              developer / release helper scripts
 docs/                 development, architecture, reference, design, images
 tests/{unit,regression,integration}/
 ```

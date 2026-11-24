@@ -28,9 +28,9 @@ type = "layers"
 
 | 层 | 模块 | 为什么在这里 |
 | --- | --- | --- |
-| 1 | `core.plan` | 观察管线、平台层和两条链，并用 `Pipeline.default` 组装；它描述管线，因此位于管线之上 |
-| 2 | `core.pipeline` | 只做阶段编排，依赖下面所有端口和后端 |
-| 3 | `core.doctor` | 跨切面服务，观察媒体、平台、ASR/翻译链；被前端消费，但不该被管线无条件调用 |
+| 1 | `core.workflow` | 位于最顶层：探测源、列举能力、解析 `WorkflowPlan`，并在执行器里驱动底层管线 |
+| 2 | `core.pipeline` | 底层四阶段执行编排，依赖下面所有端口和后端 |
+| 3 | `core.doctor` | 跨切面服务，观察媒体、平台、ASR/翻译后端；被前端与工作流层消费，但不被管线无条件调用 |
 | 4 | `core.asr` / `core.translate` / `core.platforms` / `core.refine` | 后端适配与转录文本精炼 |
 | 5 | `core.media` / `core.subtitles` | 媒体与字幕处理 |
 | 6 | `core.ports` | 管线与实现之间的协议 |

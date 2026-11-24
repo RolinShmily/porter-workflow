@@ -6,10 +6,10 @@ README；要改引擎、排查生产问题或判断改动落点时再读这里�
 | 页面 | 内容 |
 | --- | --- |
 | [overview.md](overview.md) | 一个引擎、四个前端，目录映射，请求生命周期，新代码放哪 |
-| [pipeline.md](pipeline.md) | 四个阶段、产物、阶段复用、`--only-phase` 语义 |
-| [subtitles.md](subtitles.md) | 平台字幕与 ASR 两条路径、回退链、句子级翻译 |
+| [pipeline.md](pipeline.md) | 七阶段工作流与底层四阶段执行、产物、阶段复用 |
+| [subtitles.md](subtitles.md) | 平台字幕与 ASR 两条路径、对等能力选择（无运行期回退）、句子级翻译 |
 | [layers.md](layers.md) | import-linter 契约、真实层序、已知缺口 |
-| [ports.md](ports.md) | 端口协议、链式回退、扩展点 |
+| [ports.md](ports.md) | 端口协议、单能力执行与扩展点 |
 | [jobs.md](jobs.md) | 进程内 `JobStore` 与跨进程 `JobRegistry`、取消、HITL |
 | [media.md](media.md) | FFmpeg 边界、标准化、硬件编码探测、原子压制 |
 | [launcher.md](launcher.md) | 发布用启动器、为什么不冻结引擎 |

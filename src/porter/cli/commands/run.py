@@ -1,9 +1,14 @@
-"""``porter run`` — execute the localization pipeline.
+"""``porter run`` — execute one resolved workflow.
 
-Options here are the CLI's projection of :class:`porter.core.models.JobOptions`.
-Secrets (API keys) are deliberately *not* accepted as flags — they would land in
-shell history and process listings. Set them in config or the environment
-instead.
+The CLI no longer assembles a fallback chain. It resolves a
+:class:`~porter.core.workflow.model.WorkflowPlan` (or loads one made earlier) and
+the executor runs exactly the stages and capabilities that plan names. A failure
+is reported with alternatives for the next plan; it is not silently retried on a
+different engine.
+
+``--plan`` is the agent-facing form: the plan carries the source, output
+directory, target language, burn mode, supplied subtitle and cookies, so the
+execution is reproducible from the JSON alone.
 """
 
 from __future__ import annotations
@@ -12,188 +17,95 @@ import argparse
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from porter.cli import render
-from porter.core.events import Phase
-from porter.core.models import BurnMode
+from porter.cli import planning, render
 
 if TYPE_CHECKING:
-    # Only ever used in annotations. Importing them at runtime would make the CLI
-    # pay for pydantic model construction before argparse has even parsed, and
-    # `from __future__ import annotations` means they are never evaluated.
     from porter.core.config import PorterConfig
-    from porter.core.models.request import JobResult
+    from porter.core.workflow.model import WorkflowPlan, WorkflowResult
 
 __all__ = ["configure", "run"]
 
 
 def configure(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    """Register the ``run`` command."""
     parser = subparsers.add_parser(
         "run",
-        help="Download, transcribe, translate and burn a video.",
+        help="Resolve and execute a workflow for one source.",
         description=(
-            "Run the full pipeline for one video. Use 'porter <URL>' as a shorthand."
+            "Resolve a workflow for the source, then execute its stages with one "
+            "capability per stage. Use 'porter <URL>' as a shorthand. Pass --plan "
+            "to execute a plan produced by 'porter plan --json'."
         ),
     )
     parser.add_argument(
         "source",
+        nargs="?",
         metavar="SOURCE",
         help=(
-            "Video URL (YouTube, X, Bilibili, TikTok, Instagram), or a path to a "
-            "local video file. file:// URLs are accepted for local files."
+            "Video URL (YouTube, X, Bilibili, TikTok, Instagram), a local media "
+            "path, or a subtitle file. Optional when --plan is used."
         ),
     )
     parser.add_argument(
-        "-o",
-        "--output-dir",
-        metavar="DIR",
-        help="Where to create the task folder. Defaults to the configured output_dir.",
-    )
-    parser.add_argument(
-        "--burn",
-        choices=[mode.value for mode in BurnMode],
-        help="Which release videos to render. 'skip' produces subtitles only.",
-    )
-    parser.add_argument(
-        "--asr-engine",
-        metavar="ENGINE",
-        help=(
-            "Try this ASR engine first. The other engines stay as fallback: "
-            "whisper-local, whisper-api, videocaptioner, "
-            "or a VideoCaptioner engine (bijian, jianying, whisper-cpp)."
-        ),
-    )
-    parser.add_argument(
-        "--translator",
-        metavar="BACKEND",
-        help=(
-            "Try this translation backend first. The others stay as fallback: "
-            "llm, bing, google, mymemory, videocaptioner-llm, videocaptioner."
-        ),
-    )
-    parser.add_argument(
-        "--llm-model",
-        metavar="MODEL",
-        help="Override the configured LLM model for this run, e.g. deepseek-chat.",
-    )
-    parser.add_argument(
-        "--target-lang",
-        metavar="LANG",
-        help="Target language tag. Defaults to zh-Hans.",
-    )
-    parser.add_argument("--cookies", metavar="FILE", help="Netscape cookies.txt for gated media.")
-    parser.add_argument(
-        "--subtitle-file",
+        "--plan",
         metavar="FILE",
-        help=(
-            "Use an existing .srt/.vtt as the source track, instead of the "
-            "platform's subtitles or speech recognition."
-        ),
+        help="Execute a previously resolved plan.json instead of resolving one now.",
     )
-    parser.add_argument(
-        "--cookies-from-browser",
-        metavar="BROWSER",
-        help="Read cookies from a browser profile (chrome, firefox, edge, brave, ...).",
-    )
-    parser.add_argument(
-        "--no-denoise",
-        action="store_true",
-        default=None,
-        help=(
-            "Skip the ASR vocal-enhancement pass. Left unset, asr.audio_denoise "
-            "from the configuration decides."
-        ),
-    )
-    parser.add_argument(
-        "--only-phase",
-        choices=["prepare", "transcribe", "translate", "burn"],
-        metavar="PHASE",
-        help="Stop after this phase. Earlier phases still run, because each phase "
-        "consumes the previous one's output.",
-    )
-    parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Ignore cached stage results and redo the work.",
-    )
+    planning.add_arguments(parser)
     parser.add_argument(
         "--json",
         dest="as_json",
         action="store_true",
-        help="Write the JobResult as JSON to stdout instead of progress text.",
+        help="Write the WorkflowResult as JSON to stdout instead of progress text.",
     )
     parser.set_defaults(handler=run)
 
 
 def run(args: argparse.Namespace) -> int:
-    """Execute the pipeline and report the outcome.
-
-    Exit codes are the machine-readable result: 0 done, 1 failed, 2 misuse, 130
-    cancelled. ``--json`` writes the :class:`~porter.core.models.JobResult` to stdout
-    and nothing else, so progress and warnings stay on stderr where they cannot
-    corrupt the document.
-    """
     from porter.core.config import resolve
     from porter.core.context import RunContext
     from porter.core.errors import JobCancelled, PorterError
     from porter.core.events import ErrorInfo, JobState, null_sink
     from porter.core.jobs import JobRegistry, JobStore
     from porter.core.models.request import JobOptions, JobRequest, JobResult
-    from porter.core.pipeline import Pipeline
+    from porter.core.workflow.executor import execute_plan
+
+    if args.plan is None and not args.source:
+        render.warn("run needs a SOURCE, or --plan FILE")
+        return render.EXIT_MISUSE
 
     config = resolve(args.config_path)
-    options = JobOptions(
-        output_dir=_output_dir(args, config),
-        burn=BurnMode(args.burn) if args.burn else BurnMode.DUAL,
-        asr_engine=args.asr_engine,
-        translator=args.translator,
-        llm_model=args.llm_model,
-        target_lang=args.target_lang or "zh-Hans",
-        cookies_file=args.cookies,
-        cookies_browser=args.cookies_from_browser,
-        subtitle_file=args.subtitle_file,
-        audio_denoise=config.asr.audio_denoise if args.no_denoise is None else False,
-        only_phase=Phase(args.only_phase) if args.only_phase else None,
-        force=args.force,
-    )
+    try:
+        plan = (
+            _load_plan(args.plan, args)
+            if args.plan
+            else _resolve(args, config)
+        )
+    except (PorterError, OSError, ValueError) as exc:
+        render.warn(str(exc))
+        return render.EXIT_ERROR
 
-    # One positional argument covers both kinds of source; JobRequest decides
-    # which it is. See JobRequest.from_source for the rule.
-    request = JobRequest.from_source(args.source, options)
-
+    job_id = _job_id(plan.source)
+    options = JobOptions(output_dir=Path(plan.runtime.output_dir))
     ctx = RunContext(
-        job_id=_job_id(args.source),
+        job_id=job_id,
         options=options,
         config=config,
-        # With --json the terminal must stay quiet, but the pipeline still emits:
-        # null_sink discards rather than suppressing, so no phase has to know
+        # With --json the terminal must stay quiet, but the engine still emits:
+        # null_sink discards rather than suppressing, so no stage has to know
         # whether anyone is listening.
         events=null_sink if args.as_json else render.render_event,
     )
 
     render.info(render.banner("PORTER WORKFLOW"))
 
-    # Register the job before running it, so that an interrupted run is visible
-    # from another terminal: `porter jobs list` finds it, and because the record
-    # carries the owner's identity, a run that was killed shows up as failed
-    # rather than sitting at "running" forever.
-    #
-    # The id is derived from the source rather than random. A rerun of the same
-    # video then replaces the previous record instead of accumulating a
-    # near-duplicate, which matches how the task directory is already reused.
     store = JobStore(registry=JobRegistry())
-    job = store.create(request, job_id=ctx.job_id)
+    request = JobRequest.from_source(plan.source, options)
+    job = store.create(request, job_id=job_id)
     store.attach(job, ctx)
 
-    pipeline = Pipeline.default(ctx)
     try:
-        result = pipeline.run(request, ctx)
+        outcome = execute_plan(plan, ctx)
     except (JobCancelled, PorterError) as exc:
-        # Expected failures normally come back as a JobResult rather than an
-        # exception. Reaching here means it happened before the pipeline could
-        # build one, or escaped its own handlers. Record it either way: a job
-        # left at "running" in the shared file is a lie that another terminal
-        # (or a polling MCP client) would wait on.
         cancelled = isinstance(exc, JobCancelled)
         store.finish(
             job,
@@ -207,71 +119,122 @@ def run(args: argparse.Namespace) -> int:
         return render.EXIT_CANCELLED if cancelled else render.EXIT_ERROR
 
     except KeyboardInterrupt:
-        # Ctrl+C. Recorded here rather than left to the reaper: this process is
-        # still alive and knows exactly what happened, and making another terminal
-        # infer an interruption from a dead PID is strictly worse information.
         store.finish(job, JobResult(job_id=ctx.job_id, state=JobState.CANCELLED))
         render.warn("interrupted; partial output is left in the task directory")
         return render.EXIT_CANCELLED
 
-    store.finish(job, result)
+    store.finish(job, outcome.job)
 
     if args.as_json:
-        render.emit_json(result.model_dump(mode="json"))
+        render.emit_json(outcome.workflow.to_dict())
     else:
-        _report(result)
+        _report(outcome.workflow)
 
-    return render.EXIT_OK if result.error is None else render.EXIT_ERROR
+    if outcome.workflow.state is JobState.DONE:
+        return render.EXIT_OK
+    if outcome.workflow.state is JobState.CANCELLED:
+        return render.EXIT_CANCELLED
+    return render.EXIT_ERROR
 
 
-def _output_dir(args: argparse.Namespace, config: PorterConfig) -> Path:
-    """``-o`` wins over the configured output dir."""
-    if args.output_dir:
-        return Path(args.output_dir)
-    return Path(config.output_dir)
+def _resolve(args: argparse.Namespace, config: PorterConfig) -> WorkflowPlan:
+    from porter.core.context import RunContext
+    from porter.core.models.request import JobOptions
+    from porter.core.workflow.resolver import resolve_plan
+
+    overrides = planning.overrides_from_args(args, config)
+    ctx = RunContext(
+        job_id=_job_id(args.source),
+        options=JobOptions(
+            output_dir=overrides.output_dir,
+            cookies_file=overrides.cookies_file,
+            cookies_browser=overrides.cookies_browser,
+        ),
+        config=config,
+    )
+    return resolve_plan(args.source, overrides, ctx)
+
+
+def _load_plan(path: str, args: argparse.Namespace) -> WorkflowPlan:
+    """Read and validate a plan, applying the few runtime overrides that make sense.
+
+    Capability choices are frozen: changing one would make the plan describe a
+    pipeline nobody approved. Output directory and ``--force`` are execution
+    settings, so they may be overridden and the plan is resealed.
+    """
+    from pydantic import ValidationError
+
+    from porter.core.workflow.model import WorkflowPlan
+
+    text = Path(path).read_text(encoding="utf-8")
+    try:
+        plan = WorkflowPlan.model_validate_json(text)
+    except ValidationError as exc:
+        raise ValueError(f"invalid plan file {path}: {exc}") from exc
+
+    ignored = [
+        flag
+        for flag, value in (
+            ("--task", args.task),
+            ("--burn", args.burn),
+            ("--target-lang", args.target_lang),
+            ("--transcript", args.transcript),
+            ("--translate", args.translate),
+            ("--render", args.render),
+            ("--subtitle-file", args.subtitle_file),
+            ("--llm-model", args.llm_model),
+            ("--cookies", args.cookies),
+            ("--cookies-from-browser", args.cookies_from_browser),
+            ("--no-denoise", args.no_denoise),
+            ("--allow-paid", args.allow_paid),
+            ("--force-translate", args.force_translate),
+            ("--only-phase", args.only_phase),
+        )
+        if value
+    ]
+    if ignored:
+        render.warn(
+            "these flags are ignored with --plan because the plan already fixes "
+            f"those choices: {', '.join(ignored)}"
+        )
+
+    runtime = plan.runtime.model_copy(
+        update={
+            "output_dir": (
+                str(args.output_dir) if args.output_dir else plan.runtime.output_dir
+            ),
+            "force": plan.runtime.force or bool(args.force),
+        }
+    )
+    return plan.model_copy(update={"runtime": runtime}).sealed()
 
 
 def _job_id(source: str) -> str:
-    """A short, stable-per-source id, so two runs of one input do not collide.
-
-    The MCP frontend uses random ids because it tracks concurrent jobs; the CLI
-    runs one job per process, and a human-readable id makes the task folder
-    easier to correlate with the command they typed.
-
-    This is the *job* id, distinct from the task directory's ``video_id``. A
-    local file gets its own id from its resolved path
-    (:func:`~porter.core.platforms.local.local_video_id`), so the same video always
-    lands in the same task directory however it was spelled.
-    """
+    """A short, stable-per-source id, so reruns replace rather than pile up."""
     import hashlib
 
     digest = hashlib.sha256(source.encode("utf-8")).hexdigest()[:8]
     return f"run-{digest}"
 
 
-def _report(result: JobResult) -> None:
-    """Render the finished job to the terminal.
-
-    Everything goes to stderr except the file paths, which are the result and
-    therefore go to stdout where they can be captured.
-    """
+def _report(result: WorkflowResult) -> None:
+    """Render the workflow result. Paths go to stdout; commentary to stderr."""
     render.info(f"{render.render_job_state(result.state)} {result.state.value}")
 
     if result.error is not None:
         render.warn(result.error.message)
         for key, value in (result.error.details or {}).items():
             render.info(f"    {key}: {value}")
+        if result.error.alternatives:
+            render.info(f"    alternatives: {', '.join(result.error.alternatives)}")
+        if result.error.suggested_workflow is not None:
+            render.info(f"    suggested workflow: {result.error.suggested_workflow.value}")
 
     if result.task_dir is not None:
-        render.value(str(result.task_dir))
+        render.value(result.task_dir)
 
-    subtitles = result.subtitles
-    if subtitles is not None:
-        for path in (
-            subtitles.subtitle_bilingual_srt,
-            subtitles.subtitle_zh_srt,
-            subtitles.subtitle_bilingual_ass,
-            subtitles.subtitle_zh_ass,
-        ):
-            if path.is_file():
-                render.value(str(path))
+    seen: set[str] = set()
+    for path in result.artifacts.values():
+        if path not in seen:
+            seen.add(path)
+            render.value(path)

@@ -19,16 +19,14 @@ cancelled. So every backend is tested for:
   dependency is missing;
 * prompt ``JobCancelled`` on Ctrl-C.
 
-No test touches the network, ffmpeg, or the ``videocaptioner`` binary.
+No test touches the network or ffmpeg.
 """
 
 from __future__ import annotations
 
 import builtins
 import json
-import subprocess
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -38,8 +36,7 @@ from porter.core.config import LLMConfig, PorterConfig
 from porter.core.context import RunContext
 from porter.core.errors import JobCancelled
 from porter.core.models.request import JobOptions
-from porter.core.subtitles.srt import parse_srt
-from porter.core.translate import base, bing, google, llm, mymemory, videocaptioner
+from porter.core.translate import base, bing, google, llm, mymemory
 from porter.core.translate.base import MAX_ATTEMPTS, TranslationBackendError
 
 #: A translator page carrying the three scraped values Bing needs. Copied from
@@ -149,44 +146,6 @@ def _explode() -> Any:
 def _google_payload(lines: list[str]) -> list[Any]:
     """A Google response whose joined segments split back into ``lines``."""
     return [[["=====".join(lines), "source"]]]
-
-
-def _bilingual_srt_text(targets: list[str], sources: list[str]) -> str:
-    blocks = [
-        f"{index}\n00:00:{index:02d},000 --> 00:00:{index:02d},900\n{target}\n{source}"
-        for index, (target, source) in enumerate(zip(targets, sources, strict=False), start=1)
-    ]
-    return "\n\n".join(blocks) + "\n"
-
-
-def _install_fake_cli(
-    monkeypatch: pytest.MonkeyPatch,
-    translated: list[str],
-    returncode: int = 0,
-) -> SimpleNamespace:
-    """Replace the ``videocaptioner`` subprocess with one that writes an SRT.
-
-    The fake reads the input SRT the backend wrote and emits a bilingual output
-    (target line above source line, matching ``--layout target-above``), so the
-    real parsing path runs. ``calls`` records the argv of every invocation.
-    """
-    calls: list[list[str]] = []
-
-    def _run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        calls.append(list(command))
-        input_path = Path(command[2])
-        output = Path(command[command.index("-o") + 1])
-        if returncode == 0:
-            sources = [
-                item.source_text
-                for item in parse_srt(input_path.read_text(encoding="utf-8"))
-            ]
-            output.write_text(_bilingual_srt_text(translated, sources), encoding="utf-8")
-        return subprocess.CompletedProcess(command, returncode, stdout="", stderr="boom")
-
-    fake = SimpleNamespace(run=_run, TimeoutExpired=subprocess.TimeoutExpired, calls=calls)
-    monkeypatch.setattr(videocaptioner, "subprocess", fake)
-    return fake
 
 
 @pytest.fixture
@@ -383,18 +342,6 @@ class TestAlignment:
         # for them; the invariant is positional, not "whatever came back".
         assert outcome.texts == ["你好", "", "  ", "世界"]
 
-    def test_videocaptioner_keeps_blank_inputs_in_place(
-        self, ctx: RunContext, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        _install_fake_cli(monkeypatch, ["你好", "世界"])
-
-        texts = ["Hello", "", "  ", "World"]
-        outcome = videocaptioner.VideocaptionerBackend(binary="/usr/bin/videocaptioner").translate_texts(
-            texts, "zh-Hans", ctx
-        )
-
-        assert outcome.texts == ["你好", "", "  ", "世界"]
-
     def test_google_batch_failure_raises_instead_of_truncating(
         self, ctx: RunContext, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -410,16 +357,6 @@ class TestAlignment:
         texts = [f"line {index}" for index in range(16)]
         with pytest.raises(TranslationBackendError):
             google.GoogleTranslateBackend().translate_texts(texts, "zh-CN", ctx)
-
-    def test_videocaptioner_cue_count_mismatch_raises(
-        self, ctx: RunContext, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        _install_fake_cli(monkeypatch, ["只有一句"])
-
-        with pytest.raises(TranslationBackendError):
-            videocaptioner.VideocaptionerBackend(binary="/usr/bin/videocaptioner").translate_texts(
-                ["Hello", "World"], "zh-Hans", ctx
-            )
 
 
 # ----------------------------------------------------------------------
@@ -581,24 +518,6 @@ class TestExpectedFailures:
         with pytest.raises(TranslationBackendError):
             llm.LLMTranslationBackend(client=client).translate_texts(["Hello"], "zh-Hans", llm_ctx)
 
-    def test_videocaptioner_raises_when_the_binary_is_missing(
-        self, ctx: RunContext, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(videocaptioner, "_get_videocaptioner_bin", lambda: None)
-
-        with pytest.raises(TranslationBackendError):
-            videocaptioner.VideocaptionerBackend().translate_texts(["Hello"], "zh-Hans", ctx)
-
-    def test_videocaptioner_raises_on_non_zero_exit(
-        self, ctx: RunContext, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        _install_fake_cli(monkeypatch, [], returncode=1)
-
-        with pytest.raises(TranslationBackendError):
-            videocaptioner.VideocaptionerBackend(binary="/usr/bin/videocaptioner").translate_texts(
-                ["Hello"], "zh-Hans", ctx
-            )
-
 
 # ----------------------------------------------------------------------
 # LLM-specific alignment (json_repair must not reorder)
@@ -740,34 +659,6 @@ class TestAvailableNeverRaises:
         monkeypatch.setattr(llm, "_load_openai", _explode)
         assert llm.LLMTranslationBackend().available(llm_ctx) is False
 
-    def test_videocaptioner_false_without_a_binary(
-        self, ctx: RunContext, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(videocaptioner, "_get_videocaptioner_bin", lambda: None)
-        assert videocaptioner.VideocaptionerBackend().available(ctx) is False
-
-    def test_videocaptioner_survives_an_exploding_probe(
-        self, ctx: RunContext, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(videocaptioner, "_get_videocaptioner_bin", _explode)
-        assert videocaptioner.VideocaptionerBackend().available(ctx) is False
-
-    def test_videocaptioner_llm_requires_a_key(
-        self, ctx: RunContext, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(
-            videocaptioner, "_get_videocaptioner_bin", lambda: "/usr/bin/videocaptioner"
-        )
-        assert videocaptioner.VideocaptionerLLMBackend().available(ctx) is False
-
-    def test_videocaptioner_llm_true_with_binary_and_key(
-        self, llm_ctx: RunContext, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(
-            videocaptioner, "_get_videocaptioner_bin", lambda: "/usr/bin/videocaptioner"
-        )
-        assert videocaptioner.VideocaptionerLLMBackend().available(llm_ctx) is True
-
 
 # ----------------------------------------------------------------------
 # Cancellation
@@ -813,20 +704,9 @@ class TestCancellation:
 
         assert fake.get_calls == []
 
-    def test_videocaptioner_cancels_before_running(
-        self, ctx: RunContext, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        _install_fake_cli(monkeypatch, ["你好"])
-        ctx.cancel.set()
-
-        with pytest.raises(JobCancelled):
-            videocaptioner.VideocaptionerBackend(binary="/usr/bin/videocaptioner").translate_texts(
-                ["Hello"], "zh-Hans", ctx
-            )
-
 
 # ----------------------------------------------------------------------
-# Wire-format fidelity and the videocaptioner adapter
+# Wire-format fidelity
 # ----------------------------------------------------------------------
 
 
@@ -884,104 +764,6 @@ class TestWireFormat:
         assert url == "https://api.mymemory.translated.net/get"
         assert kwargs["params"]["langpair"] == "en|zh-CN"
         assert kwargs["timeout"] == 8.0
-
-
-class TestVideocaptionerAdapter:
-    def test_free_engine_builds_the_v01_command(
-        self, ctx: RunContext, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        _install_fake_cli(monkeypatch, ["你好"])
-        backend = videocaptioner.VideocaptionerBackend(
-            binary="/usr/bin/videocaptioner", engine="google"
-        )
-
-        outcome = backend.translate_texts(["Hello"], "zh-Hans", ctx)
-
-        assert outcome.texts == ["你好"]
-        assert outcome.origin == "videocaptioner"
-
-    def test_free_engine_command_flags(
-        self, ctx: RunContext, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        fake = _install_fake_cli(monkeypatch, ["你好"])
-
-        videocaptioner.VideocaptionerBackend(
-            binary="/usr/bin/videocaptioner", engine="google"
-        ).translate_texts(["Hello"], "zh-Hans", ctx)
-
-        command = fake.calls[0]
-        assert command[0] == "/usr/bin/videocaptioner"
-        assert command[1] == "subtitle"
-        assert "--target-language" in command
-        assert "zh-Hans" in command
-        assert "--layout" in command
-        assert "target-above" in command
-        assert "--translator" in command
-        assert "google" in command
-        assert "--no-optimize" in command
-        assert "--no-split" in command
-
-    def test_llm_engine_forwards_credentials(
-        self, llm_ctx: RunContext, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        fake = _install_fake_cli(monkeypatch, ["你好"])
-        config = PorterConfig(
-            llm=LLMConfig(
-                api_key="sk-test-mock",
-                api_base="https://example.invalid/v1",
-                model="deepseek-chat",
-            )
-        )
-        llm_ctx.config = config
-
-        videocaptioner.VideocaptionerLLMBackend(
-            binary="/usr/bin/videocaptioner"
-        ).translate_texts(["Hello"], "zh-Hans", llm_ctx)
-
-        command = fake.calls[0]
-        assert "llm" in command
-        assert "--api-key" in command
-        assert "sk-test-mock" in command
-        assert "--api-base" in command
-        assert "https://example.invalid/v1" in command
-        assert "--model" in command
-        assert "deepseek-chat" in command
-
-    def test_the_job_option_overrides_the_configured_model(
-        self, llm_ctx: RunContext, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """``--llm-model`` must reach the CLI adapter, not just the LLM backend.
-
-        Two backends read the model, so the resolution lives in one helper. Had
-        it been applied only to ``translate/llm.py``, this path would still have
-        passed the configured default -- a split that no single test would show.
-        """
-        fake = _install_fake_cli(monkeypatch, ["你好"])
-        llm_ctx.config = PorterConfig(
-            llm=LLMConfig(api_key="sk-test-mock", model="deepseek-chat")
-        )
-        llm_ctx.options.llm_model = "deepseek-reasoner"
-
-        videocaptioner.VideocaptionerLLMBackend(
-            binary="/usr/bin/videocaptioner"
-        ).translate_texts(["Hello"], "zh-Hans", llm_ctx)
-
-        command = fake.calls[0]
-        assert command[command.index("--model") + 1] == "deepseek-reasoner"
-        assert "deepseek-chat" not in command
-
-    def test_no_model_flag_when_neither_source_names_one(
-        self, llm_ctx: RunContext, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """An empty model stays absent instead of becoming ``--model ""``."""
-        fake = _install_fake_cli(monkeypatch, ["你好"])
-        llm_ctx.config = PorterConfig(llm=LLMConfig(api_key="sk-test-mock", model=""))
-
-        videocaptioner.VideocaptionerLLMBackend(
-            binary="/usr/bin/videocaptioner"
-        ).translate_texts(["Hello"], "zh-Hans", llm_ctx)
-
-        assert "--model" not in fake.calls[0]
 
 
 class TestBingBatching:

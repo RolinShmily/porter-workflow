@@ -58,7 +58,7 @@ def run(args: argparse.Namespace) -> int:
     carries the remediation guidance (so it never pollutes a ``--json`` payload).
     """
     from porter.core.config import resolve
-    from porter.core.doctor import guide_for, probe_all
+    from porter.core.doctor import guide_for, probe_all, report_payload
 
     config = resolve(args.config_path)
 
@@ -69,7 +69,10 @@ def run(args: argparse.Namespace) -> int:
         return render.EXIT_ERROR
 
     if args.as_json:
-        render.emit_json(report.to_dict())
+        # Remediation travels with the JSON. An agent that finds a blocker must
+        # be able to fix it without a second command, and a host driving this
+        # over a pipe only ever sees stdout.
+        render.emit_json(report_payload(report))
         return render.EXIT_OK if report.ok else render.EXIT_ERROR
 
     render.info(render.banner("PORTER ENVIRONMENT DOCTOR"))

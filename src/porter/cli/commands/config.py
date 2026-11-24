@@ -54,11 +54,6 @@ def configure(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -
 
     actions.add_parser("path", help="Print which config file is in effect.")
 
-    actions.add_parser(
-        "import-videocaptioner",
-        help="Import settings from a VideoCaptioner config.toml (not yet implemented).",
-    )
-
     parser.set_defaults(handler=run)
 
 
@@ -123,9 +118,6 @@ def run(args: argparse.Namespace) -> int:
             else:
                 render.info(f"  (user-level default: {config_file()})")
         return render.EXIT_OK
-
-    if action == "import-videocaptioner":
-        return render.not_implemented("config import-videocaptioner")
 
     render.warn(f"unknown config action: {action}")
     return render.EXIT_MISUSE

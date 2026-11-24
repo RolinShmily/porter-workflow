@@ -26,7 +26,7 @@ pytest.importorskip("fastmcp", reason="requires the [mcp] extra")
 from fastmcp import Client
 
 from porter.core.errors import PorterError
-from porter.core.models.subtitle import SubtitleItem, SubtitleSet
+from porter.core.models.subtitle import SubtitleSet
 from porter.mcp.server import create_server
 
 SAMPLE_SRT = """1
@@ -37,19 +37,6 @@ We are no strangers to love
 00:00:02,500 --> 00:00:04,500
 You know the rules and so do I
 """
-
-
-def _items(count: int = 2) -> list[SubtitleItem]:
-    return [
-        SubtitleItem(
-            index=i + 1,
-            start_ms=i * 2000,
-            end_ms=i * 2000 + 1800,
-            source_text=f"line {i + 1}",
-            target_text=f"第 {i + 1} 行",
-        )
-        for i in range(count)
-    ]
 
 
 class _FakeTranslator:
@@ -74,27 +61,70 @@ class _FakeTranslator:
         return subtitles
 
 
-class _FakePipeline:
-    def __init__(self, translator: Any = None, result: Any = None) -> None:
-        self.translator = translator or _FakeTranslator()
-        self._result = result
+def _plan(*, workflow: Any, task: Any, stages: tuple[Any, ...]):
+    """A sealed plan, built without probing this machine."""
+    from porter.core.workflow.model import (
+        PlanRuntime,
+        SourceKind,
+        SourceProbe,
+        WorkflowPlan,
+    )
 
-    def run(self, request: Any, ctx: Any) -> Any:
-        return self._result
+    source = str(stages[-1].params.get("path") or "/videos/a.mp4") if stages else "/videos/a.mp4"
+    return WorkflowPlan(
+        workflow=workflow,
+        task=task,
+        source=source,
+        runtime=PlanRuntime(output_dir="./porter_output"),
+        source_probe=SourceProbe(
+            kind=SourceKind.LOCAL_VIDEO,
+            source=source,
+            has_video=True,
+            has_audio=True,
+        ),
+        stages=stages,
+        feasible=True,
+    ).sealed()
 
 
 @pytest.fixture
-def stub_pipeline(monkeypatch: pytest.MonkeyPatch):
-    """Replace ``Pipeline.default`` with a builder returning a scripted pipeline."""
+def stub_plan(monkeypatch: pytest.MonkeyPatch):
+    """Replace plan resolution so the tool's shaping is tested on its own."""
 
-    def _install(translator: Any = None, result: Any = None) -> _FakePipeline:
-        pipeline = _FakePipeline(translator, result)
+    def _install(plan: Any) -> Any:
+        monkeypatch.setattr(
+            "porter.mcp.tools.planning.plan_for",
+            lambda source, **choices: plan,
+        )
+        return plan
 
-        def _default(ctx: Any) -> _FakePipeline:
-            return pipeline
+    return _install
 
-        monkeypatch.setattr("porter.core.pipeline.Pipeline.default", staticmethod(_default))
-        return pipeline
+
+@pytest.fixture
+def stub_translation_chain(monkeypatch: pytest.MonkeyPatch):
+    """Replace the executor's one-capability chain builder."""
+
+    def _install(chain: Any) -> Any:
+        monkeypatch.setattr(
+            "porter.core.workflow.executor.build_translation_chain",
+            lambda capability: chain,
+        )
+        return chain
+
+    return _install
+
+
+@pytest.fixture
+def stub_execute_plan(monkeypatch: pytest.MonkeyPatch):
+    """Replace the executor so transcribe result shaping can be tested alone."""
+
+    def _install(outcome: Any) -> Any:
+        monkeypatch.setattr(
+            "porter.core.workflow.executor.execute_plan",
+            lambda plan, ctx: outcome,
+        )
+        return outcome
 
     return _install
 
@@ -232,6 +262,30 @@ class TestTranslateToolContract:
         }
 
 
+def _translate_plan(source: Path):
+    """The subtitle-only plan a translate request resolves to."""
+    from porter.core.workflow.model import Stage, StagePlan, Task, WorkflowId
+
+    return _plan(
+        workflow=WorkflowId.SUBTITLE_ONLY,
+        task=Task.SUBTITLE,
+        stages=(
+            StagePlan(
+                id="transcript",
+                stage=Stage.TRANSCRIPT,
+                capability="transcript.supplied",
+                params={"path": str(source)},
+            ),
+            StagePlan(
+                id="translate",
+                stage=Stage.TRANSLATE,
+                capability="translate.bing",
+                params={"target_lang": "zh-Hans"},
+            ),
+        ),
+    )
+
+
 class TestTranslateTool:
     async def test_a_missing_file_is_refused(self) -> None:
         async with Client(create_server()) as client:
@@ -254,25 +308,30 @@ class TestTranslateTool:
         assert "no subtitle cues" in data["error"]
 
     async def test_translation_writes_beside_the_input_by_default(
-        self, tmp_path: Path, stub_pipeline
+        self, tmp_path: Path, stub_plan, stub_translation_chain
     ) -> None:
         source = tmp_path / "input.srt"
         source.write_text(SAMPLE_SRT, encoding="utf-8")
-        pipeline = stub_pipeline()
+        stub_plan(_translate_plan(source))
+        chain = stub_translation_chain(_FakeTranslator())
 
         async with Client(create_server()) as client:
             data = (await client.call_tool("porter_translate", {"srt_path": str(source)})).data
 
         assert data["ok"] is True
+        assert data["capability"] == "translate.bing"
         assert data["cue_count"] == 2
         assert Path(data["subtitle_zh_srt"]).parent == tmp_path / "translated"
-        assert pipeline.translator.calls == [(2, "zh-Hans")]
+        assert chain.calls == [(2, "zh-Hans")]
 
-    async def test_an_explicit_output_dir_wins(self, tmp_path: Path, stub_pipeline) -> None:
+    async def test_an_explicit_output_dir_wins(
+        self, tmp_path: Path, stub_plan, stub_translation_chain
+    ) -> None:
         source = tmp_path / "input.srt"
         source.write_text(SAMPLE_SRT, encoding="utf-8")
         target = tmp_path / "elsewhere"
-        stub_pipeline()
+        stub_plan(_translate_plan(source))
+        stub_translation_chain(_FakeTranslator())
 
         async with Client(create_server()) as client:
             data = (
@@ -286,11 +345,12 @@ class TestTranslateTool:
         assert Path(data["subtitle_bilingual_srt"]).parent == target
 
     async def test_the_target_language_reaches_the_chain(
-        self, tmp_path: Path, stub_pipeline
+        self, tmp_path: Path, stub_plan, stub_translation_chain
     ) -> None:
         source = tmp_path / "input.srt"
         source.write_text(SAMPLE_SRT, encoding="utf-8")
-        pipeline = stub_pipeline()
+        stub_plan(_translate_plan(source))
+        chain = stub_translation_chain(_FakeTranslator())
 
         async with Client(create_server()) as client:
             data = (
@@ -301,12 +361,15 @@ class TestTranslateTool:
 
         assert data["ok"] is True
         assert data["target_lang"] == "en"
-        assert pipeline.translator.calls == [(2, "en")]
+        assert chain.calls == [(2, "en")]
 
-    async def test_cues_carry_both_languages(self, tmp_path: Path, stub_pipeline) -> None:
+    async def test_cues_carry_both_languages(
+        self, tmp_path: Path, stub_plan, stub_translation_chain
+    ) -> None:
         source = tmp_path / "input.srt"
         source.write_text(SAMPLE_SRT, encoding="utf-8")
-        stub_pipeline()
+        stub_plan(_translate_plan(source))
+        stub_translation_chain(_FakeTranslator())
 
         async with Client(create_server()) as client:
             data = (await client.call_tool("porter_translate", {"srt_path": str(source)})).data
@@ -316,11 +379,14 @@ class TestTranslateTool:
         assert first["target"].startswith("[zh-Hans]")
         assert first["start_ms"] == 500
 
-    async def test_max_cues_truncates_and_says_so(self, tmp_path: Path, stub_pipeline) -> None:
+    async def test_max_cues_truncates_and_says_so(
+        self, tmp_path: Path, stub_plan, stub_translation_chain
+    ) -> None:
         """A silently shortened list would be read as "the transcript ends here"."""
         source = tmp_path / "input.srt"
         source.write_text(SAMPLE_SRT, encoding="utf-8")
-        stub_pipeline()
+        stub_plan(_translate_plan(source))
+        stub_translation_chain(_FakeTranslator())
 
         async with Client(create_server()) as client:
             data = (
@@ -334,7 +400,7 @@ class TestTranslateTool:
         assert data["cue_count"] == 2
 
     async def test_merging_is_reported_rather_than_hidden(
-        self, tmp_path: Path, stub_pipeline
+        self, tmp_path: Path, stub_plan, stub_translation_chain
     ) -> None:
         """The chain rebuilds sentences, so cue boundaries can move.
 
@@ -343,7 +409,8 @@ class TestTranslateTool:
         """
         source = tmp_path / "input.srt"
         source.write_text(SAMPLE_SRT, encoding="utf-8")
-        stub_pipeline(translator=_FakeTranslator(drops=1))
+        stub_plan(_translate_plan(source))
+        stub_translation_chain(_FakeTranslator(drops=1))
 
         async with Client(create_server()) as client:
             data = (await client.call_tool("porter_translate", {"srt_path": str(source)})).data
@@ -354,10 +421,13 @@ class TestTranslateTool:
         assert data["cues_merged"] is True
         assert "2 input cues became 1" in data["note"]
 
-    async def test_no_note_when_nothing_merged(self, tmp_path: Path, stub_pipeline) -> None:
+    async def test_no_note_when_nothing_merged(
+        self, tmp_path: Path, stub_plan, stub_translation_chain
+    ) -> None:
         source = tmp_path / "input.srt"
         source.write_text(SAMPLE_SRT, encoding="utf-8")
-        stub_pipeline()
+        stub_plan(_translate_plan(source))
+        stub_translation_chain(_FakeTranslator())
 
         async with Client(create_server()) as client:
             data = (await client.call_tool("porter_translate", {"srt_path": str(source)})).data
@@ -366,24 +436,57 @@ class TestTranslateTool:
         assert data["note"] is None
 
     async def test_a_backend_failure_is_reported_as_data(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, stub_plan, stub_translation_chain
     ) -> None:
         source = tmp_path / "input.srt"
         source.write_text(SAMPLE_SRT, encoding="utf-8")
+        stub_plan(_translate_plan(source))
 
         class _Failing:
             def translate(self, subtitles: Any, target_lang: str, ctx: Any) -> Any:
                 raise PorterError("every translation backend failed", attempted=3)
 
-        monkeypatch.setattr(
-            "porter.core.pipeline.Pipeline.default", staticmethod(lambda ctx: _FakePipeline(_Failing()))
-        )
+        stub_translation_chain(_Failing())
 
         async with Client(create_server()) as client:
             data = (await client.call_tool("porter_translate", {"srt_path": str(source)})).data
 
         assert data["ok"] is False
         assert "every translation backend failed" in data["error"]
+        assert data["details"]["attempted"] == 3
+
+    async def test_a_blocked_plan_is_reported_with_its_fix(
+        self, tmp_path: Path, stub_plan
+    ) -> None:
+        """A named peer that is unavailable blocks; the tool does not substitute."""
+        from porter.core.workflow.model import PlanIssue
+
+        source = tmp_path / "input.srt"
+        source.write_text(SAMPLE_SRT, encoding="utf-8")
+        plan = _translate_plan(source).model_copy(
+            update={
+                "feasible": False,
+                "issues": (
+                    PlanIssue(
+                        code="CAPABILITY_UNAVAILABLE",
+                        stage=None,
+                        capability="translate.llm",
+                        message="translate.llm is not available on this machine",
+                        fix="configure an API key",
+                        alternatives=("translate.bing",),
+                    ),
+                ),
+            }
+        )
+        stub_plan(plan)
+
+        async with Client(create_server()) as client:
+            data = (await client.call_tool("porter_translate", {"srt_path": str(source)})).data
+
+        assert data["ok"] is False
+        assert "not available" in data["error"]
+        assert data["fix"] == "configure an API key"
+        assert data["alternatives"] == ["translate.bing"]
 
 
 # ---------------------------------------------------------------------------
@@ -551,7 +654,7 @@ class TestTranscribeToolContract:
         assert data["ok"] is False
         assert "local file" in data["error"]
         assert "porter_job_start" in data["hint"]
-        assert "only_phase" in data["hint"]
+        assert "task='transcribe'" in data["hint"]
 
     async def test_a_file_url_is_treated_as_a_path(self, tmp_path: Path) -> None:
         """``file://`` is a path spelled long, not a download."""
@@ -575,80 +678,120 @@ class TestTranscribeToolContract:
         assert "no such file" in data["error"]
 
 
+def _transcribe_plan():
+    from porter.core.workflow.model import Stage, StagePlan, Task, WorkflowId
+
+    return _plan(
+        workflow=WorkflowId.LOCAL_ASR,
+        task=Task.TRANSCRIBE,
+        stages=(
+            StagePlan(
+                id="transcript",
+                stage=Stage.TRANSCRIPT,
+                capability="transcript.whisper-local",
+            ),
+        ),
+    )
+
+
+def _srt(cues: int) -> str:
+    blocks = []
+    for index in range(cues):
+        start = index * 2000
+        end = start + 1800
+        blocks.append(
+            f"{index + 1}\n"
+            f"00:00:{start // 1000:02d},{start % 1000:03d} --> "
+            f"00:00:{end // 1000:02d},{end % 1000:03d}\n"
+            f"line {index + 1}\n"
+        )
+    return "\n".join(blocks)
+
+
+def _outcome(tmp_path: Path, *, cues: int = 3, state: Any = None, error: Any = None):
+    from porter.core.events import JobState
+    from porter.core.models.request import JobResult
+    from porter.core.workflow.executor import ExecutionOutcome
+    from porter.core.workflow.model import Task, WorkflowId, WorkflowResult
+
+    terminal = state or JobState.DONE
+    srt = tmp_path / "subtitle.srt"
+    srt.write_text(_srt(cues), encoding="utf-8")
+    workflow = WorkflowResult(
+        job_id="stage-transcribe",
+        state=terminal,
+        plan_id="sha256:" + "0" * 64,
+        workflow=WorkflowId.LOCAL_ASR,
+        task=Task.TRANSCRIBE,
+        task_dir=str(tmp_path),
+        artifacts={"source_transcript": str(srt)} if terminal is JobState.DONE else {},
+        error=error,
+    )
+    return ExecutionOutcome(
+        workflow=workflow,
+        job=JobResult(job_id="stage-transcribe", state=terminal),
+    )
+
+
 class TestTranscribeTool:
     async def test_recognition_results_come_back_as_cues(
-        self, tmp_path: Path, stub_pipeline
+        self, tmp_path: Path, stub_plan, stub_execute_plan
     ) -> None:
-        from porter.core.models.request import JobResult, JobState
-
         media = tmp_path / "clip.mp4"
         media.write_bytes(b"x")
-
-        subtitles = SubtitleSet(
-            subtitle_bilingual_srt=tmp_path / "subtitle.srt",
-            subtitle_bilingual_ass=tmp_path / "subtitle.ass",
-            subtitle_zh_srt=tmp_path / "subtitle_zh.srt",
-            subtitle_zh_ass=tmp_path / "subtitle_zh.ass",
-            items=_items(3),
-            transcript_json_path=tmp_path / "t.json",
-            transcript_txt_path=tmp_path / "t.txt",
-        )
-        result = JobResult(
-            job_id="j1", state=JobState.DONE, task_dir=tmp_path, subtitles=subtitles
-        )
-        stub_pipeline(result=result)
+        stub_plan(_transcribe_plan())
+        stub_execute_plan(_outcome(tmp_path, cues=3))
 
         async with Client(create_server()) as client:
             data = (await client.call_tool("porter_transcribe", {"source": str(media)})).data
 
         assert data["ok"] is True
+        assert data["capability"] == "transcript.whisper-local"
         assert data["cue_count"] == 3
-        assert data["cues"][1]["target"] == "第 2 行"
+        assert data["cues"][1]["source"] == "line 2"
         assert data["task_dir"] == str(tmp_path)
 
-    async def test_it_stops_after_recognition(self, tmp_path: Path, monkeypatch) -> None:
+    async def test_it_plans_a_transcribe_task(self, tmp_path: Path, monkeypatch) -> None:
         """Otherwise the tool would translate and encode work nobody asked for."""
-        from porter.core.events import Phase
-        from porter.core.models.request import JobResult, JobState
-
         media = tmp_path / "clip.mp4"
         media.write_bytes(b"x")
         captured: dict[str, Any] = {}
 
-        class _P:
-            translator = _FakeTranslator()
+        def capture(source, **choices):
+            captured.update(choices)
+            captured["source"] = source
+            return _transcribe_plan()
 
-            def run(self, request: Any, ctx: Any) -> Any:
-                captured["only_phase"] = request.options.only_phase
-                captured["burn"] = request.options.burn
-                return JobResult(job_id="j", state=JobState.FAILED)
-
-        monkeypatch.setattr("porter.core.pipeline.Pipeline.default", staticmethod(lambda ctx: _P()))
+        monkeypatch.setattr("porter.mcp.tools.planning.plan_for", capture)
 
         async with Client(create_server()) as client:
-            await client.call_tool("porter_transcribe", {"source": str(media)})
+            await client.call_tool(
+                "porter_transcribe", {"source": str(media), "engine": "whisper-local"}
+            )
 
-        assert captured["only_phase"] is Phase.TRANSCRIBE
-        assert captured["burn"].value == "skip"
+        assert captured["task"] == "transcribe"
+        assert captured["transcript"] == "whisper-local"
 
     async def test_a_failed_run_reports_the_engine_error(
-        self, tmp_path: Path, stub_pipeline
+        self, tmp_path: Path, stub_plan, stub_execute_plan
     ) -> None:
-        from porter.core.events import ErrorInfo, Phase
-        from porter.core.models.request import JobResult, JobState
+        from porter.core.events import JobState
+        from porter.core.workflow.model import StageError
 
         media = tmp_path / "clip.mp4"
         media.write_bytes(b"x")
-        result = JobResult(
-            job_id="j1",
-            state=JobState.FAILED,
-            error=ErrorInfo(
-                code="asr_failed",
-                message="every speech-to-text backend failed",
-                details={"phase": Phase.TRANSCRIBE.value},
-            ),
+        stub_plan(_transcribe_plan())
+        stub_execute_plan(
+            _outcome(
+                tmp_path,
+                state=JobState.FAILED,
+                error=StageError(
+                    code="asr_failed",
+                    message="every speech-to-text backend failed",
+                    alternatives=("transcript.whisper-api",),
+                ),
+            )
         )
-        stub_pipeline(result=result)
 
         async with Client(create_server()) as client:
             data = (await client.call_tool("porter_transcribe", {"source": str(media)})).data
@@ -656,28 +799,15 @@ class TestTranscribeTool:
         assert data["ok"] is False
         assert "every speech-to-text backend failed" in data["error"]
         assert data["state"] == "failed"
+        assert data["alternatives"] == ["transcript.whisper-api"]
 
     async def test_max_cues_truncates_and_says_so(
-        self, tmp_path: Path, stub_pipeline
+        self, tmp_path: Path, stub_plan, stub_execute_plan
     ) -> None:
-        from porter.core.models.request import JobResult, JobState
-
         media = tmp_path / "clip.mp4"
         media.write_bytes(b"x")
-        subtitles = SubtitleSet(
-            subtitle_bilingual_srt=tmp_path / "s.srt",
-            subtitle_bilingual_ass=tmp_path / "s.ass",
-            subtitle_zh_srt=tmp_path / "z.srt",
-            subtitle_zh_ass=tmp_path / "z.ass",
-            items=_items(5),
-            transcript_json_path=tmp_path / "t.json",
-            transcript_txt_path=tmp_path / "t.txt",
-        )
-        stub_pipeline(
-            result=JobResult(
-                job_id="j", state=JobState.DONE, task_dir=tmp_path, subtitles=subtitles
-            )
-        )
+        stub_plan(_transcribe_plan())
+        stub_execute_plan(_outcome(tmp_path, cues=5))
 
         async with Client(create_server()) as client:
             data = (
@@ -689,6 +819,33 @@ class TestTranscribeTool:
         assert len(data["cues"]) == 2
         assert data["cues_truncated"] is True
         assert data["cue_count"] == 5
+
+    async def test_a_blocked_plan_is_reported_with_its_fix(
+        self, tmp_path: Path, stub_plan
+    ) -> None:
+        from porter.core.workflow.model import PlanIssue
+
+        media = tmp_path / "clip.mp4"
+        media.write_bytes(b"x")
+        plan = _transcribe_plan().model_copy(
+            update={
+                "feasible": False,
+                "issues": (
+                    PlanIssue(
+                        code="CAPABILITY_UNAVAILABLE",
+                        message="transcript.whisper-local is not available",
+                        fix="install porter-workflow[asr-local]",
+                    ),
+                ),
+            }
+        )
+        stub_plan(plan)
+
+        async with Client(create_server()) as client:
+            data = (await client.call_tool("porter_transcribe", {"source": str(media)})).data
+
+        assert data["ok"] is False
+        assert data["fix"] == "install porter-workflow[asr-local]"
 
 
 # ---------------------------------------------------------------------------

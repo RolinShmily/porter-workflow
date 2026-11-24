@@ -1,21 +1,15 @@
 """Resources and a prompt: the reference material an agent reads up front.
 
-The MCP contract lists three resources and one prompt. Two of the resources are here (the
-third, ``porter://jobs/{id}/log``, belongs with the job tools that own the data)
-along with the prompt.
-
-The design rule that matters is **what is derived versus written down**. Prose
-about *why* the pipeline works this way has to be authored -- there is nothing to
-derive it from. But every *list* in this module (the phases, the platforms, the
-backends and whether their wire format was ever verified) is read out of the
-engine at call time, because a hand-maintained list of backends is a list that is
-wrong the moment someone adds one. That is the same reasoning behind
-``porter_plan`` deriving from ``Pipeline.default`` rather than restating it.
+Every *list* in this module is read out of the engine at call time -- the
+stages, the workflows, the capabilities and the platforms -- because a
+hand-maintained list is wrong the moment someone adds an entry. The prose about
+*why* the plan is shaped this way is authored; there is nothing to derive it
+from.
 
 Deliberately absent: live availability. ``porter://docs/architecture`` reports
-which backends *exist* and whether they were ever verified against the live
-service; it does not probe. Probing is what ``porter_doctor`` and ``porter_plan``
-are for, and a resource read that quietly opened network connections would be a
+what capabilities *exist* and how the plan chooses among them; it does not
+probe. Probing is ``porter_doctor``'s and ``porter_capabilities``' job, and a
+resource read that quietly opened network connections or ran ffmpeg would be a
 side effect in something a client fetches to render documentation.
 """
 
@@ -45,73 +39,96 @@ PROMPT_NAME = "localize-video"
 _WORKFLOW = """\
 # Localising a video with porter
 
-Follow these steps in order. The point of the order is that each step is cheaper
-than the one after it, so a bad input is rejected before anything expensive runs.
+Follow these steps in order. Each is cheaper than the one after it, so a bad
+input is rejected before anything expensive runs.
 
-## 1. `porter_inspect` -- is this link usable?
+## 1. `porter_doctor` -- is this machine capable?
 
-Returns metadata without downloading media. Read `is_valid`, not `ok`: `ok` says
-the call worked, `is_valid` says the link is alive. A 404 comes back as
-`ok: true, is_valid: false` on purpose -- retrying a dead link is the wrong move.
+Run it before blaming the source. It reports ffmpeg/libass, a JS runtime for
+yt-dlp, the Chinese font, the encoder, and whether any speech-to-text or
+translation route exists. `guidance` carries step-by-step fixes for failures.
+A `degraded` finding does not block; a `blocker` does.
 
-## 2. `porter_plan` -- what will actually happen?
+## 2. `porter_capabilities` -- what can each stage actually run?
 
-This is the step that prevents wasted compute. It reports:
+One row per peer capability, with `available`, `cost` and `egress`. Use it to
+choose between peers (local Whisper vs the paid Whisper API) and to explain a
+blocked plan. Unavailable entries are listed too, so "not installed" is
+distinguishable from "not supported". `egress=audio` means audio leaves the
+machine; say so before using it.
 
-- `kind` and `platform`, and the phases that will run
-- `subtitles.route`: `platform` (the site's own subtitle track) or `asr`
-  (speech recognition). `asr_runs` says whether recognition is needed.
-- `translation.needed`: false when a Chinese track is already available
-- `feasible` and `blocking_issues`: if this is false, **stop** -- the job would
-  fail after a long download
-- `notes`: read these. Two matter most:
-  - platform tracks are *requested, not guaranteed*. A caption fetch can fail
-    (sites rate-limit them, HTTP 429) and fall back to recognition.
-  - if the only available recognition backends are unverified endpoints, the
-    note says so.
+## 3. `porter_probe` -- what is this input?
 
-## 3. Confirm with the user before starting
+Returns `kind` (url / local_video / audio / subtitle), platform, title, media
+facts and the subtitle tracks the platform lists. Tracks are **requested, not guaranteed**:
+when a source lists tracks the probe adds a `TRACKS_UNVERIFIED` warning, and a
+caption fetch can still fail afterwards (rate limits, HTTP 429). An unusable
+source is `ok: true` with a warning -- do not retry those.
 
-A job can download hundreds of megabytes and run for minutes. Report what
-`porter_plan` predicted -- route, phases, burn mode -- and get agreement. If
-`feasible` is false, report the blocking issue instead of starting.
+## 4. `porter_plan` -- what will actually run?
 
-## 4. `porter_job_start` -- start it and return immediately
+Returns an executable `WorkflowPlan`:
 
-Do not wait. It returns a `job_id` in well under a second. Long work over MCP
-must be polled, not blocked on: a tool call has a timeout of a minute or two,
-while a burn takes tens of minutes.
+- `workflow`: url.subtitled / url.asr / local.subtitled / local.asr /
+  subtitle.only / audio.asr
+- `stages`: exactly one capability per stage. There is no candidate list and
+  no fallback chain.
+- `feasible` and `issues`: `blocker` issues stop the job; `warning` issues do
+  not. Read `fix` and `alternatives`; they are the next planning move.
+- `runtime`: output directory, target language, burn setting.
 
-Useful arguments: `only_phase` to stop after a phase, `burn` (`skip` to skip
-rendering), `target_lang`, `translator`/`asr_engine` to pick a backend.
+A named capability that is unavailable blocks the plan. `allow_paid` is the only
+way a paid capability is chosen without being named, and an API key in the
+environment is not consent by itself.
 
-## 5. `porter_job_status` -- poll until terminal
+## 5. Confirm with the user before starting
+
+A job can download hundreds of megabytes and run for tens of minutes. Report
+the workflow, stages, cost and egress, and get agreement. If `feasible` is
+false, report the blocking issue and its fix instead of starting.
+
+## 6. `porter_job_start(plan=...)` -- start it and return immediately
+
+Pass the plan unchanged. Planning arguments are rejected alongside a plan,
+because the plan already fixed them. Starting returns a `job_id` in well under
+a second.
+
+Do not wait. Long work over MCP must be polled, not blocked on: a tool call has
+a timeout of a minute or two, while a burn takes tens of minutes.
+
+## 7. `porter_job_status` -- poll until terminal
 
 Poll until the state is `done`, `failed` or `cancelled`. It is cheap and safe to
 call repeatedly, and it also sees jobs started by a `porter` CLI in another
 terminal.
 
-## 6. `porter_job_result` -- collect the artifacts
+## 8. `porter_job_result` -- collect the stage results
 
-Returns the output paths. `porter_job_cancel` stops a running job if the user
-changes their mind.
+Owned jobs return the full `WorkflowResult`: per-stage capability, status,
+outputs, and on failure an `error` with `retryable`, `alternatives` and
+`suggested_workflow`. Jobs started by another process return the flat registry
+record and say so.
+
+## When a stage fails
+
+There is no runtime fallback. If `retryable` is true, re-running the same plan
+is reasonable. Otherwise choose one of the reported `alternatives`, or follow
+`suggested_workflow`, and call `porter_plan` again with that choice. Do not
+expect the executor to switch engines on its own.
 
 ## Checking the output
 
-Read `porter_job_result`'s artifact paths and confirm the files exist and are
-non-trivial in size. A release video that is unexpectedly small usually means the
-encode failed rather than that the video was short.
+Read the artifact paths and confirm the files exist and are non-trivial in size.
+A release video that is unexpectedly small usually means the encode failed, not
+that the video was short.
 
-## When something is wrong
+## Other tools
 
-- **`porter_doctor`** -- is this machine capable? ffmpeg/libass, a JS runtime for
-  yt-dlp, fonts, the encoder. Run it before blaming the video.
-- **`porter_config`** -- what settings resolved, with secrets masked. Read-only;
-  API keys are configured with the `porter` CLI, never over MCP.
-- **Recognition failed** -- transcription needs a Whisper API key or a
-  VideoCaptioner CLI. The key-free speech endpoints are not usable. If the video
-  has no platform subtitle track, there is no working route, and the plan's
-  `blocking_issues` is where that shows up.
+- **`porter_config`** -- resolved settings, secrets masked. Read-only; keys are
+  configured with the `porter` CLI, never over MCP.
+- **`porter_translate` / `porter_transcribe` / `porter_burn`** -- artifact-level
+  operations on files you already have, not pipeline runs. A URL belongs in a
+  job.
 """
 
 
@@ -131,61 +148,88 @@ def _platform_rows() -> list[str]:
     return rows
 
 
-def _backend_rows() -> list[str]:
-    """The backend tables, read from the chains the pipeline actually builds.
+def _stage_rows() -> list[str]:
+    """The stage table, derived from the enum and the capability ids."""
+    from porter.core.workflow.capabilities import CAPABILITY_IDS
+    from porter.core.workflow.model import Stage
 
-    Built from ``Pipeline.default`` so this cannot drift from what a run uses.
-    Nothing is probed: ``.backends`` is just the configured list, and
-    ``endpoint_verified`` is a declaration, not a measurement.
-    """
-    from porter.core.context import RunContext
-    from porter.core.models.request import JobOptions
+    purposes = {
+        Stage.PROBE: "read source facts",
+        Stage.ACQUIRE: "bring the media in",
+        Stage.NORMALIZE: "master video/audio",
+        Stage.TRANSCRIPT: "source-language transcript",
+        Stage.TRANSLATE: "target-language subtitles",
+        Stage.WRITE: "write SRT/ASS",
+        Stage.RENDER: "burn hardsubs",
+    }
+    rows = ["| stage | does | capabilities |", "| --- | --- | --- |"]
+    for stage in Stage:
+        ids = [capability for capability in CAPABILITY_IDS if capability.startswith(f"{stage.value}.")]
+        rows.append(
+            f"| `{stage.value}` | {purposes[stage]} | "
+            + ", ".join(f"`{capability}`" for capability in ids)
+            + " |"
+        )
+    return rows
 
-    ctx = RunContext(job_id="docs", options=JobOptions())
-    from porter.core.pipeline import Pipeline
 
-    pipeline = Pipeline.default(ctx)
+def _workflow_rows() -> list[str]:
+    """The workflow names, derived from the enum."""
+    from porter.core.workflow.model import WorkflowId
 
-    rows = [
-        "| backend | chain | endpoint verified |",
-        "| --- | --- | --- |",
-    ]
-    for chain_name, chain in (
-        ("asr", pipeline.transcriber),
-        ("translate", pipeline.translator),
-    ):
-        for backend in getattr(chain, "backends", []):
-            verified = "yes" if getattr(backend, "endpoint_verified", False) else "no"
-            rows.append(f"| `{backend.name}` | {chain_name} | {verified} |")
+    rows = ["| workflow | source | transcript route |", "| --- | --- | --- |"]
+    for workflow in WorkflowId:
+        source = "URL" if workflow.value.startswith("url.") else "local"
+        route = {
+            "url.subtitled": "platform track",
+            "url.asr": "speech recognition",
+            "local.subtitled": "supplied/platform track",
+            "local.asr": "speech recognition",
+            "subtitle.only": "supplied subtitle",
+            "audio.asr": "speech recognition",
+        }[workflow.value]
+        rows.append(f"| `{workflow.value}` | {source} | {route} |")
     return rows
 
 
 def _render_architecture() -> str:
     """Render the architecture document."""
-    from porter.core.events import Phase
-
     lines = [
         "# porter architecture",
         "",
-        "porter localises a video into Chinese: it acquires the media, produces a",
-        "transcript, translates it, and burns subtitles into a release video.",
+        "porter localises a video (or processes a local subtitle/audio file) by",
+        "resolving one workflow plan and executing exactly that plan. The plan is",
+        "the contract: every frontend builds the same model and the executor obeys",
+        "it.",
         "",
-        "## The four phases",
+        "## Stages",
         "",
-        "Each phase consumes the previous phase's in-memory result and writes its",
-        "own artifacts, so a failure leaves the completed earlier phases on disk.",
+        "A stage is one unit of work. A plan contains **exactly one capability per",
+        "stage**; capabilities are peers, not a fallback chain. Whether a stage is",
+        "present is decided while planning, so execution has no conditional",
+        "branches.",
         "",
-        "| phase | does | writes |",
-        "| --- | --- | --- |",
-        "| `prepare` | acquire the media, standardise it, extract audio | `raw/` |",
-        "| `transcribe` | the platform's subtitle track, or speech recognition | `raw/subtitle.srt` |",
-        "| `translate` | sentence-level translation and cue reconstruction | `cooked/*.srt`, `cooked/*.ass` |",
-        "| `burn` | render the release video(s) | `cooked/*.mp4` |",
+        *_stage_rows(),
         "",
-        f"Phases, in order: {', '.join(f'`{p.value}`' for p in Phase)}.",
+        "## Workflows",
         "",
-        "`only_phase` means *stop after this phase*, not *run only this phase* --",
-        "each phase needs the previous one's output, so the earlier phases still run.",
+        "The resolver chooses a workflow from the observed source facts, not from",
+        "the platform name.",
+        "",
+        *_workflow_rows(),
+        "",
+        "## Capability policy",
+        "",
+        "- `cost=free` needs nothing external beyond the local package.",
+        "- `cost=network` is free but requires a connection.",
+        "- `cost=paid` is excluded by default. It is selected only when named",
+        "  explicitly, or when the plan was allowed to spend (`allow_paid`).",
+        "- `egress=audio` uploads audio to a third party; `egress=text` sends",
+        "  subtitle text. Both are reported before the job starts.",
+        "",
+        "Use `porter_capabilities` for live availability, cost and egress. This",
+        "document does not probe -- opening sockets or running ffmpeg to render",
+        "documentation would be a side effect a resource read must not have.",
         "",
         "## Platforms",
         "",
@@ -199,21 +243,12 @@ def _render_architecture() -> str:
         "A platform with no track always runs recognition, whatever the video's",
         "metadata claims about captions.",
         "",
-        "## Backends",
-        "",
-        "Each chain is tried in order until one succeeds. \"Endpoint verified\" means",
-        "the wire format was checked against the live service at some point; an",
-        "unverified backend is reverse-engineered and may break without notice.",
-        "**This is not a live availability check** -- use `porter_doctor` or",
-        "`porter_plan` for that.",
-        "",
-        *_backend_rows(),
-        "",
         "## Working with porter over MCP",
         "",
         "Use the `localize-video` prompt for the step-by-step workflow. In short:",
-        "`porter_inspect` -> `porter_plan` -> confirm with the user ->",
-        "`porter_job_start` -> poll `porter_job_status` -> `porter_job_result`.",
+        "`porter_doctor` -> `porter_capabilities` -> `porter_probe` ->",
+        "`porter_plan` -> confirm with the user -> `porter_job_start(plan=...)` ->",
+        "poll `porter_job_status` -> `porter_job_result`.",
         "",
         "The job API is the reliable path for anything long. The stage tools",
         "(`porter_translate`, `porter_burn`) operate on files you already have, and",
@@ -236,7 +271,7 @@ def register(server: FastMCP) -> None:
     @server.resource(ARCHITECTURE_URI)
     @protect
     def architecture() -> str:
-        """How porter is put together: phases, platforms, backends, workflow."""
+        """How porter is put together: stages, workflows, capabilities, workflow."""
         try:
             return _render_architecture()
         except PorterError as exc:  # pragma: no cover - assembly needs no config
@@ -266,8 +301,9 @@ def register(server: FastMCP) -> None:
     @server.prompt(
         name=PROMPT_NAME,
         description=(
-            "Step-by-step workflow for localising a video with porter: inspect, "
-            "plan, confirm, start a job, poll, and check the result."
+            "Step-by-step workflow for localising a video with porter: check the "
+            "machine and capabilities, probe, plan, confirm, start the plan, poll, "
+            "and read the stage results."
         ),
     )
     @protect
@@ -276,7 +312,8 @@ def register(server: FastMCP) -> None:
         if source:
             return (
                 f"Localise this video: {source}\n\n"
-                "Start with `porter_inspect` on that link, then `porter_plan`, and "
-                "confirm the plan with me before starting a job.\n\n" + _WORKFLOW
+                "Start with `porter_doctor`, then `porter_capabilities`, then "
+                "`porter_probe` on that source. Call `porter_plan` and confirm the "
+                "plan with me before starting a job.\n\n" + _WORKFLOW
             )
         return _WORKFLOW

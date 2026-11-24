@@ -3,12 +3,16 @@
 ## 稳定性承诺
 
 ```python
-from porter import JobOptions, JobRequest, Pipeline, RunContext
+from porter import PlanOverrides, RunContext, execute_plan, resolve_plan
 ```
 
 这是受支持的库接口。`porter.__all__` 里的符号属于公开 API；`porter.core.*`
 是内部实现，可以随版本调整。内部 import 布局（例如 `porter.models`）不再是
 公开路径。
+
+CLI、MCP、WebUI 三个前端与公开工作流 API 共用同一套模型（`WorkflowPlan` /
+`resolve_plan` / `execute_plan`，每阶段单一对等能力、无运行期回退）。根包也继续
+导出底层 `Pipeline` 供需要自定义端口注入的调用方使用。
 
 三个 console script 的名称也是稳定的：`porter`、`porter-mcp`、`porter-web`。
 
@@ -16,7 +20,10 @@ from porter import JobOptions, JobRequest, Pipeline, RunContext
 
 | 类别 | 符号 |
 | --- | --- |
-| 编排 | `Pipeline` |
+| 工作流入口 | `capability_catalog`、`probe_source`、`resolve_plan`、`execute_plan` |
+| 工作流模型 | `WorkflowPlan`、`WorkflowResult`、`ExecutionOutcome`、`PlanOverrides`、`PlanIssue`、`StagePlan`、`StageResult`、`StageError`、`SourceProbe`、`CapabilityDescriptor` |
+| 工作流枚举 | `Stage`、`WorkflowId`、`Task`、`SourceKind` |
+| 底层编排 | `Pipeline` |
 | 请求/结果 | `JobOptions`、`JobRequest`、`JobResult` |
 | 上下文 | `RunContext` |
 | 事件 | `Event`、`EventSink`、`Phase`、`JobState`、`ArtifactKind`、`AwaitingUserAction` |
@@ -26,9 +33,48 @@ from porter import JobOptions, JobRequest, Pipeline, RunContext
 | 日志 | `get_logger`、`configure_logging`、`__version__` |
 
 `import porter` 本身只加载标准库与 `porter.core.errors` / `core.logging`；
-`JobOptions`、`Pipeline` 等符号在第一次访问时才 import 对应模块。
+`WorkflowPlan`、`resolve_plan`、`Pipeline` 等符号在第一次访问时才 import 对应模块。
 
-## 最小用法
+## 最小用法（工作流模型，推荐）
+
+```python
+from pathlib import Path
+
+from porter import (
+    JobOptions,
+    PlanOverrides,
+    RunContext,
+    configure_logging,
+    execute_plan,
+    resolve_plan,
+)
+
+configure_logging("info")
+
+options = JobOptions(output_dir=Path("./porter_output"))
+ctx = RunContext(job_id="example", options=options)
+
+plan = resolve_plan(
+    "https://www.youtube.com/watch?v=...",
+    PlanOverrides(output_dir=options.output_dir),
+    ctx,
+)
+if not plan.feasible:
+    for issue in plan.blockers:
+        print(issue.code, issue.message, issue.fix)
+else:
+    outcome = execute_plan(plan, ctx)
+    wf = outcome.workflow
+    if wf.error is not None:
+        print(wf.error.code, wf.error.message, wf.error.alternatives)
+    else:
+        print(wf.task_dir, wf.artifacts)
+```
+
+`resolve_plan()` 与 `execute_plan()` 均以结构化模型返回阻塞项或预期失败，不依赖
+隐式回退链；`WorkflowPlan` 与 `WorkflowResult` 均可 `model_dump(mode="json")` 序列化。
+
+## 底层 `Pipeline` 用法
 
 ```python
 from pathlib import Path

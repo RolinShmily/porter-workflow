@@ -52,10 +52,14 @@ def create_server() -> Any:
     server = FastMCP(
         name=SERVER_NAME,
         instructions=(
-            "Automated video localization. Typical flow: porter_inspect to check a "
-            "link, then porter_job_start to run the pipeline, then poll "
-            "porter_job_status until the state is 'done'. Prefer the job tools over "
-            "blocking calls — encoding can take tens of minutes."
+            "Automated video localization with an explicit plan. Typical flow: "
+            "porter_doctor for machine health, porter_capabilities for the stage "
+            "inventory, porter_probe for source facts, porter_plan for the "
+            "executable WorkflowPlan, then confirm with the user and call "
+            "porter_job_start(plan=...) with that plan unchanged. Poll "
+            "porter_job_status until 'done', then porter_job_result. A plan names "
+            "exactly one capability per stage; there is no runtime fallback, so a "
+            "failed stage is replanned rather than retried on another engine."
         ),
     )
     register_all(server)

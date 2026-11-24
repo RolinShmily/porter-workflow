@@ -1,7 +1,8 @@
 # 扩展点
 
-平台、ASR 后端和翻译后端是最常见的三类贡献。它们各自有注册表、协议和一个
-“失败要让链继续走”的约定。
+平台、ASR 能力和翻译能力是最常见的三类贡献。每个阶段的能力都是**对等**的：
+它们各自实现窄协议，并在工作流能力注册表里声明前提、成本与外发方向；执行期不做
+跨能力回退，失败时由引擎返回结构化替代项供重新 `plan`。
 
 ## 新增平台
 
@@ -19,31 +20,34 @@
 平台提取器只负责“拿到素材”；标准化、音频提取、增强、封面和元数据由
 `media/prepare.py` 统一完成。不要把这段流程复制到新平台里。
 
-## 新增 ASR 后端
+## 新增 ASR 能力
 
-ASR 层在 `src/porter/core/asr/`：
+ASR 层在 `src/porter/core/asr/`，注册在 `src/porter/core/workflow/`：
 
 1. 实现 `asr/base.py` 的窄协议：`name`、`available(ctx)`、`transcribe(audio, ctx)`。
 2. `available()` 必须是廉价、永不抛异常的探测；`transcribe()` 失败时抛
-   `AsrError`，让 `AsrChain` 尝试下一个后端。
-3. 在 `asr/chain.py` 的候选列表中注册，并决定默认位置。
-4. 如果后端需要可选依赖或外部二进制，放进 extra，并在
-   `doctor/probes.py` 加对应的事实探测。
-5. 测试：`available()` 的真假分支、成功路径、失败后链继续走到下一个后端。
+   `AsrError`（返回空结果同样按失败处理）。
+3. 在 `core/workflow/capabilities.py` 声明新的 `transcript.*` 能力描述符
+   （`cost`、`egress`、`requires`、`download_mb`），并在 `resolver.py` 与
+   `executor.py` 中接入解析与单能力构造。
+4. 如果能力需要可选依赖，放进 `pyproject.toml` 对应 extra，并在
+   `doctor/probes.py` 加事实探测。
+5. 测试：`available()` 的真假分支、成功路径、失败报错以及计划解析/付费门控行为。
 
 不要在后端里写字幕文件或做翻译；它只返回 `SubtitleItem` 列表。
 
-## 新增翻译后端
+## 新增翻译能力
 
-翻译层在 `src/porter/core/translate/`，形状与 ASR 镜像：
+翻译层在 `src/porter/core/translate/`，注册在 `src/porter/core/workflow/`：
 
 1. 实现 `translate/base.py` 的协议：`name`、`available(ctx)`、
    `translate(texts, source_lang, target_lang, ctx)`。
-2. 在 `translate/chain.py` 的 `FALLBACK_ORDER` 中注册。
-3. 链会做 CJK 自检：目标语言是中文但输出没有 CJK 字符时，视为“假翻译”并
-   继续下一个后端。新后端必须返回真实目标语言，不能把源文原样带回。
-4. 批量请求失败时按句降级，而不是整条后端失败；这是链的既有契约。
-5. 测试：正常翻译、限流/超时、CJK 自检拒绝、回退顺序。
+2. 在 `core/workflow/capabilities.py` 声明新的 `translate.*` 能力描述符，并在
+   `resolver.py` 与 `executor.py`（含 `build_translation_chain`）中接入。
+3. 执行层会做 CJK 自检：目标语言是中文但输出没有 CJK 字符时，视为“假翻译”并
+   判定该能力失败。新能力必须返回真实目标语言，不能把源文原样带回。
+4. 批量请求失败时可在**同一能力内**按句降级重试，而不是整条能力立即崩溃。
+5. 测试：正常翻译、限流/超时、CJK 自检拒绝、计划解析与付费门控。
 
 翻译后端只接收文本、返回文本；句子合并、断句和 ASS 渲染属于
 `core/subtitles/`，不要在翻译后端里重做。
@@ -69,7 +73,7 @@ MCP 层在 `src/porter/mcp/tools/`：
 
 ## 通用约束
 
-- 新后端必须**可失败**：错误要能让链继续，不能把整个管线拖垮。
+- 新能力必须诚实失败：不吞异常、不把源文原样当译文；错误附带可操作的上下文。
 - 不要新增 copyleft 硬依赖；见 [gate.md](gate.md#licence-rules)。
-- 新能力放进可选 extra，保持零配置路径可用。
+- 重型或付费能力放进可选 extra，并在能力描述符中声明 `cost` 与 `egress`，保持零配置路径可用。
 - 行为变更同时更新 `CHANGELOG.md` 和相关文档。

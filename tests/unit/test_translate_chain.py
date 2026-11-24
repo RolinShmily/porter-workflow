@@ -412,8 +412,8 @@ class TestOutput:
         assert "PlayResX: 640" in text
         assert "PlayResY: 360" in text
         # Under 360p, 52 font size should scale to 18
-        assert "Style: SubtitleZh,Microsoft YaHei,18," in text
-        assert "Style: SubtitleEn,Arial,12," in text
+        assert f"Style: SubtitleZh,{ctx.config.style.zh_font},18," in text
+        assert f"Style: SubtitleEn,{ctx.config.style.en_font},12," in text
 
     def test_target_lang_is_passed_through(self, ctx, tmp_path) -> None:
         seen: list[str] = []

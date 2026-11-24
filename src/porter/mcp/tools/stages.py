@@ -1,9 +1,10 @@
-"""Tools: the three phase-level stages.
+"""Tools: operations on artifacts, outside the workflow plan.
 
-The stage tools work on **artifacts**, not on pipeline runs: an SRT in and an
-SRT out, a video plus an ASS in and a video out. That is what makes them worth
-having next to ``porter_job_start`` -- an agent can translate a subtitle file it
-already has, or burn a track it just corrected, without re-running acquisition.
+The stage tools work on **files, not sources**: an SRT in and an SRT out, a
+video plus an ASS in and a video out. That is what makes them worth having next
+to ``porter_job_start`` -- an agent can translate a subtitle file it already has,
+transcribe one local clip, or burn a track it just corrected, without re-running
+acquisition.
 
 They are blocking, and the job API remains the reliable path because an MCP
 tool call has a timeout of a minute or two, and a 1080p burn takes tens of
@@ -18,14 +19,14 @@ finishes quickly**:
     A **local** media file. Accepted because the alternative -- fetching a URL
     first -- is a download, and a download is exactly the long task the job API
     exists for. A URL is refused with a pointer to
-    ``porter_job_start(only_phase="transcribe")`` rather than accepted and then
-    timing out. The input was first specified as ``audio|url``; the ``url`` half moved to
-    the job API, and this is the honest place to record that.
+    ``porter_job_start`` rather than accepted and then timing out.
 
-None of these re-derive anything. The chain comes from ``Pipeline.default(ctx)``
-and the encoder verdict from the same ``EncoderSelector`` the burn phase uses, so
-a stage tool and a full run cannot disagree about which backend or encoder they
-picked.
+**No fallback chains.** ``porter_translate`` resolves a plan for the subtitle
+and builds a translation chain containing exactly the capability that plan
+selected. ``porter_transcribe`` resolves a transcribe plan and runs it through
+the same executor as a job, a single ASR capability. The encoder verdict comes
+from the same ``EncoderSelector`` the burn phase uses, so a stage tool and a full
+run cannot disagree about which capability or encoder they picked.
 """
 
 from __future__ import annotations
@@ -36,9 +37,9 @@ from typing import TYPE_CHECKING, Any
 from porter.core.config import resolve
 from porter.core.context import RunContext
 from porter.core.errors import PorterError
-from porter.core.events import Phase, null_sink
+from porter.core.events import JobState, null_sink
 from porter.core.logging import get_logger
-from porter.core.models.request import BurnMode, JobOptions, JobRequest
+from porter.core.models.request import JobOptions
 from porter.core.models.subtitle import SubtitleItem, SubtitleSet
 from porter.mcp.limits import HEAVY, LIGHT
 from porter.mcp.stdout_guard import protect
@@ -137,10 +138,44 @@ def register(server: FastMCP) -> None:
         except OSError as exc:
             return {"ok": False, "error": f"could not create {out_dir}: {exc}"}
 
+        # Resolve a plan so the choice between translation peers goes through the
+        # same availability and paid-consent rules as a job. The plan is not
+        # executed here: this tool has no media and wants the cue objects back,
+        # so it uses the plan's single capability directly.
+        from porter.core.workflow.executor import build_translation_chain
+        from porter.core.workflow.model import Stage
+        from porter.mcp.tools.planning import plan_for
+
+        try:
+            plan = plan_for(
+                str(source),
+                task="subtitle",
+                output_dir=str(out_dir),
+                target_lang=target_lang,
+                translate=backend,
+                force_translate=True,
+            )
+        except (PorterError, ValueError) as exc:
+            message = exc.message if isinstance(exc, PorterError) else str(exc)
+            return {"ok": False, "error": message}
+
+        if not plan.feasible:
+            issue = plan.blockers[0] if plan.blockers else None
+            return {
+                "ok": False,
+                "error": issue.message if issue is not None else "the plan is not feasible",
+                "fix": issue.fix if issue is not None else None,
+                "alternatives": list(issue.alternatives) if issue is not None else [],
+                "issues": [item.model_dump(mode="json") for item in plan.issues],
+            }
+
+        translate_stage = plan.stage(Stage.TRANSLATE)
+        if translate_stage is None:
+            return {"ok": False, "error": "the plan chose not to translate this subtitle"}
+
         options = JobOptions(
             output_dir=out_dir,
             target_lang=target_lang,
-            translator=backend,
             # No recognition happens here, so the denoise pass would be wasted work
             # on a source that has already been through it.
             audio_denoise=False,
@@ -158,20 +193,18 @@ def register(server: FastMCP) -> None:
 
         with LIGHT:
             try:
-                from porter.core.pipeline import Pipeline
-
-                # The same chain a full run would build, from the same constructor.
-                translated = Pipeline.default(ctx).translator.translate(
+                translated = build_translation_chain(translate_stage.capability).translate(
                     subtitles, target_lang, ctx
                 )
             except PorterError as exc:
-                return {"ok": False, "error": exc.message, "details": getattr(exc, "context", None)}
+                return {"ok": False, "error": exc.message, "details": dict(exc.details)}
 
         limit = max_cues if max_cues > 0 else None
         merged = len(translated.items) != len(items)
         return {
             "ok": True,
             "target_lang": target_lang,
+            "capability": translate_stage.capability,
             "input_cue_count": len(items),
             "cue_count": len(translated.items),
             # Reported rather than quietly reconciled: the chain merges short
@@ -278,10 +311,10 @@ def register(server: FastMCP) -> None:
         name="porter_transcribe",
         description=(
             "Produce a transcript for a LOCAL media file (audio or video) and "
-            "return the cues. Uses the platform's own subtitle track when the "
-            "source is a URL, so for a URL call porter_job_start with "
-            "only_phase='transcribe' instead: fetching a URL is a download, and a "
-            "download is a long task."
+            "return the cues. Resolves a transcribe plan and runs exactly one ASR "
+            "capability, with no fallback. For a URL use porter_plan with "
+            "task='transcribe' and porter_job_start: fetching a URL is a download, "
+            "and a download is a long task."
         ),
     )
     @protect
@@ -304,9 +337,10 @@ def register(server: FastMCP) -> None:
                 "ok": False,
                 "error": "porter_transcribe takes a local file, not a URL",
                 "hint": (
-                    "Use porter_job_start with only_phase='transcribe' for a URL: "
-                    "it returns a job id immediately and you poll "
-                    "porter_job_status, which does not hit the tool-call timeout."
+                    "Use porter_plan with task='transcribe' for a URL, then pass "
+                    "that plan to porter_job_start: it returns a job id immediately "
+                    "and you poll porter_job_status, which does not hit the "
+                    "tool-call timeout."
                 ),
             }
 
@@ -316,42 +350,84 @@ def register(server: FastMCP) -> None:
         if not path.is_file():
             return {"ok": False, "error": f"not a file: {path}"}
 
+        # A plan fixes the single ASR capability and records the paid-consent
+        # decision. Running the executor means this tool cannot fall back to a
+        # different engine than the one reported.
+        from porter.core.workflow.executor import execute_plan
+        from porter.core.workflow.model import Stage
+        from porter.mcp.tools.planning import plan_for
+
         try:
-            options = JobOptions(
-                output_dir=config.output_dir,
-                asr_engine=engine,
-                # Stop after recognition: this tool exists to produce the
-                # transcript, and running on would translate and encode work the
-                # caller did not ask for.
-                only_phase=Phase.TRANSCRIBE,
-                burn=BurnMode.SKIP,
-            )
-            request = JobRequest.from_source(str(path), options)
+            plan = plan_for(str(path), task="transcribe", transcript=engine)
         except (PorterError, ValueError) as exc:
-            return {"ok": False, "error": str(exc)}
+            message = exc.message if isinstance(exc, PorterError) else str(exc)
+            return {"ok": False, "error": message}
 
-        ctx = RunContext(job_id="stage-transcribe", options=options, config=config, events=null_sink)
-
-        with HEAVY:
-            from porter.core.pipeline import Pipeline
-
-            result = Pipeline.default(ctx).run(request, ctx)
-
-        if result.subtitles is None:
+        if not plan.feasible:
+            issue = plan.blockers[0] if plan.blockers else None
             return {
                 "ok": False,
-                "error": result.error.message if result.error else "recognition produced nothing",
-                "state": result.state.value,
+                "error": issue.message if issue is not None else "the plan is not feasible",
+                "fix": issue.fix if issue is not None else None,
+                "alternatives": list(issue.alternatives) if issue is not None else [],
+                "issues": [item.model_dump(mode="json") for item in plan.issues],
             }
 
+        ctx = RunContext(
+            job_id="stage-transcribe",
+            options=JobOptions(output_dir=Path(plan.runtime.output_dir)),
+            config=config,
+            events=null_sink,
+        )
+
+        with HEAVY:
+            try:
+                outcome = execute_plan(plan, ctx)
+            except PorterError as exc:
+                return {"ok": False, "error": exc.message, "details": dict(exc.details)}
+
+        workflow = outcome.workflow
+        if workflow.state is not JobState.DONE:
+            error = workflow.error
+            payload: dict[str, Any] = {
+                "ok": False,
+                "error": error.message if error is not None else "recognition produced nothing",
+                "state": workflow.state.value,
+                "plan_id": workflow.plan_id,
+            }
+            if error is not None:
+                payload["alternatives"] = list(error.alternatives)
+                payload["suggested_workflow"] = (
+                    error.suggested_workflow.value
+                    if error.suggested_workflow is not None
+                    else None
+                )
+            return payload
+
+        srt_path = workflow.artifacts.get("source_transcript")
+        if not srt_path:
+            return {
+                "ok": False,
+                "error": "recognition finished without writing a source transcript",
+                "state": workflow.state.value,
+                "plan_id": workflow.plan_id,
+            }
+
+        try:
+            items = _read_srt(Path(srt_path))
+        except PorterError as exc:
+            return {"ok": False, "error": exc.message, "plan_id": workflow.plan_id}
+
         limit = max_cues if max_cues > 0 else None
-        items = result.subtitles.items
+        transcript_stage = plan.stage(Stage.TRANSCRIPT)
         return {
             "ok": True,
+            "plan_id": workflow.plan_id,
+            "capability": transcript_stage.capability if transcript_stage else None,
             "cue_count": len(items),
             "cues": _cues(items, limit),
             "cues_truncated": limit is not None and len(items) > limit,
-            "subtitle_srt": str(result.subtitles.subtitle_bilingual_srt),
-            "transcript_txt": str(result.subtitles.transcript_txt_path),
-            "task_dir": str(result.task_dir) if result.task_dir else None,
+            "subtitle_srt": srt_path,
+            "transcript_txt": workflow.artifacts.get("transcript_txt"),
+            "task_dir": workflow.task_dir,
         }

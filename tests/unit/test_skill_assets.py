@@ -17,8 +17,6 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -65,66 +63,49 @@ class TestSkillLayout:
         for rel in (
             "SKILL.md",
             "README.md",
-            "scripts/porter.sh",
-            "scripts/porter.ps1",
-            "scripts/inspect.sh",
-            "scripts/bootstrap.sh",
+            "scripts/porter.py",
+            "scripts/bootstrap.py",
             "references/ARCHITECTURE.md",
             "references/CONFIG.md",
             "references/MCP.md",
             "references/HOSTS.md",
+            "references/PLAN.md",
             "references/SETUP.md",
             "references/WEBUI.md",
             "assets/config.example.json",
         ):
             assert (SKILL_ROOT / rel).is_file(), f"missing {rel}"
 
-    def test_the_scripts_are_recorded_executable(self) -> None:
-        """The executable bit lives in the git index, not on NTFS.
+    def test_the_scripts_are_python_only(self) -> None:
+        """One implementation, not a Bash/PowerShell pair to keep in sync.
 
-        ``stat()`` cannot express it on Windows: this checkout reports ``0o100666``
-        for files the index records as ``100755``, because NTFS has nowhere to put
-        a POSIX mode. Asserting on ``st_mode`` therefore fails for a reason that has
-        nothing to do with the asset. The index is the meaningful source -- it is
-        what a Linux checkout materialises, and what the one-line install runs.
+        The state-directory rules and ``uvx`` invocation are identical on every
+        host, so a second shell implementation is duplicate logic with a second
+        set of bugs. Python is already a prerequisite of the skill.
         """
-        if shutil.which("git") is None:
-            pytest.skip("git is not installed")
-        listing = subprocess.run(
-            ["git", "ls-files", "-s", "--", "skills/porter-skill/scripts"],
-            capture_output=True,
-            text=True,
-            cwd=REPO_ROOT,
-        )
-        assert listing.returncode == 0, listing.stderr
-        modes = {
-            line.split("\t")[-1]: line.split()[0] for line in listing.stdout.splitlines()
-        }
-        for name in ("porter.sh", "inspect.sh", "bootstrap.sh"):
-            rel = f"skills/porter-skill/scripts/{name}"
-            assert modes.get(rel) == "100755", f"{rel} is {modes.get(rel)}, not 100755"
+        scripts = sorted(p.name for p in (SKILL_ROOT / "scripts").iterdir() if p.is_file())
+        assert scripts == ["bootstrap.py", "porter.py"], scripts
 
-    def test_the_scripts_parse_as_bash(self) -> None:
-        for name in ("porter.sh", "inspect.sh", "bootstrap.sh"):
-            # Piped in rather than passed as a path. `bash` on a developer machine
-            # may be git-bash, WSL bash or a Linux bash, and each wants a different
-            # spelling of the same Windows path -- MSYS strips the backslashes and
-            # WSL wants /mnt/c/... -- so a path assertion fails for a reason that
-            # has nothing to do with the script.
-            #
-            # Bytes, not ``text=True``: on Windows the text path translates ``\n``
-            # to ``\r\n`` while writing to the child's stdin, so bash receives
-            # ``then\r`` -- which is not the ``then`` keyword -- and reports the
-            # ``if`` as unclosed. That is a property of the harness, not of the
-            # script, and it produced exactly that false failure.
-            result = subprocess.run(
-                ["bash", "-n"],
-                input=(SKILL_ROOT / "scripts" / name).read_bytes(),
-                capture_output=True,
-            )
-            assert result.returncode == 0, (
-                f"{name}: {result.stderr.decode('utf-8', 'replace')}"
-            )
+    def test_the_scripts_parse_as_python(self) -> None:
+        for name in ("porter.py", "bootstrap.py"):
+            source = (SKILL_ROOT / "scripts" / name).read_text(encoding="utf-8")
+            compile(source, name, "exec")
+
+    def test_the_docs_do_not_advertise_removed_shell_wrappers(self) -> None:
+        stale = ("porter.sh", "porter.ps1", "inspect.sh", "bootstrap.sh", "probe.sh")
+        for rel in (
+            "SKILL.md",
+            "README.md",
+            "references/SETUP.md",
+            "references/HOSTS.md",
+            "references/PLAN.md",
+            "references/MCP.md",
+            "references/WEBUI.md",
+            "references/ARCHITECTURE.md",
+        ):
+            text = (SKILL_ROOT / rel).read_text(encoding="utf-8")
+            for name in stale:
+                assert name not in text, f"{rel} still advertises {name}"
 
 
 # ---------------------------------------------------------------------------
@@ -185,30 +166,74 @@ class TestSkillText:
     def test_it_does_not_repeat_the_zero_key_claim(self) -> None:
         """The plan names this explicitly as something not to carry forward.
 
-        v0.1 advertised a "pure Python, zero-key" closed loop. The key-free
-        *endpoints* have stopped working; the honest replacement is local Whisper
-        behind an explicit extra, not an unconditional zero-key promise.
+        v0.1 advertised a "pure Python, zero-key" closed loop. The only key-free
+        ASR is local Whisper behind an explicit extra, and the skill must say so.
         """
         text = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
         assert "纯 Python 零 Key 闭环" not in text
         assert "asr-local" in text
         assert "免 Key" in text
 
-    def test_it_states_the_transcription_routes(self) -> None:
+    def test_the_environment_comes_before_the_workflow(self) -> None:
+        """The SOP's first job is to establish the complete runtime environment.
+
+        This is the ordering the skill exists for: an agent must not plan a job
+        on a machine whose capabilities it has not checked. `doctor`,
+        `capabilities` and `probe` all have to appear before the workflow model.
+        """
         text = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
-        assert "OPENAI_API_KEY" in text
+
+        assert "完整运行环境" in text
+        assert "guidance" in text, "doctor's JSON remediation is not mentioned"
+
+        workflow_heading = text.index("## 1. 工作流模型")
+        for command in ("doctor", "capabilities", "probe"):
+            assert text.index(command) < workflow_heading, (
+                f"{command} is introduced after the workflow model"
+            )
+
+    def test_it_states_the_transcript_capabilities(self) -> None:
+        text = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        assert "OPENAI_API_KEY" in text or "WHISPER_API_KEY" in text
         assert "asr-local" in text
-        assert "every speech-to-text backend failed" in text
+        assert "whisper-api" in text
+        assert "NO_CAPABILITY" in text, "the no-backend failure must be named"
+        assert "platform-track" in text
 
     def test_it_says_translation_needs_no_key(self) -> None:
         """The other half of the truth: the skill must not overcorrect."""
         text = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
-        assert "不需要" in text
+        assert "免 Key" in text
+        assert "Bing" in text
 
     def test_it_warns_that_platform_tracks_are_not_guaranteed(self) -> None:
         text = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
         assert "requested, not guaranteed" in text
         assert "429" in text
+
+    def test_it_describes_the_plan_contract_and_saves_plans(self) -> None:
+        """`run --plan` is the reproducible form; a plan left only in a pipe is not."""
+        text = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        assert "plan --json" in text
+        assert "run --plan" in text
+        assert "plan.json" in text
+        assert "feasible" in text
+        assert "plan_id" in text
+
+    def test_it_forbids_fallback_and_requires_replanning(self) -> None:
+        """The whole architectural change: no runtime cross-capability fallback."""
+        text = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        assert "没有运行期回退链" in text or "没有回退" in text
+        assert "alternatives" in text
+        assert "suggested_workflow" in text
+        assert "重新 plan" in text or "重新规划" in text
+        assert "VideoCaptioner" not in text, "the external CLI is no longer a backend"
+
+    def test_it_requires_paid_consent(self) -> None:
+        text = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        assert "allow-paid" in text
+        assert "付费" in text
+        assert "cost=paid" in text or "cost" in text
 
     def test_it_says_to_confirm_before_starting(self) -> None:
         text = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
@@ -244,24 +269,21 @@ class TestSkillText:
         text = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
         assert "不会" in text and "MCP" in text
 
-    def test_it_chooses_a_channel_before_running(self) -> None:
-        """The SOP must not assume every host has the same entry point."""
+    def test_cli_is_canonical_and_every_frontend_shares_the_plan(self) -> None:
+        """CLI stays the reference contract; MCP/WebUI execute the same plan."""
         text = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
-        assert "执行通道" in text
         assert "CLI" in text and "MCP" in text and "WebUI" in text
-
-    def test_it_checks_environment_and_configuration_first(self) -> None:
-        text = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
-        assert "环境与依赖" in text
-        assert "配置检查" in text
-        assert "doctor" in text
-        assert "config list" in text
+        assert "WorkflowPlan" in text
+        assert "porter.core.plan" not in text
+        assert "未迁移" not in text
 
     def test_it_documents_webui_operations(self) -> None:
         text = (SKILL_ROOT / "references" / "WEBUI.md").read_text(encoding="utf-8")
         for tab in ("工作台", "任务总览", "配置", "体检"):
             assert tab in text
         assert "AWAITING_USER" in text
+        assert "WorkflowPlan" in text
+        assert "未迁移" not in text, "the WebUI now runs the same plan"
 
 
 class TestMcpReference:
@@ -270,11 +292,18 @@ class TestMcpReference:
         assert "porter-mcp" in text
         assert "mcpServers" in text
 
-    def test_it_names_the_sampling_advantage(self) -> None:
-        """The one capability the CLI cannot have, which justifies the MCP path."""
+    def test_it_documents_the_migrated_plan_model(self) -> None:
+        """MCP runs the new plan model; the old one must not survive in docs."""
         text = (SKILL_ROOT / "references" / "MCP.md").read_text(encoding="utf-8")
-        assert "sampling" in text.lower()
-        assert "宿主模型" in text
+        assert "WorkflowPlan" in text
+        assert "execute_plan" in text
+        assert "porter.core.plan" not in text
+        assert "未迁移" not in text
+
+    def test_it_states_the_no_fallback_rule(self) -> None:
+        """The one property an agent must not assume away."""
+        text = (SKILL_ROOT / "references" / "MCP.md").read_text(encoding="utf-8")
+        assert "运行期回退链" in text
 
     def test_it_records_that_config_is_read_only(self) -> None:
         text = (SKILL_ROOT / "references" / "MCP.md").read_text(encoding="utf-8")
@@ -301,6 +330,29 @@ class TestMcpReference:
         text = (SKILL_ROOT / "references" / "MCP.md").read_text(encoding="utf-8")
         missing = sorted(n for n in names if n not in text)
         assert not missing, f"undocumented MCP tools: {missing}"
+
+
+class TestPlanReference:
+    """`references/PLAN.md` is the contract agents read before approving a plan."""
+
+    def test_it_names_the_invariants(self) -> None:
+        text = (SKILL_ROOT / "references" / "PLAN.md").read_text(encoding="utf-8")
+        assert "一个阶段一个能力" in text
+        assert "跨能力替换" in text
+
+    def test_it_documents_the_request_and_result_shapes(self) -> None:
+        text = (SKILL_ROOT / "references" / "PLAN.md").read_text(encoding="utf-8")
+        for field in ("plan_id", "workflow", "stages", "feasible", "issues"):
+            assert field in text
+        for field in ("artifacts", "task_dir", "suggested_workflow", "alternatives"):
+            assert field in text
+
+    def test_it_names_every_capability(self) -> None:
+        from porter.core.workflow.capabilities import CAPABILITY_IDS
+
+        text = (SKILL_ROOT / "references" / "PLAN.md").read_text(encoding="utf-8")
+        for capability in CAPABILITY_IDS:
+            assert capability in text, f"PLAN.md does not document {capability}"
 
 
 # ---------------------------------------------------------------------------
@@ -370,7 +422,57 @@ class TestExampleConfig:
 # ---------------------------------------------------------------------------
 
 
+def _stage_payload(payload: dict[str, object], stage: str) -> dict[str, object]:
+    stages = payload["stages"]
+    assert isinstance(stages, list)
+    return next(item for item in stages if item["stage"] == stage)
+
+
 class TestPlanCommand:
+    """``porter plan`` emits the resolved :class:`WorkflowPlan` contract.
+
+    The command used to print the old predictive ``porter.core.plan.Plan``. The
+    refactor makes it the front half of execution: the JSON is accepted verbatim
+    by ``porter run --plan``. The probes are stubbed so the assertions are about
+    the CLI's contract, not about what this machine happens to have installed.
+    """
+
+    @pytest.fixture
+    def offline(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+        from porter.core.workflow.capabilities import CAPABILITY_IDS
+        from porter.core.workflow.model import (
+            CapabilityDescriptor,
+            SourceKind,
+            SourceProbe,
+            Stage,
+        )
+
+        media = tmp_path / "clip.mp4"
+        media.write_bytes(b"x")
+        probe = SourceProbe(
+            kind=SourceKind.LOCAL_VIDEO,
+            source=str(media),
+            platform="local",
+            has_video=True,
+            has_audio=True,
+        )
+        monkeypatch.setattr(
+            "porter.core.workflow.resolver.probe_source",
+            lambda source, ctx: probe,
+        )
+        monkeypatch.setattr(
+            "porter.core.workflow.resolver.capability_catalog",
+            lambda ctx: tuple(
+                CapabilityDescriptor(
+                    id=capability,
+                    stage=Stage(capability.split(".", 1)[0]),
+                    available=True,
+                )
+                for capability in CAPABILITY_IDS
+            ),
+        )
+        return media
+
     def test_it_is_registered(self) -> None:
         from porter.cli.app import SUBCOMMANDS
 
@@ -389,71 +491,44 @@ class TestPlanCommand:
         assert code != 0
         assert "gone.mp4" in capsys.readouterr().err
 
-    def test_a_missing_local_file_is_infeasible_not_merely_an_error(self) -> None:
-        """The plan must predict the failure, not leave the frontend to catch it.
-
-        This was a real defect: ``_local_plan`` reported ``feasible: yes`` for a
-        path that does not exist, so both frontends promised a job that would
-        die in its first second -- the exact waste the plan exists to prevent.
-        """
-        from porter.core.plan import plan_for
-
-        plan = plan_for("/nope/gone.mp4")
-        assert plan.feasible is False
-        assert any("no such file" in issue for issue in plan.blocking_issues)
-
-    def test_a_local_file_plans_speech_recognition(self, tmp_path: Path) -> None:
-        """A local file has no platform track, so recognition always runs."""
+    def test_a_local_file_plans_speech_recognition(self, offline, capsys) -> None:
+        """A local file has no platform track, so recognition is the planned route."""
         from porter.cli.app import main
 
-        media = tmp_path / "clip.mp4"
-        media.write_bytes(b"not really a video, but the plan never decodes it")
+        assert main(["plan", str(offline), "--json"]) == 0
 
-        assert main(["plan", str(media), "--json"]) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["workflow"] == "local.asr"
+        assert payload["feasible"] is True
+        transcript = _stage_payload(payload, "transcript")
+        assert transcript["capability"] == "transcript.whisper-local"
 
-    def test_json_output_matches_the_engine_model(self, tmp_path: Path) -> None:
-        import contextlib
-        import io
-
+    def test_json_output_matches_the_engine_model(self, offline, capsys) -> None:
         from porter.cli.app import main
-        from porter.core.models.plan import Plan
+        from porter.core.workflow.model import WorkflowPlan
 
-        media = tmp_path / "clip.mp4"
-        media.write_bytes(b"x")
+        assert main(["plan", str(offline), "--json"]) == 0
 
-        buffer = io.StringIO()
-        with contextlib.redirect_stdout(buffer):
-            code = main(["plan", str(media), "--json"])
+        plan = WorkflowPlan.model_validate_json(capsys.readouterr().out)
+        assert plan.source_probe.kind.value == "local_video"
+        assert plan.workflow.value == "local.asr"
+        assert plan.plan_id.startswith("sha256:")
 
-        assert code == 0
-        plan = Plan.model_validate_json(buffer.getvalue())
-        assert plan.kind == "local"
-        assert plan.subtitles.asr_runs is True
-
-    def test_the_text_report_names_the_decision_fields(self, tmp_path: Path) -> None:
-        """The three lines that change a decision must survive formatting."""
-        import contextlib
-        import io
-
+    def test_the_text_report_names_the_decision_fields(self, offline, capsys) -> None:
+        """The lines that change a decision must survive formatting."""
         from porter.cli.app import main
 
-        media = tmp_path / "clip.mp4"
-        media.write_bytes(b"x")
+        assert main(["plan", str(offline)]) == 0
 
-        buffer = io.StringIO()
-        with contextlib.redirect_stdout(buffer):
-            main(["plan", str(media)])
-
-        report = buffer.getvalue()
-        assert "Phases" in report
-        assert "Subtitles" in report
+        report = capsys.readouterr().out
+        assert "Workflow" in report
+        assert "Stages" in report
         assert "Feasible" in report
 
     def test_an_infeasible_plan_exits_non_zero(self, capsys: pytest.CaptureFixture[str]) -> None:
         """A prediction of failure is a successful plan, but callers script on it."""
         from porter.cli.app import main
 
-        # An unsupported host cannot be inspected, so no route resolves.
-        code = main(["plan", "https://example.com/not-a-video"])
+        code = main(["plan", "/nope/gone.mp4"])
         assert code != 0
-        assert "Unsupported URL platform" in capsys.readouterr().err
+        assert "SOURCE_NOT_FOUND" in capsys.readouterr().err
