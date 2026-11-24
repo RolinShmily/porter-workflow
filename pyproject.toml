@@ -16,7 +16,7 @@ readme = "README.md"
 # PEP 639 license expression. The legacy `License ::` classifier is deliberately
 # absent: it is deprecated by the same PEP, and shipping both is contradictory.
 license = "MIT"
-license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+license-files = ["LICENSE"]
 requires-python = ">=3.11,<3.14"
 authors = [{ name = "RoL1n_SrP" }]
 keywords = [
@@ -71,7 +71,7 @@ porter = "porter.webui.app:main"
 Homepage = "https://github.com/RolinShmily/porter-workflow"
 Repository = "https://github.com/RolinShmily/porter-workflow"
 Issues = "https://github.com/RolinShmily/porter-workflow/issues"
-Documentation = "https://github.com/RolinShmily/porter-workflow/blob/main/docs/README.md"
+Documentation = "https://github.com/RolinShmily/porter-workflow#documentation"
 Changelog = "https://github.com/RolinShmily/porter-workflow/blob/main/CHANGELOG.md"
 
 [tool.hatch.version]
@@ -91,11 +91,10 @@ packages = ["src/porter"]
 [tool.hatch.build.targets.sdist]
 include = [
     "/src",
-    "/scripts",
+    "/skills",
     "/docs",
     "/README.md",
     "/LICENSE",
-    "/THIRD_PARTY_NOTICES.md",
     "/CHANGELOG.md",
 ]
 
@@ -109,7 +108,7 @@ line-length = 100
 # and which `UP` rewrites apply. Left at py310 it classified `tomllib` as
 # third-party and flagged the sorted import block as unsorted.
 target-version = "py311"
-src = ["src", "tests", "scripts"]
+src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "BLE", "A", "C4", "SIM", "T20", "RUF", "S"]
@@ -141,7 +140,7 @@ ignore_missing_imports = true
 # ones, so `ctypes.WinDLL` (Windows-only in typeshed) passed locally while the
 # gate went red. Pinning the platform makes `uv run mypy src` mean what CI means.
 platform = "linux"
-files = ["src", "scripts"]
+files = ["src"]
 mypy_path = "src"
 explicit_package_bases = true
 namespace_packages = true

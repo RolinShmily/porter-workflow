@@ -15,7 +15,6 @@ on:
   push:
     branches:
       - main
-      - "refactor/**"
   pull_request:
 
 # One run per branch. A force-push should cancel the run it superseded instead
@@ -77,10 +76,10 @@ jobs:
         run: uv sync --python ${{ matrix.python-version }} --extra web --extra dev --locked
 
       - name: ruff
-        run: uv run ruff check src tests scripts
+        run: uv run ruff check src tests skills
 
       - name: mypy
-        run: uv run mypy src scripts
+        run: uv run mypy src
 
       - name: import-linter
         run: uv run lint-imports
@@ -188,12 +187,12 @@ jobs:
       # Tests are a development and CI artifact; users never run them. The
       # sdist must therefore not carry them, and a one-line include edit is the
       # kind of thing that silently regresses.
-      - name: Verify the sdist ships docs and scripts but not the test suite
+      - name: Verify the sdist ships docs and skills but not the test suite
         run: >
           python -c "import glob, tarfile, sys;
           s = glob.glob('dist/*.tar.gz')[0];
           names = tarfile.open(s).getnames();
           roots = {n.split('/', 1)[-1] for n in names};
           leaked = sorted({n for n in names if 'tests' in n.split('/')});
-          missing = sorted({'docs/README.md', 'scripts/launcher.py'} - roots);
-          sys.exit(f'{s} ships tests: {leaked[:5]}; missing: {missing}') if leaked or missing else print(f'{s}: docs and scripts present, no tests shipped')"
+          missing = sorted({'docs/development.md', 'docs/architecture.md', 'docs/design.md', 'docs/reference.md', 'skills/porter-workflow/SKILL.md'} - roots);
+          sys.exit(f'{s} ships tests: {leaked[:5]}; missing: {missing}') if leaked or missing else print(f'{s}: docs and skills present, no tests shipped')"

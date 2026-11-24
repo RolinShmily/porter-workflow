@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Project `AGENTS.md`.** Documents single-core architecture invariants, verification gates,
+  `pypi-v*` / `skill-v*` tag rules, and strict changelog isolation between root `CHANGELOG.md`
+  and `skills/porter-workflow/CHANGELOG.md`.
+
+### Changed
+
+- **PyPI release trigger (`.github/workflows/release-pypi.yml`).** Scoped tag trigger to
+  `pypi-v*` (keeping `skill-v*` tags workflow-free) and guarded tag-version verification for
+  manual `workflow_dispatch` retries.
+
+- **Documentation restructuring.** Collapsed multi-file `docs/` subdirectories into four flat
+  guides (`architecture.md`, `design.md`, `reference.md`, `development.md`), streamlined
+  `README.md` with a supported sources table and PyPI downloads badge, renamed `README_zh.md`
+  to `README.zh-CN.md`, and moved preview media to `assets/preview.webp`.
+- **Self-contained Agent Skill packaging.** Included `skills/porter-workflow/` in sdist and
+  CI `ruff` checks (Skill-specific changes are tracked separately in
+  `skills/porter-workflow/CHANGELOG.md`).
+
+### Removed
+
+- Dropped PyInstaller launcher and EXE release pipeline (`.github/workflows/release-exe.yml`,
+  `scripts/launcher.py`, `tests/unit/test_launcher.py`) in favor of `uv tool install` / `uvx`.
+- Removed redundant repository boilerplate (`CODE_OF_CONDUCT.md`, `SECURITY.md`,
+  `THIRD_PARTY_NOTICES.md`, `scripts/README.md`, `.github/PULL_REQUEST_TEMPLATE.md`,
+  `.github/dependabot.yml`, `.github/ISSUE_TEMPLATE/config.yml`).
+
 ## [0.4.0] - 2026-11-24
 
 ### Added

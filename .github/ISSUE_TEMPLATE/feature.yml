@@ -1,0 +1,26 @@
+name: Feature
+description: Propose a new capability, platform, or improvement
+title: "[feat] "
+labels: ["feature"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Porter is MIT licensed — copyleft tools must stay behind a subprocess boundary
+        ([licence rules](https://github.com/RolinShmily/porter-workflow/blob/main/docs/development.md#licence-rules)).
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem & proposal
+      description: What problem are you solving, and how should it work?
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Dependencies / platform notes (optional)
+      description: Any external binary, package (with licence), or platform requirement.
+    validations:
+      required: false

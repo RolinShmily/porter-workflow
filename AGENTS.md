@@ -26,12 +26,11 @@ Keep core/package changes and Agent Skill changes strictly separated:
 
 - Do **not** duplicate Skill SOP/wrapper details into root `CHANGELOG.md`.
 - Whenever `skills/porter-workflow/SKILL.md` `metadata.version` changes, add a matching `## [<version>]` section in `skills/porter-workflow/CHANGELOG.md` (`tests/unit/test_skill.py` enforces this).
-- On PyPI release (`pypi-v*` tag), `.github/workflows/release.yml` automatically aggregates the matching root `CHANGELOG.md` section plus any new `skills/porter-workflow/CHANGELOG.md` entries added since the previous release tag into the GitHub Release notes.
 
 ## 3. Release & Tag Conventions
 
-- `pypi-vX.Y.Z` — triggers `.github/workflows/release.yml` (runs gates, publishes `porter-workflow` to PyPI, creates GitHub Release titled `porter-workflow vX.Y.Z`).
-- `skill-vX.Y.Z` — lightweight git tag only for Skill version snapshots; triggers **no** workflow or GitHub Release.
+- `pypi-vX.Y.Z` — triggers `.github/workflows/release-pypi.yml` (runs gates and publishes `porter-workflow` to PyPI).
+- `skill-vX.Y.Z` — lightweight git tag only for Skill version snapshots (paired with `skills/porter-workflow/CHANGELOG.md`); triggers **no** workflow.
 
 ## 4. Verification Gates
 

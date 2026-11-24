@@ -1,0 +1,34 @@
+name: Bug
+description: Report broken behaviour or a regression
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Never paste real API keys, cookies, or session tokens.
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps / command to reproduce
+      description: WebUI action, Python snippet, or `porter_cli.py` command (redact secrets).
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Expected vs actual behaviour
+      description: Include verbatim error output or `WorkflowResult.error` JSON if available.
+    validations:
+      required: true
+
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment & Doctor output
+      description: OS, Python version, `porter --version`, FFmpeg version, and WebUI Doctor / `porter_cli.py doctor` output.
+      render: shell
+    validations:
+      required: true
