@@ -46,7 +46,7 @@ from porter.core.errors import (
 from porter.core.logging import configure as configure_logging
 from porter.core.logging import get_logger
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 #: Public API, resolved lazily. Maps attribute name -> defining module.
 _LAZY_EXPORTS: dict[str, str] = {
