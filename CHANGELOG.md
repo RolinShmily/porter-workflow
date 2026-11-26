@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The Agent Skill is not versioned separately.** Removed `metadata.version` from
+  `skills/porter-workflow/SKILL.md`, deleted `skills/porter-workflow/CHANGELOG.md`, and
+  dropped the `skill-v*` tag convention. The skill ships from `main` and its changes
+  are recorded here like any other repository change.
+- **GitHub Release notes come from the root changelog only.** `.github/workflows/release.yml`
+  no longer merges skill changelog entries.
+
+### Removed
+
+- **`AGENTS.md`.** Removed the repository agent instructions along with the skill
+  versioning rules they carried.
+
 ## [0.4.2] - 2026-11-24
 
 ### Changed

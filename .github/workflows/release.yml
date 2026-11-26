@@ -1,8 +1,7 @@
 name: release
 
 # Creates a GitHub Release (`porter-workflow v<version>`) for a given tag,
-# aggregating root `CHANGELOG.md` and any Skill changelog entries added since
-# the previous release tag.
+# using the matching version section from the root `CHANGELOG.md`.
 #
 # Invoked automatically by `.github/workflows/publish.yml` after PyPI upload
 # succeeds, or run manually via `workflow_dispatch` to create/backfill a
@@ -33,67 +32,30 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag }}
-          fetch-depth: 0
 
-      - name: Aggregate release notes from root and skill changelogs
+      - name: Extract release notes from the root changelog
         env:
           RELEASE_TAG: ${{ inputs.tag }}
         run: |
           version="${RELEASE_TAG#v}"
           version="${version#pypi-v}"
-          prev_tag="$(git describe --tags --abbrev=0 "${RELEASE_TAG}^" --match 'v*' --match 'pypi-v*' 2>/dev/null || true)"
-          python3 - "$version" "$prev_tag" <<'PY' > release_notes.md
+          python3 - "$version" <<'PY' > release_notes.md
           import pathlib
           import re
-          import subprocess
           import sys
 
           version = sys.argv[1]
-          prev_tag = sys.argv[2]
-
-          def parse_sections(text: str) -> dict[str, str]:
-              sections: dict[str, str] = {}
-              pattern = re.compile(r"^## \[([^\]]+)\][^\n]*\n(.*?)(?=^## \[|\Z)", re.S | re.M)
-              for m in pattern.finditer(text):
-                  key = m.group(1).strip()
-                  body = m.group(2).strip()
-                  if key.lower() != "unreleased" and body:
-                      sections[key] = body
-              return sections
-
-          parts: list[str] = []
 
           root_path = pathlib.Path("CHANGELOG.md")
           if root_path.is_file():
-              root_sections = parse_sections(root_path.read_text(encoding="utf-8"))
-              if version in root_sections:
-                  parts.append(root_sections[version])
-
-          skill_rel = "skills/porter-workflow/CHANGELOG.md"
-          skill_path = pathlib.Path(skill_rel)
-          if skill_path.is_file():
-              cur_skill = parse_sections(skill_path.read_text(encoding="utf-8"))
-              prev_skill: dict[str, str] = {}
-              if prev_tag:
-                  proc = subprocess.run(
-                      ["git", "show", f"{prev_tag}:{skill_rel}"],
-                      capture_output=True,
-                      text=True,
-                      encoding="utf-8",
-                      check=False,
-                  )
-                  if proc.returncode == 0:
-                      prev_skill = parse_sections(proc.stdout)
-              skill_blocks = [
-                  f"### Skill v{ver}\n\n{body}"
-                  for ver, body in cur_skill.items()
-                  if prev_skill.get(ver) != body
-              ]
-              if skill_blocks:
-                  parts.append("## Agent Skill (`skills/porter-workflow`)\n\n" + "\n\n".join(skill_blocks))
-
-          if parts:
-              print("\n\n---\n\n".join(parts))
+              text = root_path.read_text(encoding="utf-8")
+              pattern = re.compile(r"^## \[([^\]]+)\][^\n]*\n(.*?)(?=^## \[|\Z)", re.S | re.M)
+              for match in pattern.finditer(text):
+                  if match.group(1).strip() == version:
+                      body = match.group(2).strip()
+                      if body:
+                          print(body)
+                      break
           PY
 
       - name: Create GitHub Release

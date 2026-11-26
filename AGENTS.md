@@ -1,44 +1,19 @@
-# AGENTS.md — Porter Workflow Repository Guidelines
+# 维护钩子
 
-Project-specific instructions for AI coding agents working in `porter-workflow`.
+| 触发 | 同步动作 |
+| --- | --- |
+| 功能新增 / 行为变更 | 更新 `CHANGELOG.md` 未发布段；README 三模块（是什么 / 需要什么 / 怎么用）；`docs/architecture.md` 或 `docs/design.md`；`tests/` 对应层级的样例 |
+| CLI / 参数 / API / JSON Schema 变更 | 更新 `docs/reference.md` |
+| 构建 / 测试流程变更 | 更新 `docs/development.md`；`.github/workflows/test.yml` |
+| 依赖 / 第三方代码 / 资源变更 | 依赖声明更新 `pyproject.toml` 与 `uv.lock`；引入 vendored 内容时新增 `THIRD_PARTY_NOTICES` |
+| 版本发布（tag） | 归档 `CHANGELOG.md` 对应版本；Release notes 由 `.github/workflows/release.yml` 从根 `CHANGELOG.md` 提取 |
+| 根目录入口文件 / 目录或资产位置变更 | 更新 README 文档导航、本文件、workflow 中的路径 |
+| workflow 新增 / 触发变更 | 更新 `docs/development.md` 的发布说明；核对本文件对应钩子 |
+| `tests/` 结构或样例变更 | 更新 `.github/workflows/test.yml` 的路径与环境 |
+| Skill 参考内容（配置键 / 计划契约 / 宿主限制）变更 | 更新 `skills/porter-workflow/references/` 对应文件；`docs/reference.md` 保持路由不复制 |
 
-## 1. Architecture & Boundaries
+## 备注
 
-- **Single core engine**: All business logic lives in `src/porter/core/` and is exposed via the lazy root facade `src/porter/__init__.py` (`plan_source`, `run_plan`, `run_doctor`, `resolve`, `save_key`, `writable_config_path`, `JobRegistry`, etc.).
-- **Thin entry points**:
-  - `src/porter/webui/` — optional Gradio workbench (`porter-workflow[web]`); delegates to `porter` facade, never duplicates core logic.
-  - `skills/porter-workflow/` — self-contained Agent Skill whose `scripts/porter_cli.py` calls the published `porter-workflow` PyPI package directly.
-- **Hard invariants** (enforced by CI):
-  - `porter.core` and `porter/__init__.py` must **never** import `porter.webui`.
-  - No `print()` in `src/porter/core/` or `src/porter/__init__.py` (ruff `T20`); log to stderr via `get_logger`.
-  - All `Path.write_text()` and text `open()` in `src/porter/` must pass `encoding="utf-8"`.
-  - Public exports in `src/porter/__init__.py` must stay in sync across `_LAZY_EXPORTS`, `TYPE_CHECKING`, and `__all__`.
-  - No in-process copyleft dependencies; FFmpeg/ffprobe stay behind the subprocess boundary.
-
-## 2. Changelog Isolation Rules
-
-Keep core/package changes and Agent Skill changes strictly separated:
-
-| File | What goes here | Version source |
-| --- | --- | --- |
-| `CHANGELOG.md` (repo root) | Core engine (`src/porter/core/`), WebUI (`src/porter/webui/`), packaging, CI, and repo-level docs (`docs/`, `README*.md`) | `src/porter/__init__.py` (`__version__`) |
-| `skills/porter-workflow/CHANGELOG.md` | Agent Skill only (`SKILL.md`, `scripts/porter_cli.py`, `references/`) | `skills/porter-workflow/SKILL.md` (`metadata.version`) |
-
-- Do **not** duplicate Skill SOP/wrapper details into root `CHANGELOG.md`.
-- Whenever `skills/porter-workflow/SKILL.md` `metadata.version` changes, add a matching `## [<version>]` section in `skills/porter-workflow/CHANGELOG.md` (`tests/unit/test_skill.py` enforces this).
-
-## 3. Release & Tag Conventions
-
-- `vX.Y.Z` — primary repository release tag; triggers `.github/workflows/publish.yml` (runs gates and publishes `porter-workflow` to PyPI), which then calls `.github/workflows/release.yml` (`workflow_call`) to create GitHub Release `porter-workflow vX.Y.Z` aggregating root `CHANGELOG.md` + new Skill changelog entries.
-- `skill-vX.Y.Z` — lightweight git tag only for Skill version snapshots (paired with `skills/porter-workflow/CHANGELOG.md`); triggers **no** workflow.
-
-## 4. Verification Gates
-
-Run from repository root before committing:
-
-```bash
-uv run ruff check src tests skills
-uv run mypy src
-uv run lint-imports
-uv run pytest -m "not network"
-```
+- 不设 `THIRD_PARTY_NOTICES`：仓库无 vendored 第三方代码或资源，依赖以 `pyproject.toml` 为准。
+- 不维护 `CODE_OF_CONDUCT.md` 与 PR 模板：暂无社区治理需求。
+- Agent Skill 不单独版本化：`skills/porter-workflow/` 随 `main` 分发，不写 `metadata.version`，不维护独立 CHANGELOG，不打 `skill-v*` tag。

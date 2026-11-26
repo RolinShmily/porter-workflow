@@ -20,7 +20,6 @@ compatibility: >
   porter-workflow; only the optional Gradio WebUI uses porter-workflow[web].
 metadata:
   homepage: https://github.com/RolinShmily/porter-workflow
-  version: "0.4.0"
 ---
 
 # Porter Workflow（视频本地化 SOP）

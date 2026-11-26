@@ -51,14 +51,14 @@ The English heading above is kept stable for GitHub issue template anchors (`doc
 
 ### 5.1 主线发布（`v*` → PyPI + GitHub Release）
 
-`src/porter/__init__.py` 的 `__version__` 是唯一版本号来源（`pyproject.toml` 动态读取），变更记录在根目录 [`CHANGELOG.md`](../CHANGELOG.md)（只记核心引擎与 WebUI，不混入 Skill 细节）。
+`src/porter/__init__.py` 的 `__version__` 是唯一版本号来源（`pyproject.toml` 动态读取），变更记录在根目录 [`CHANGELOG.md`](../CHANGELOG.md)。
 
 1. 更新 [`CHANGELOG.md`](../CHANGELOG.md) 与 `src/porter/__init__.py` 的 `__version__`。
 2. 跑通第 2 节全部四道门禁，确认 `uv build` 产物（wheel 仅含 `porter` 与 `porter = porter.webui.app:main`；sdist 含 `src/`、`skills/`、`docs/`，不含 `tests/`）。
 3. 提交并推送 tag：`git tag vX.Y.Z && git push origin main vX.Y.Z`：
    - `.github/workflows/publish.yml` 自动跑门禁并发布 `porter-workflow` 至 PyPI；
-   - PyPI 上传成功后自动通过 `workflow_call` 调用 `.github/workflows/release.yml`，以 `porter-workflow vX.Y.Z` 为标题创建 GitHub Release（自动聚合根 `CHANGELOG.md` 与自上一版本以来新增的 Skill Changelog；也可手动 `workflow_dispatch` 补建 Release）。
+   - PyPI 上传成功后自动通过 `workflow_call` 调用 `.github/workflows/release.yml`，以 `porter-workflow vX.Y.Z` 为标题创建 GitHub Release（Release notes 取自根 `CHANGELOG.md` 的对应版本；也可手动 `workflow_dispatch` 补建 Release）。
 
-### 5.2 附属 Skill 版本标记（`skill-v*`）
+### 5.2 Agent Skill 不单独版本化
 
-`skills/porter-workflow/` 通过 `npx skills add` 直接从 `main` 分发：改动时同步更新 [`skills/porter-workflow/SKILL.md`](../skills/porter-workflow/SKILL.md) 的 `metadata.version` 与 [`skills/porter-workflow/CHANGELOG.md`](../skills/porter-workflow/CHANGELOG.md)（`tests/unit/test_skill.py` 会校验二者一致），按需打 `skill-vX.Y.Z` 纯 Git tag 留档，**不触发任何 GitHub Actions 工作流**。
+`skills/porter-workflow/` 通过 `npx skills add` 直接从 `main` 分发，随仓库提交演进：不写 `metadata.version`，不维护独立 CHANGELOG，也不打 `skill-v*` tag。技能改动记录在根 [`CHANGELOG.md`](../CHANGELOG.md)。

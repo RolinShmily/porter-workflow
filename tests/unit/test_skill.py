@@ -28,11 +28,8 @@ class TestSkillAssets:
         skill_md = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
         assert skill_md.startswith("---\n")
         assert "\nname: porter-workflow\n" in skill_md
-        match = re.search(r'^\s*version:\s*["\']?([^"\'\n]+)["\']?\s*$', skill_md, re.M)
-        assert match is not None
-        version = match.group(1).strip()
-        changelog = (SKILL_DIR / "CHANGELOG.md").read_text(encoding="utf-8")
-        assert f"## [{version}]" in changelog
+        frontmatter = skill_md.split("---", 2)[1]
+        assert "\nversion:" not in frontmatter, "the skill is not versioned separately"
         assert SCRIPT_PATH.is_file()
 
     def test_every_relative_markdown_link_resolves(self) -> None:
